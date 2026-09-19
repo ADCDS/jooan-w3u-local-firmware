@@ -35,30 +35,45 @@ fi
 controller=$self/controller
 [ -d "$controller" ] || die 'controller tree missing'
 
-if [ ! -f "$root/boot/common.sh" ]; then
-    migration=/tmp/jooan-local-key-migration
+if [ ! -f "$root/state/controller.ready" ]; then
+    migration=$root/state/key-migration
     if [ "$root" = /opt/custom/jooan-local ] &&
        [ -f /opt/open/admin/manifest.md5 ] && [ -f /opt/open/current ] &&
        [ -s /opt/open/admin/ssh/authorized_keys ] &&
        [ -s /opt/open/admin/ssh/host_ed25519 ]; then
-        mkdir "$migration"
-        cp /opt/open/admin/ssh/authorized_keys "$migration/authorized_keys"
-        cp /opt/open/admin/ssh/host_ed25519 "$migration/host_ed25519"
-        chmod 600 "$migration/"*
+        mkdir -p "$root/state" "$migration.new"
+        cp /opt/open/admin/ssh/authorized_keys "$migration.new/authorized_keys"
+        cp /opt/open/admin/ssh/host_ed25519 "$migration.new/host_ed25519"
+        chmod 600 "$migration.new/"*
+        sync
+        mv "$migration.new" "$migration"
+        sync
         # This exact tree belongs to the predecessor project and otherwise
-        # consumes most of the 384 KiB partition. Keys are already in tmpfs.
+        # consumes most of the 384 KiB partition. The only irreplaceable
+        # inputs are now on the same persistent filesystem, not in tmpfs.
         rm -rf /opt/open
         sync
     fi
-    JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
-        "$controller/admin/install-controller.sh" prepare "$controller" ||
-        die 'controller preparation failed'
-    if [ -d "${migration:-/nonexistent}" ]; then
-        cp "$migration/authorized_keys" "$root/config/ssh/authorized_keys"
-        cp "$migration/host_ed25519" "$root/config/ssh/dropbear_ed25519_host_key"
-        chmod 600 "$root/config/ssh/"*
-        sync
+    if [ ! -f "$root/boot/common.sh" ]; then
+        JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
+            "$controller/admin/install-controller.sh" prepare "$controller" ||
+            die 'controller preparation failed'
+    else
+        JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
+            "$controller/admin/install-controller.sh" validate "$controller" ||
+            die 'partial controller validation failed'
     fi
+fi
+
+migration=$root/state/key-migration
+if [ -d "$migration" ]; then
+    mkdir -p "$root/config/ssh"
+    cp "$migration/authorized_keys" "$root/config/ssh/authorized_keys"
+    cp "$migration/host_ed25519" "$root/config/ssh/dropbear_ed25519_host_key"
+    chmod 600 "$root/config/ssh/"*
+    sync
+    rm -rf "$migration"
+    sync
 fi
 
 JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$root/admin/install-runtime.sh" "$self" ||
