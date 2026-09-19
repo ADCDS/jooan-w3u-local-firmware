@@ -39,12 +39,12 @@ cp "$repo/runtime/slot/hooks/"*.sh "$runtime/hooks/"
 cp "$repo/web/"*.html "$repo/web/"*.css "$repo/web/"*.js "$runtime/web/"
 find "$controller" "$runtime" -type f -name '*.sh' -exec chmod 755 {} \;
 
+cp -R "$controller" "$stage/install/controller"
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -C "$controller" -cf - . | gzip -9n > "$stage/install/controller.tar.gz"
+    -C "$controller" -cf - . | gzip -9n > "$budget/controller.tar.gz"
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
     -C "$runtime" -cf - . | gzip -9n > "$stage/install/runtime.tar.gz"
 sha256sum "$stage/install/runtime.tar.gz" | awk '{print $1}' > "$stage/install/runtime.sha256"
-cp "$stage/install/controller.tar.gz" "$budget/controller.tar.gz"
 cp "$stage/install/runtime.tar.gz" "$budget/runtime-A.tar.gz"
 cp "$stage/install/runtime.tar.gz" "$budget/runtime-B.tar.gz"
 cp "$target/shared/jooan-sha256" "$stage/install/"
@@ -60,7 +60,9 @@ c245eeb74c54c2174d861f449c10e458fddff708f1e3e84d1338f65608bb0eed  /mnt/mtd/lib/m
 edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355  /mnt/mtd/run/jooanipc
 23480f1449fb9017b49283bbf12ae6a3db6df833ca89a14075df9d6c25f8d8c1  /mnt/mtd/startapp
 HASHES
-(cd "$stage/install" && sha256sum controller.tar.gz runtime.tar.gz runtime.sha256 compatibility.sha256 jooan-sha256 > payload.sha256)
+(cd "$stage/install" && find controller -type f -print | LC_ALL=C sort | \
+    xargs sha256sum > payload.sha256)
+(cd "$stage/install" && sha256sum runtime.tar.gz runtime.sha256 compatibility.sha256 jooan-sha256 >> payload.sha256)
 
 cp "$repo/packaging/payload/uninstall-upgrade.sh" "$stage/uninstall/upgrade.sh"
 chmod 755 "$stage/uninstall/upgrade.sh"

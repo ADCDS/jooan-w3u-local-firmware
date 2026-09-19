@@ -24,10 +24,8 @@ while read -r expected file; do
     [ "$actual" = "$expected" ] || die "incompatible camera component: $file"
 done < "$self/compatibility.sha256"
 
-controller=/tmp/jooan-local-controller
-[ ! -e "$controller" ] || die 'stale controller staging directory'
-mkdir "$controller"
-tar -xzf "$self/controller.tar.gz" -C "$controller" || die 'controller extraction failed'
+controller=$self/controller
+[ -d "$controller" ] || die 'controller tree missing'
 
 if [ ! -f "$root/boot/common.sh" ]; then
     migration=/tmp/jooan-local-key-migration
