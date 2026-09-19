@@ -76,7 +76,7 @@ if [ -d "$migration" ]; then
     sync
 fi
 
-JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$root/admin/install-runtime.sh" "$self" ||
+JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$controller/admin/install-runtime.sh" "$self" ||
     die 'runtime staging failed'
 JL_ROOT=$root JL_RUN=$run JL_ACTIVATE=$activate "$root/admin/install-controller.sh" activate || die 'activation failed'
 killall telnetd 2>/dev/null || :
