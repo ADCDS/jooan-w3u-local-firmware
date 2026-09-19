@@ -63,8 +63,10 @@ if [ ! -s "$jl_hostkey" ]; then
     sync
 fi
 
-# -D must be supported by the selected Dropbear build. Parent directories must
-# be root-owned and not group/world-writable. Root's OEM home is '/', not /root.
-exec "$jl_bin/dropbear" -s -j -k -E -p 22 \
+# Password auth, forwarding, and syslog are disabled at compile time, so their
+# runtime switches are intentionally absent from this minimal binary. -D is the
+# authorized_keys directory (not daemonization); -F keeps the supervised master
+# in the foreground. Root's OEM home is '/', not /root.
+exec "$jl_bin/dropbear" -F -p 22 \
     -P "$jl_pidfile" -r "$jl_hostkey" -D "$jl_keys" \
     >>"$JL_RUN/dropbear.log" 2>&1
