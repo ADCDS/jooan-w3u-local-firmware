@@ -35,6 +35,9 @@ case "$jl_action" in
         [ "$#" = 2 ] && [ -f "$2" ] || exit 2
         jl_lock || exit 1
         trap 'jl_unlock' EXIT
+        # A new explicit administrator request supersedes a terminal record;
+        # active trials and incomplete staging still fail closed below.
+        rm -rf "$JL_STATE/wifi-rolled-back" "$JL_STATE/wifi-committed" || exit 1
         [ ! -e "$jl_tx" ] && [ ! -e "$jl_tx.new" ] && [ ! -e "$JL_STATE/wifi-rolled-back" ] &&
             [ ! -e "$JL_STATE/wifi-committed" ] || {
             jl_log 'previous Wi-Fi transaction must be archived first'; exit 1;
