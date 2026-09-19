@@ -28,6 +28,21 @@ jl_lock() {
 }
 jl_unlock() { rm -rf "$JL_RUN/state.lock" 2>/dev/null || :; }
 
+# JFFS2 may report old erase blocks as occupied briefly after a large removal.
+# Bound the wait: a genuinely full partition must still fail closed.
+jl_wait_free_kb() {
+    jl_free_path=$1 jl_free_min=$2 jl_free_tries=${3:-15}
+    while [ "$jl_free_tries" -gt 0 ]; do
+        sync
+        jl_free_now=$(df -k "$jl_free_path" | awk 'END {print $4}')
+        case "$jl_free_now" in ''|*[!0-9]*) return 1 ;; esac
+        [ "$jl_free_now" -ge "$jl_free_min" ] && return 0
+        jl_free_tries=$((jl_free_tries - 1))
+        [ "$jl_free_tries" -gt 0 ] && sleep 1
+    done
+    return 1
+}
+
 # Exactly three fields: stable slot, trial slot, trial already attempted (0/1).
 # A missing record means no runtime has yet been activated.
 jl_read_selection() {

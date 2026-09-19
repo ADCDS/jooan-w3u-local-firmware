@@ -50,13 +50,46 @@ case "$jl_action" in
         done
         mkdir -p "$JL_STATE" "$JL_CONFIG/ssh" "$JL_ROOT/slots" || exit 1
         chmod 700 "$JL_ROOT" "$JL_STATE" "$JL_CONFIG" "$JL_CONFIG/ssh" || exit 1
+        jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
+        printf '%s\n' 1 > "$JL_STATE/controller.ready.new" || exit 1
+        chmod 600 "$JL_STATE/controller.ready.new" || exit 1
         sync
-        jl_free_after=$(df -k "$JL_ROOT" | awk 'END {print $4}')
-        case "$jl_free_after" in ''|*[!0-9]*) exit 1 ;; esac
-        [ "$jl_free_after" -ge 64 ] || exit 1
+        mv -f "$JL_STATE/controller.ready.new" "$JL_STATE/controller.ready" || exit 1
+        sync
         jl_unlock
         trap - EXIT
         jl_log 'controller prepared; install runtime before activation'
+        ;;
+    validate)
+        [ "$#" = 2 ] || exit 2
+        jl_source=$2
+        case "$jl_source" in /*) ;; *) exit 2 ;; esac
+        . "$jl_source/boot/common.sh" || exit 1
+        for jl_file in boot/local.rc boot/boot.sh boot/common.sh \
+            admin/install-controller.sh admin/install-runtime.sh \
+            admin/mark-healthy.sh admin/ssh-start.sh admin/wifi-transaction.sh \
+            shared/jooan-sha256 shared/dropbear.tar.gz shared/dropbear.sha256 \
+            shared/libjooan_guard.so shared/guard.sha256 shared/verify-guard.sh; do
+            [ -f "$JL_ROOT/$jl_file" ] || exit 1
+        done
+        JOOAN_SHA256=$JL_ROOT/shared/jooan-sha256
+        export JOOAN_SHA256
+        jl_verify_archive "$JL_ROOT/shared/dropbear.tar.gz" "$JL_ROOT/shared/dropbear.sha256" || exit 1
+        jl_verify_archive "$JL_ROOT/shared/libjooan_guard.so" "$JL_ROOT/shared/guard.sha256" || exit 1
+        jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
+        # Marker-less trees are failed first installs, never active controller
+        # upgrades. Refresh only small scripts from the authenticated payload;
+        # large shared binaries above must already verify in place.
+        cp "$jl_source/boot/"*.sh "$JL_ROOT/boot/" || exit 1
+        cp "$jl_source/admin/"*.sh "$JL_ROOT/admin/" || exit 1
+        cp "$jl_source/shared/verify-guard.sh" "$JL_ROOT/shared/verify-guard.sh" || exit 1
+        chmod 755 "$JL_ROOT/boot/"*.sh "$JL_ROOT/admin/"*.sh "$JL_ROOT/shared/verify-guard.sh" || exit 1
+        printf '%s\n' 1 > "$JL_STATE/controller.ready.new" || exit 1
+        chmod 600 "$JL_STATE/controller.ready.new" || exit 1
+        sync
+        mv -f "$JL_STATE/controller.ready.new" "$JL_STATE/controller.ready" || exit 1
+        sync
+        jl_log 'partial controller verified and marked ready'
         ;;
     activate)
         [ "$#" = 1 ] || exit 2
