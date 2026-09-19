@@ -4,12 +4,14 @@
 jl_init_run || exit 1
 jl_keys=$JL_CONFIG/ssh
 jl_authorized=$jl_keys/authorized_keys
+jl_authorized_dir=/opt/etc/jooan-ssh
 jl_bin=$JL_RUN/shared/bin
 jl_pidfile=$JL_RUN/dropbear.pid
 
 # Provisioning must deliberately install a public key. No default credential.
 # Dropping the key file disables future starts; stop any existing master too.
 if [ ! -s "$jl_authorized" ]; then
+    rm -f "$jl_authorized_dir/authorized_keys" "$jl_authorized_dir/authorized_keys.new" 2>/dev/null || :
     if [ -f "$jl_pidfile" ]; then
         IFS= read -r jl_pid < "$jl_pidfile" || jl_pid=
         case "$jl_pid" in ''|*[!0-9]*) ;; *)
@@ -19,6 +21,21 @@ if [ ! -s "$jl_authorized" ]; then
         esac
     fi
     exit 0
+fi
+mkdir -p "$jl_authorized_dir" || exit 1
+chmod 700 "$jl_authorized_dir" || exit 1
+jl_publish_key=1
+if [ -f "$jl_authorized_dir/authorized_keys" ]; then
+    jl_key_hash=$("$JL_ROOT/shared/jooan-sha256" "$jl_authorized") || exit 1
+    jl_key_hash=${jl_key_hash%% *}
+    jl_published_hash=$("$JL_ROOT/shared/jooan-sha256" "$jl_authorized_dir/authorized_keys") || exit 1
+    jl_published_hash=${jl_published_hash%% *}
+    [ "$jl_key_hash" != "$jl_published_hash" ] || jl_publish_key=0
+fi
+if [ "$jl_publish_key" = 1 ]; then
+    cp "$jl_authorized" "$jl_authorized_dir/authorized_keys.new" || exit 1
+    chmod 600 "$jl_authorized_dir/authorized_keys.new" || exit 1
+    mv -f "$jl_authorized_dir/authorized_keys.new" "$jl_authorized_dir/authorized_keys" || exit 1
 fi
 if [ ! -d "$JL_RUN/shared" ]; then
     jl_verify_archive "$JL_ROOT/shared/dropbear.tar.gz" "$JL_ROOT/shared/dropbear.sha256" || exit 1
@@ -68,5 +85,5 @@ fi
 # authorized_keys directory (not daemonization); -F keeps the supervised master
 # in the foreground. Root's OEM home is '/', not /root.
 exec "$jl_bin/dropbear" -F -p 22 \
-    -P "$jl_pidfile" -r "$jl_hostkey" -D "$jl_keys" \
+    -P "$jl_pidfile" -r "$jl_hostkey" -D "$jl_authorized_dir" \
     >>"$JL_RUN/dropbear.log" 2>&1
