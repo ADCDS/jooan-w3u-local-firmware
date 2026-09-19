@@ -55,10 +55,7 @@ cat > "$stage/install/compatibility.sha256" <<'HASHES'
 f2e46d4b897bca54a30941b98a08327b0af37dc96d577de91486adc5ed920ffd  /bin/goahead
 ab8ac8328011053b41889b2ef75eefc036a85cef7f8741c12bbb678dd1dce29e  /lib/ko/skw6316.ko
 02be360a7ff00409965a3b96a5f47e507c30866f480ae1e5ba667d0763d820c0  /lib/ko/skw_usb_lite.ko
-e5080976a0f9d45e6621746a325fa26e13783ecb558d10d160c7848157f310ca  /mnt/mtd/lib/modules/sensor_cv2005.ko
-c245eeb74c54c2174d861f449c10e458fddff708f1e3e84d1338f65608bb0eed  /mnt/mtd/lib/modules/sensor_cv2005s1.ko
-edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355  /mnt/mtd/run/jooanipc
-23480f1449fb9017b49283bbf12ae6a3db6df833ca89a14075df9d6c25f8d8c1  /mnt/mtd/startapp
+fe4e8aac9e48155450da54b8b5e1055c2b7366ce42102a0629e955714ab25eda  /dev/mtdblock4
 HASHES
 (cd "$stage/install" && find controller -type f -print | LC_ALL=C sort | \
     xargs sha256sum > payload.sha256)

@@ -38,6 +38,7 @@ The target release surface is local and authenticated:
   a shared private key;
 - SSH on TCP/22 is key-only and is enabled only after key enrollment;
 - RTSP over TCP/554 remains available for local video clients;
+- a configurable `.local` hostname follows DHCP address changes through mDNS;
 - outbound cloud/P2P traffic is denied by the hardened policy.
 
 The generic image does not contain Wi-Fi credentials. It preserves the
@@ -89,7 +90,7 @@ Internet or to an untrusted LAN.
 
 The repository now builds a complete generic IronMan image with per-device
 HTTPS, a local web UI/API, transactional Wi-Fi, key-only SSH, `jooanipc`
-egress containment, snapshots/PTZ integration contracts, and browser
+egress containment, configurable mDNS discovery, snapshots/PTZ integration contracts, and browser
 microphone/push-to-talk plumbing. Host, native, MIPS/uClibc and QEMU TLS/MQTT
 tests pass. The current `0.1.0` artifact remains a pre-release until install,
 Wi-Fi, snapshot, PTZ and audio are qualified on the physical unit.

@@ -23,6 +23,7 @@ typedef struct {
     char integration_helper[256];
     char audio_socket[256];
     unsigned mqtt_port;
+    int mdns_enabled;
 } JoanConfig;
 
 typedef struct {
@@ -79,6 +80,11 @@ int joan_mqtt_bridge_start(const JoanConfig *cfg);
 void joan_mqtt_bridge_stop(void);
 int joan_mqtt_bridge_publish(const char *topic, const void *payload, size_t len);
 const char *joan_mqtt_bridge_status(void);
+
+int joan_mdns_start(const JoanConfig *cfg);
+int joan_mdns_get_hostname(const JoanConfig *cfg, char out[64]);
+int joan_mdns_set_hostname(const JoanConfig *cfg, const char *hostname);
+const char *joan_mdns_status(void);
 
 int joan_tls_ensure_identity(const JoanConfig *cfg);
 int joan_server_run(const JoanConfig *cfg);

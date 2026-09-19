@@ -16,7 +16,7 @@ def request(method,path,body=None,cookie='',csrf='',ctype='application/json'):
 
 with tempfile.TemporaryDirectory() as state:
     env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_WEB_DIR':str(ROOT/'web'),
-      'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883'}
+      'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_MDNS':'0'}
     p=subprocess.Popen([BIN,'--plain-http','--bind','127.0.0.1','--port','18081'],env=env,
                        stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:
@@ -39,6 +39,12 @@ with tempfile.TemporaryDirectory() as state:
         assert status==200
         cookie=h['Set-Cookie'].split(';',1)[0]; csrf=json.loads(b)['csrf']
         assert request('GET','/api/v1/streams',cookie=cookie)[0]==200
+        status,_,b=request('GET','/api/v1/network/mdns',cookie=cookie)
+        assert status==200 and json.loads(b)['hostname']=='camera'
+        status,_,b=request('PUT','/api/v1/network/mdns',{'hostname':'Nursery-Cam'},cookie,csrf)
+        assert status==200 and json.loads(b)['address']=='nursery-cam.local'
+        assert (pathlib.Path(state)/'hostname').read_text()=='nursery-cam\n'
+        assert request('PUT','/api/v1/network/mdns',{'hostname':'bad.name'},cookie,csrf)[0]==400
         assert request('POST','/api/v1/network/wifi',{'ssid':'lab'},cookie,csrf)[0]==200
         m=socket.create_connection(('127.0.0.1',18883),2)
         m.sendall(b'\x10\x0c\x00\x04MQTT\x04\x02\x00\x1e\x00\x00')
