@@ -2,8 +2,10 @@
 set -eu
 [ "$#" = 1 ] && [ -f "$1" ] || exit 2
 candidate=$1
-ssid=$(json_debug -c r -k /ssid "$candidate" 2>/dev/null | awk '{print $3}')
-password=$(json_debug -c r -k /password "$candidate" 2>/dev/null | awk '{print $3}')
+json_tool=/mnt/mtd/run/json_debug
+[ -x "$json_tool" ] || exit 1
+ssid=$("$json_tool" -c r -k /ssid "$candidate" 2>/dev/null | awk '{print $3}')
+password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null | awk '{print $3}')
 [ -n "$ssid" ] && [ -n "$password" ] || exit 1
 case "$ssid$password" in *[!A-Za-z0-9_.@+-]*) exit 1 ;; esac
 [ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 1
