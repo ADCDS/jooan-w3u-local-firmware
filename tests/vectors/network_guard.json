@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "suite": "network_guard",
+  "cases": [
+    {
+      "id": "allow-loopback-health",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "interface": "lo", "source": "127.0.0.1", "destination": "127.0.0.1", "port": 8080, "state": "new"},
+      "expected": {"decision": "allow", "reason": "loopback"}
+    },
+    {
+      "id": "allow-wired-bench-ssh-reply",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "interface": "eth0", "source": "172.16.1.18", "destination": "172.16.1.1", "port": 49152, "state": "established"},
+      "expected": {"decision": "allow", "reason": "established-local"}
+    },
+    {
+      "id": "allow-dhcp-bootstrap",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "udp", "interface": "wlan0", "source": "0.0.0.0", "destination": "255.255.255.255", "port": 67, "source_port": 68, "state": "new"},
+      "expected": {"decision": "allow", "reason": "dhcp"}
+    },
+    {
+      "id": "deny-public-cloud-tls",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "interface": "wlan0", "source": "10.42.0.38", "destination": "54.210.28.167", "port": 443, "state": "new"},
+      "expected": {"decision": "deny", "reason": "nonlocal-egress"}
+    },
+    {
+      "id": "deny-public-dns",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "udp", "interface": "wlan0", "source": "10.42.0.38", "destination": "8.8.8.8", "port": 53, "state": "new"},
+      "expected": {"decision": "deny", "reason": "nonlocal-egress"}
+    },
+    {
+      "id": "deny-global-ipv6",
+      "input": {"direction": "out", "family": "ipv6", "protocol": "tcp", "interface": "eth0", "source": "fe80::18", "destination": "2606:4700:4700::1111", "port": 443, "state": "new"},
+      "expected": {"decision": "deny", "reason": "nonlocal-egress"}
+    },
+    {
+      "id": "deny-unknown-interface-fail-closed",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "udp", "interface": "wwan9", "source": "0.0.0.0", "destination": "192.168.1.1", "port": 9999, "state": "new"},
+      "expected": {"decision": "deny", "reason": "unknown-interface"}
+    }
+  ]
+}

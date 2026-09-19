@@ -1,0 +1,54 @@
+# Build and release output
+build/
+/dist/
+/out/
+core
+core.*
+*.core
+*.o
+*.a
+*.so
+*.so.*
+
+# Private device/vendor inputs: never commit these
+/private/
+/vendor/
+/staging-private/
+/dumps/
+/backups/
+*.bin
+*.img
+*.dump
+*.rom
+*.squashfs
+*.jffs2
+*.ko
+
+# Credentials and per-device identity
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+authorized_keys
+known_hosts
+*credentials*
+*secrets*
+
+# Local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

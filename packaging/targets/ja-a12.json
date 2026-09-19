@@ -1,0 +1,54 @@
+{
+  "device": {
+    "flash_bytes": 8388608,
+    "kernel": "3.10.14__isvp_pike_1.0__",
+    "manufacturer": "JOOAN",
+    "model": "JA-A12",
+    "product_family": "W3-U",
+    "ram_bytes": 67108864,
+    "radio": {
+      "bus": "USB",
+      "driver_family": "skw6316",
+      "firmware_family": "sv6160lite",
+      "vendor": "SeekWave"
+    },
+    "sensors": [
+      {
+        "driver": "cv2005",
+        "i2c_address": "0x35",
+        "slot": 0
+      },
+      {
+        "driver": "cv2005s1",
+        "i2c_address": "0x36",
+        "slot": 1
+      }
+    ],
+    "soc": "Ingenic T23N/Pike",
+    "userspace_abi": "MIPS32r2 little-endian hard-float, uClibc 0.9.33.2"
+  },
+  "ironman": {
+    "default_firmware_version": "05.02.31.115",
+    "header_bytes": 96,
+    "install_filename": "JOOAN_FW_PKG",
+    "model_token": "A12",
+    "payload_limit_exclusive": 2097153,
+    "trailer_bytes": 96,
+    "uninstall_filename": "JOOAN_UNINSTALL"
+  },
+  "compatibility_hashes": {
+    "/bin/goahead": "f2e46d4b897bca54a30941b98a08327b0af37dc96d577de91486adc5ed920ffd",
+    "/lib/ko/skw6316.ko": "ab8ac8328011053b41889b2ef75eefc036a85cef7f8741c12bbb678dd1dce29e",
+    "/lib/ko/skw_usb_lite.ko": "02be360a7ff00409965a3b96a5f47e507c30866f480ae1e5ba667d0763d820c0",
+    "/mnt/mtd/lib/modules/sensor_cv2005.ko": "e5080976a0f9d45e6621746a325fa26e13783ecb558d10d160c7848157f310ca",
+    "/mnt/mtd/lib/modules/sensor_cv2005s1.ko": "c245eeb74c54c2174d861f449c10e458fddff708f1e3e84d1338f65608bb0eed",
+    "/mnt/mtd/run/jooanipc": "edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355",
+    "/mnt/mtd/startapp": "23480f1449fb9017b49283bbf12ae6a3db6df833ca89a14075df9d6c25f8d8c1"
+  },
+  "notes": [
+    "This target is the dual-CV2005 JA-A12 hardware revision.",
+    "It is not compatible with the public single-SC2336P/ATBM6132U W3-U target."
+  ],
+  "schema_version": 1,
+  "target_id": "jooan-ja-a12-t23n-dual-cv2005-skw6316"
+}

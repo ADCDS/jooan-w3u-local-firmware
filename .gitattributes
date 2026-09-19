@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.py text eol=lf
+*.go text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.gz binary
+*.xz binary
+*.zip binary
+*.bin binary
+*.img binary
+*.dump binary

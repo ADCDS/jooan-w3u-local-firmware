@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "suite": "audio",
+  "format": {"encoding": "g711-alaw", "sample_rate": 16000, "channels": 1, "packet_samples": 320},
+  "cases": [
+    {
+      "id": "alaw-zero",
+      "input": {"operation": "alaw_encode", "pcm": 0},
+      "expected": {"status": "ok", "alaw": 213, "decoded_pcm": 8}
+    },
+    {
+      "id": "alaw-negative-full-scale",
+      "input": {"operation": "alaw_encode", "pcm": -32768},
+      "expected": {"status": "ok", "alaw": 42, "decoded_pcm": -32256}
+    },
+    {
+      "id": "wire-pcma-one-packet",
+      "input": {"operation": "wire_roundtrip", "type": 2, "flags": 0, "sequence": 1, "payload_length": 320},
+      "expected": {"status": "ok", "type": 2, "flags": 0, "sequence": 1, "payload_length": 320}
+    },
+    {
+      "id": "wire-reject-zero-sequence",
+      "input": {"operation": "wire_build", "type": 2, "flags": 0, "sequence": 0, "payload_length": 320},
+      "expected": {"status": "error", "reason": "invalid-sequence"}
+    },
+    {
+      "id": "wire-reject-truncated-header",
+      "input": {"operation": "wire_parse", "hex": "4a41554401020010"},
+      "expected": {"status": "error", "reason": "truncated-header"}
+    },
+    {
+      "id": "sequence-reject-duplicate",
+      "input": {"operation": "sequence", "candidates": [1, 2, 2]},
+      "expected": {"status": "error", "accepted": 2, "reason": "noncontiguous"}
+    },
+    {
+      "id": "guard-release-on-close",
+      "input": {"operation": "guard_session", "session_id": 72623859790382856, "events": ["acquire", "close"]},
+      "expected": {"status": "ok", "wire_types": [1, 3], "sequences": [1, 2]}
+    }
+  ]
+}
