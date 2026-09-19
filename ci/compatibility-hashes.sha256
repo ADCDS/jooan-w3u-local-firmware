@@ -1,0 +1,10 @@
+# Exact compatibility-critical, redistributable inputs belong here in standard
+# sha256sum format:
+#
+# <64 lowercase hex characters>  path/from/repository/root
+#
+# Do not add vendor binaries or secrets to satisfy this gate. Pin recovered
+# source descriptions, generated ABI tables, protocol schemas, and toolchain
+# lockfiles instead. The gate deliberately rejects missing files and symlinks.
+2d613b63b2f38c21db7eea588091b5e56d0254fbc5d3774d5cca2c6cde4f6406  packaging/targets/ja-a12.json
+5f365db380e965e8af39ca0f04d2bbbd959a6327102758129c6f2e4c4e2a4e2b  runtime/boot/local.rc

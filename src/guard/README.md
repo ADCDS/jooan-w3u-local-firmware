@@ -1,0 +1,41 @@
+# jooanipc containment guard
+
+`libjooan_guard.so` is an `LD_PRELOAD` containment layer for one exact OEM
+`jooanipc` binary. It activates only when `/proc/self/exe` has SHA-256
+`edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355`.
+Executables started by `jooanipc` inherit the preload variable but do not match
+the hash, so the library is inert in them.
+
+While active, the guard:
+
+- resolves only `use1api.jooaniot.com` and `use1mqtt01.jooaniot.com` to
+  loopback, leaving the service/port unchanged;
+- allows IP `connect`/`sendto` only to IPv4 or IPv6 loopback and permits local
+  Unix sockets;
+- records an `O_WRONLY` open of `/dev/dsp`;
+- receives the local `JAGD` ACQUIRE/PCMA/RELEASE datagram protocol on
+  `/tmp/jooan-guard-talkback.sock`, enforces one leased, contiguous-sequence
+  talk session, decodes its G.711 A-law audio to little-endian PCM16, and
+  serializes those writes with OEM writes and ioctls to the DSP descriptor;
+- drops talkback while no DSP descriptor is open and stops using a descriptor
+  immediately after close or a failed write. Talk ownership expires after half
+  a second without a valid packet, and malformed or out-of-sequence traffic
+  releases ownership.
+- records an `O_RDONLY` open of `/dev/dsp`, taps successful `read`/`readv` and
+  the exact OEM `AMIC_AI_GET_STREAM` ioctl PCM16 result without blocking the
+  OEM reader, converts it to 16 kHz mono A-law, and
+  sends fixed 20 ms `JAGM` datagrams to `/run/jooan-local/mic.sock`; missing or
+  backpressured listeners cause packet drops, never an OEM read failure.
+
+Build and run host tests with `make test`. The test-only shared object accepts
+fake executable, DSP, and socket paths through environment variables. Those
+overrides are excluded from the production shared object.
+
+The host compiler validates behavior, but it does not produce a deployable
+camera library. Deployment requires the OEM-compatible MIPS32 little-endian
+uClibc 0.9.33.2 toolchain and must verify that `libdl`, pthreads, and the target
+loader accept the resulting DSO before enabling `LD_PRELOAD` at boot.
+
+This process shim is defense in depth. The promoted image still needs the
+documented kernel/router deny-by-default policy, which covers raw syscalls and
+interfaces that cannot be reliably confined by libc interposition alone.

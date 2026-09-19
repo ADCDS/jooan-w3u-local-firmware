@@ -1,0 +1,23 @@
+#!/bin/sh
+# Sourced by the OEM launcher. Never source or restore an earlier hook here.
+# The supervisor remains separate so a failed local service cannot block boot.
+killall telnetd 2>/dev/null || :
+# This function MUST live in the sourcing startapp shell. OEM startapp invokes
+# bare `jooanipc &`; a function in the background supervisor cannot intercept it.
+# Every invocation rechecks the pinned shared guard, independent of A/B health.
+jooanipc() {
+    /bin/sh /opt/custom/jooan-local/shared/verify-guard.sh || return 127
+    LD_PRELOAD=/opt/custom/jooan-local/shared/libjooan_guard.so
+    export LD_PRELOAD
+    exec /mnt/mtd/run/jooanipc "$@"
+}
+if [ -r /opt/custom/jooan-local/boot/boot.sh ]; then
+    /bin/sh /opt/custom/jooan-local/boot/boot.sh </dev/null >/dev/null 2>&1 &
+fi
+# Development units may already have a key-only recovery SSH service. Preserve
+# that locally provisioned path during first enrollment; public images contain
+# neither this directory nor its keys, so clean installations do not enable it.
+if [ -x /opt/open/admin/boot-admin.sh ] && [ ! -f /opt/open/admin/disabled ]; then
+    /bin/sh /opt/open/admin/boot-admin.sh </dev/null >/tmp/jooan-legacy-admin.log 2>&1 &
+fi
+:

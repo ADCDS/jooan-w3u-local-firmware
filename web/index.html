@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Jooan Local Camera</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><h1>Jooan Local</h1><span id="connection">Offline</span></header>
+<main>
+  <section id="login" class="card narrow">
+    <h2>Administrator sign in</h2>
+    <p>First setup uses <code>admin</code> / <code>change-me-now</code> and immediately requires a new password.</p>
+    <form id="login-form"><label>User<input name="username" value="admin" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form>
+  </section>
+  <section id="setup" class="card narrow hidden">
+    <h2>Secure first setup</h2><p>Choose a unique password of at least 12 characters.</p>
+    <form id="password-form"><label>Current password<input name="old_password" type="password" required></label><label>New password<input name="new_password" type="password" minlength="12" required></label><button>Change password</button></form>
+  </section>
+  <div id="dashboard" class="hidden grid">
+    <section class="card"><h2>Status</h2><pre id="status">Loading…</pre><button id="refresh">Refresh</button><button id="logout" class="secondary">Sign out</button></section>
+    <section class="card"><h2>Video</h2><div id="streams"></div><img id="snapshot" alt="Camera snapshot"><button id="snapshot-button">Refresh snapshot</button></section>
+    <section class="card"><h2>Wi-Fi transaction</h2><form id="wifi-form"><label>SSID<input name="ssid" required></label><label>Passphrase<input name="password" type="password" minlength="8" required></label><button>Stage</button></form><div class="row"><button id="wifi-commit">Commit staged</button><button id="wifi-rollback" class="danger">Roll back</button></div><output id="wifi-result"></output></section>
+    <section class="card"><h2>SSH keys</h2><pre id="ssh-list"></pre><form id="ssh-form"><label>Public key<textarea name="key" rows="4" required></textarea></label><button>Add key</button></form></section>
+    <section class="card"><h2>Pan / tilt</h2><div class="ptz"><button data-ptz="up">↑</button><button data-ptz="left">←</button><button data-ptz="stop">■</button><button data-ptz="right">→</button><button data-ptz="down">↓</button></div><p id="ptz-state">No lease</p></section>
+    <section class="card"><h2>Two-way audio</h2><p>Listen to the camera microphone, then hold the button to speak. Microphone playback pauses while talking to prevent feedback.</p><div class="row"><button id="audio-connect">Listen</button><button id="push-to-talk" class="danger" disabled>Hold to talk</button></div><p id="audio-state">Disconnected</p></section>
+    <section class="card"><h2>Firmware staging</h2><p>Images are staged and verified before a separate apply action.</p><form id="firmware-form"><input name="image" type="file" required><button>Stage image</button></form><button id="firmware-apply" class="danger">Apply verified image</button><output id="firmware-result"></output></section>
+  </div>
+  <p id="notice" role="status"></p>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
