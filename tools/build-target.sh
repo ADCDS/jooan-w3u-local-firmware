@@ -66,8 +66,10 @@ fi
 cp "$repo/runtime/admin/dropbear-localoptions.h" "$dropbear/localoptions.h"
 if [ ! -f "$dropbear/Makefile" ]; then
     (cd "$dropbear" && \
-      CC="$cc -muclibc" CFLAGS='-Os -march=mips32r2 -mhard-float -ffunction-sections -fdata-sections' \
-      LDFLAGS='-muclibc -Wl,--gc-sections' ./configure --host=mips-linux-gnu \
+      CC="$cc -muclibc" AR="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-ar" \
+      RANLIB="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-ranlib" \
+      CFLAGS='-Os -flto -fPIE -march=mips32r2 -mhard-float -ffunction-sections -fdata-sections' \
+      LDFLAGS='-muclibc -flto -fPIE -Wl,--gc-sections' ./configure --host=mips-linux-gnu \
         --disable-zlib --disable-syslog --disable-lastlog --disable-utmp \
         --disable-utmpx --disable-wtmp --disable-wtmpx)
 fi
