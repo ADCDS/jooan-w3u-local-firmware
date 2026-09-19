@@ -21,6 +21,7 @@ reboot, and recovery.
 |---:|---|---|---|
 | 80/tcp | HTTP | Redirect to HTTPS | No application or credential exchange |
 | 443/tcp | HTTPS | UI and `/api/v1/` | Authenticated; unique per-device TLS identity |
+| 5353/udp | mDNS | Configurable `hostname.local` discovery | Link-local multicast only |
 | 22/tcp | SSH | Administrative shell | Key-only; unavailable until key enrollment |
 | 554/tcp | RTSP | Local video | TCP transport; restrict to approved viewers |
 

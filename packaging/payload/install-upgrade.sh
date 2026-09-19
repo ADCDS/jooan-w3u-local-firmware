@@ -22,6 +22,7 @@ done < "$self/payload.sha256"
 
 while read -r expected file; do
     [ -n "$expected" ] || continue
+    [ -e "$file" ] || die "compatible component unavailable: $file"
     actual=$($verify "$file" 2>/dev/null | awk '{print $1}')
     [ "$actual" = "$expected" ] || die "incompatible camera component: $file"
 done < "$self/compatibility.sha256"

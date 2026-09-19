@@ -26,6 +26,7 @@ setup namespace, routes require an authenticated administrator session.
 | `/api/v1/session` | HTTPS | Create, inspect, or end an authenticated session |
 | `/api/v1/status` | `GET` | Health, version, hardening state, and feature gates |
 | `/api/v1/network/wifi` | HTTPS | Inspect or manually replace Wi-Fi configuration |
+| `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
 | `/api/v1/streams` | `GET` | Enumerate locally available streams and capabilities |
 | `/api/v1/snapshot` | `GET` | Return a still image from an available stream |
 | `/api/v1/ptz/move` | `POST` | Start a bounded pan/tilt movement |
@@ -68,6 +69,14 @@ health checks. It never returns secrets.
 `/api/v1/network/wifi` is a manual configuration interface. Generic images
 preserve the existing Wi-Fi setup and do not contain credentials. A network
 change must be staged and validated before the working path is discarded.
+
+### Local hostname
+
+`/api/v1/network/mdns` accepts `{"hostname":"camera-name"}`. The hostname is
+a single DNS label (letters, digits, and interior hyphens), is normalized to
+lowercase, and is advertised as `camera-name.local` by the compact built-in
+mDNS responder. Multicast DNS normally remains within one broadcast domain;
+routed VLAN access requires an mDNS reflector on the router.
 
 ### Streams, snapshots, PTZ, and audio
 

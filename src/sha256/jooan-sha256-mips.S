@@ -63,6 +63,7 @@ _start:
      * a host-computed manifest.
      */
 .Lhash_mode:
+    li      $s2, 0                  /* aggregate success until a file fails */
     li      $s5, 1                  /* argv index */
 .Lhash_loop:
     bge     $s5, $s0, .Lhash_done   /* argv index must be less than argc */
@@ -96,7 +97,6 @@ _start:
     addiu   $s5, $s5, 1
     b       .Lhash_loop
 .Lhash_done:
-    li      $s2, 0
     b       .Lexit
 
 .Ldie_open_manifest:
@@ -1063,6 +1063,10 @@ strcmp:
 sys_write:
     li      $v0, SYS_write
     syscall
+    beqz    $a3, 1f
+    nop
+    subu    $v0, $zero, $v0
+1:
     jr      $ra
     nop
     .end    sys_write
@@ -1072,6 +1076,10 @@ sys_write:
 sys_read:
     li      $v0, SYS_read
     syscall
+    beqz    $a3, 1f
+    nop
+    subu    $v0, $zero, $v0
+1:
     jr      $ra
     nop
     .end    sys_read
@@ -1081,6 +1089,10 @@ sys_read:
 sys_open:
     li      $v0, SYS_open
     syscall
+    beqz    $a3, 1f
+    nop
+    subu    $v0, $zero, $v0
+1:
     jr      $ra
     nop
     .end    sys_open
@@ -1090,6 +1102,10 @@ sys_open:
 sys_close:
     li      $v0, SYS_close
     syscall
+    beqz    $a3, 1f
+    nop
+    subu    $v0, $zero, $v0
+1:
     jr      $ra
     nop
     .end    sys_close

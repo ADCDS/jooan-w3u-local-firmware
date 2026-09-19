@@ -19,10 +19,11 @@ int main(int argc,char**argv)
     copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
     copy_env(c.audio_socket,sizeof(c.audio_socket),"JOAN_AUDIO_WS_SOCKET","/run/joan/audio-ws.sock");
-    c.port=443;c.redirect_port=80;c.mqtt_port=1883;
+    c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.mdns_enabled=1;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);
     if(getenv("JOAN_REDIRECT_PORT"))c.redirect_port=(unsigned)strtoul(getenv("JOAN_REDIRECT_PORT"),NULL,10);
+    if(getenv("JOAN_MDNS")&&!strcmp(getenv("JOAN_MDNS"),"0"))c.mdns_enabled=0;
     for(i=1;i<argc;i++){
         if(!strcmp(argv[i],"--plain-http"))c.plain_http=1;
         else if(!strcmp(argv[i],"--bind")&&i+1<argc)snprintf(c.bind_addr,sizeof(c.bind_addr),"%s",argv[++i]);
@@ -35,6 +36,7 @@ int main(int argc,char**argv)
     if(!c.plain_http&&joan_tls_ensure_identity(&c)){fprintf(stderr,"cannot initialize per-device ECDSA identity; refusing plaintext fallback\n");return 1;}
     if(c.plain_http)fprintf(stderr,"WARNING: explicit plaintext development mode; do not expose beyond a test namespace\n");
     if(joan_mqtt_bridge_start(&c)){fprintf(stderr,"cannot start loopback MQTT compatibility sink\n");return 1;}
+    if(joan_mdns_start(&c)){fprintf(stderr,"cannot start mDNS responder\n");return 1;}
     fprintf(stderr,"joan-daemon %s listening on %s:%u (%s)\n",JOAN_VERSION,c.bind_addr,c.port,c.plain_http?"HTTP DEVELOPMENT MODE":"HTTPS ECDSA");
     rc=joan_server_run(&c);
     joan_mqtt_bridge_stop();
