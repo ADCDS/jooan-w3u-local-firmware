@@ -77,13 +77,16 @@ case "$jl_action" in
         jl_verify_archive "$JL_ROOT/shared/dropbear.tar.gz" "$JL_ROOT/shared/dropbear.sha256" || exit 1
         jl_verify_archive "$JL_ROOT/shared/libjooan_guard.so" "$JL_ROOT/shared/guard.sha256" || exit 1
         jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
-        # Marker-less trees are failed first installs, never active controller
-        # upgrades. Refresh only small scripts from the authenticated payload;
-        # large shared binaries above must already verify in place.
-        cp "$jl_source/boot/"*.sh "$JL_ROOT/boot/" || exit 1
-        cp "$jl_source/admin/"*.sh "$JL_ROOT/admin/" || exit 1
-        cp "$jl_source/shared/verify-guard.sh" "$JL_ROOT/shared/verify-guard.sh" || exit 1
-        chmod 755 "$JL_ROOT/boot/"*.sh "$JL_ROOT/admin/"*.sh "$JL_ROOT/shared/verify-guard.sh" || exit 1
+        # Refresh small scripts from the authenticated payload atomically. Large
+        # shared binaries above must already verify in place.
+        for jl_file in boot/boot.sh boot/common.sh \
+            admin/install-controller.sh admin/install-runtime.sh \
+            admin/mark-healthy.sh admin/ssh-start.sh admin/wifi-transaction.sh \
+            shared/verify-guard.sh; do
+            cp "$jl_source/$jl_file" "$JL_ROOT/$jl_file.new" || exit 1
+            chmod 755 "$JL_ROOT/$jl_file.new" || exit 1
+            mv -f "$JL_ROOT/$jl_file.new" "$JL_ROOT/$jl_file" || exit 1
+        done
         printf '%s\n' 1 > "$JL_STATE/controller.ready.new" || exit 1
         chmod 600 "$JL_STATE/controller.ready.new" || exit 1
         sync
@@ -109,9 +112,7 @@ case "$jl_action" in
             cp "$JL_ACTIVATE" "$JL_STATE/prelocal-hook.disabled" || exit 1
             chmod 600 "$JL_STATE/prelocal-hook.disabled" || exit 1
         fi
-        jl_free=$(df -k "$JL_ROOT" | awk 'END {print $4}')
-        case "$jl_free" in ''|*[!0-9]*) exit 1 ;; esac
-        [ "$jl_free" -ge 68 ] || exit 1
+        jl_wait_free_kb "$JL_ROOT" 68 20 || exit 1
         jl_activate_dir=${JL_ACTIVATE%/*}
         mkdir -p "$jl_activate_dir" || exit 1
         cp "$JL_ROOT/boot/local.rc" "$JL_ACTIVATE.new" || exit 1
