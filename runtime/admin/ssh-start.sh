@@ -22,7 +22,17 @@ if [ ! -s "$jl_authorized" ]; then
 fi
 if [ ! -d "$JL_RUN/shared" ]; then
     jl_verify_archive "$JL_ROOT/shared/dropbear.tar.gz" "$JL_ROOT/shared/dropbear.sha256" || exit 1
-    jl_unpack_archive "$JL_ROOT/shared/dropbear.tar.gz" "$JL_RUN/shared" || exit 1
+    # This build-generated archive is pinned above and intentionally contains
+    # one internal hardlink (dropbearkey -> dropbear) for multicall dispatch.
+    # Keep the generic slot unpacker link-free; extract this exact archive into
+    # a private tmpfs directory and publish it atomically.
+    [ ! -e "$JL_RUN/shared.new" ] || exit 1
+    mkdir "$JL_RUN/shared.new" || exit 1
+    if ! tar -xzf "$JL_ROOT/shared/dropbear.tar.gz" -C "$JL_RUN/shared.new"; then
+        rm -rf "$JL_RUN/shared.new"
+        exit 1
+    fi
+    mv "$JL_RUN/shared.new" "$JL_RUN/shared" || exit 1
 fi
 [ -x "$jl_bin/dropbear" ] || exit 1
 if [ -f "$jl_pidfile" ]; then

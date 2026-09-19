@@ -35,6 +35,8 @@ fi
 controller=$self/controller
 [ -d "$controller" ] || die 'controller tree missing'
 
+controller_was_ready=0
+[ ! -f "$root/state/controller.ready" ] || controller_was_ready=1
 if [ ! -f "$root/state/controller.ready" ]; then
     migration=$root/state/key-migration
     if [ "$root" = /opt/custom/jooan-local ] &&
@@ -65,6 +67,12 @@ if [ ! -f "$root/state/controller.ready" ]; then
     fi
 fi
 
+if [ "$controller_was_ready" = 1 ]; then
+    JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
+        "$controller/admin/install-controller.sh" validate "$controller" ||
+        die 'controller script refresh failed'
+fi
+
 migration=$root/state/key-migration
 if [ -d "$migration" ]; then
     mkdir -p "$root/config/ssh"
@@ -78,7 +86,7 @@ fi
 
 JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$controller/admin/install-runtime.sh" "$self" ||
     die 'runtime staging failed'
-JL_ROOT=$root JL_RUN=$run JL_ACTIVATE=$activate "$root/admin/install-controller.sh" activate || die 'activation failed'
+JL_ROOT=$root JL_RUN=$run JL_ACTIVATE=$activate "$controller/admin/install-controller.sh" activate || die 'activation failed'
 killall telnetd 2>/dev/null || :
 sync
 echo 'jooan-local install complete; rebooting through OEM updater'
