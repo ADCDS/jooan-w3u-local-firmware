@@ -55,7 +55,9 @@ jl_write_selection "$JL_STABLE" "$jl_target" 0 || exit 1
 # This is only the replaced inactive slot; the stable slot remains intact.
 if [ -d "$jl_dest.previous" ]; then
     rm -f "$jl_dest.previous/runtime.tar.gz" "$jl_dest.previous/runtime.sha256" || exit 1
-    rmdir "$jl_dest.previous" || exit 1
+    rm -rf "$jl_dest.previous" || exit 1
 fi
 sync
+jl_unlock
+trap - EXIT
 jl_log "slot $jl_target staged; trial begins on the next boot"

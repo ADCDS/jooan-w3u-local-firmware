@@ -11,4 +11,6 @@ JL_SLOT=$1 JL_SLOT_DIR=$JL_RUN/slot-$1
 export JL_SLOT JL_SLOT_DIR
 jl_bounded_hook 5 "$JL_SLOT_DIR/health.sh" || exit 1
 jl_write_selection "$1" - 0 || exit 1
+jl_unlock
+trap - EXIT
 jl_log "runtime slot $1 committed"
