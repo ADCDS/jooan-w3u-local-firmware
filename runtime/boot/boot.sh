@@ -6,7 +6,7 @@ jl_init_run || exit 1
 if ! mkdir "$JL_RUN/supervisor.lock" 2>/dev/null; then
     exit 0
 fi
-trap 'rmdir "$JL_RUN/supervisor.lock" 2>/dev/null || :' EXIT
+trap 'rm -rf "$JL_RUN/supervisor.lock" 2>/dev/null || :' EXIT
 printf '%s\n' "$$" > "$JL_RUN/supervisor.pid"
 
 # OEM initialization may start telnet after local.rc has returned. This watcher

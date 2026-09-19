@@ -26,7 +26,7 @@ jl_lock() {
         sleep 1
     done
 }
-jl_unlock() { rmdir "$JL_RUN/state.lock" 2>/dev/null || :; }
+jl_unlock() { rm -rf "$JL_RUN/state.lock" 2>/dev/null || :; }
 
 # Exactly three fields: stable slot, trial slot, trial already attempted (0/1).
 # A missing record means no runtime has yet been activated.

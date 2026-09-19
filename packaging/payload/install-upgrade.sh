@@ -4,7 +4,9 @@ set -eu
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/mnt/mtd/run
 export PATH
 self=${0%/*}
-root=/opt/custom/jooan-local
+root=${JOOAN_ROOT:-/opt/custom/jooan-local}
+activate=${JOOAN_ACTIVATE:-/opt/etc/local.rc}
+run=${JOOAN_RUN:-/run/jooan-local}
 verify=$self/jooan-sha256
 
 die() { echo "jooan-local install: $*" >&2; exit 1; }
@@ -24,12 +26,18 @@ while read -r expected file; do
     [ "$actual" = "$expected" ] || die "incompatible camera component: $file"
 done < "$self/compatibility.sha256"
 
+if [ "${JOOAN_PREFLIGHT_ONLY:-0}" = 1 ]; then
+    echo 'jooan-local preflight passed'
+    exit 0
+fi
+
 controller=$self/controller
 [ -d "$controller" ] || die 'controller tree missing'
 
 if [ ! -f "$root/boot/common.sh" ]; then
     migration=/tmp/jooan-local-key-migration
-    if [ -f /opt/open/admin/manifest.md5 ] && [ -f /opt/open/current ] &&
+    if [ "$root" = /opt/custom/jooan-local ] &&
+       [ -f /opt/open/admin/manifest.md5 ] && [ -f /opt/open/current ] &&
        [ -s /opt/open/admin/ssh/authorized_keys ] &&
        [ -s /opt/open/admin/ssh/host_ed25519 ]; then
         mkdir "$migration"
@@ -41,7 +49,7 @@ if [ ! -f "$root/boot/common.sh" ]; then
         rm -rf /opt/open
         sync
     fi
-    JL_ROOT=$root JOOAN_SHA256=$verify \
+    JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
         "$controller/admin/install-controller.sh" prepare "$controller" ||
         die 'controller preparation failed'
     if [ -d "${migration:-/nonexistent}" ]; then
@@ -52,9 +60,9 @@ if [ ! -f "$root/boot/common.sh" ]; then
     fi
 fi
 
-JOOAN_SHA256=$verify "$root/admin/install-runtime.sh" "$self" ||
+JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$root/admin/install-runtime.sh" "$self" ||
     die 'runtime staging failed'
-"$root/admin/install-controller.sh" activate || die 'activation failed'
+JL_ROOT=$root JL_RUN=$run JL_ACTIVATE=$activate "$root/admin/install-controller.sh" activate || die 'activation failed'
 killall telnetd 2>/dev/null || :
 sync
 echo 'jooan-local install complete; rebooting through OEM updater'

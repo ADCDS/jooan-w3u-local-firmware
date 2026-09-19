@@ -18,7 +18,8 @@ case "$jl_action" in
         case "$jl_source" in /*) ;; *) exit 2 ;; esac
         [ -f "$jl_source/boot/common.sh" ] || exit 1
         . "$jl_source/boot/common.sh" || exit 1
-        [ -z "$(find "$jl_source" ! -type d ! -type f -print)" ] || exit 1
+        # The controller comes from the already hash-verified read-only OTA
+        # SquashFS. BusyBox find on this firmware has no `-type` predicate.
         for jl_file in boot/local.rc boot/boot.sh boot/common.sh \
             admin/install-controller.sh admin/install-runtime.sh \
             admin/mark-healthy.sh admin/ssh-start.sh admin/wifi-transaction.sh \
@@ -53,6 +54,8 @@ case "$jl_action" in
         jl_free_after=$(df -k "$JL_ROOT" | awk 'END {print $4}')
         case "$jl_free_after" in ''|*[!0-9]*) exit 1 ;; esac
         [ "$jl_free_after" -ge 64 ] || exit 1
+        jl_unlock
+        trap - EXIT
         jl_log 'controller prepared; install runtime before activation'
         ;;
     activate)
@@ -84,6 +87,8 @@ case "$jl_action" in
         mv -f "$JL_ACTIVATE.new" "$JL_ACTIVATE" || exit 1
         sync
         killall telnetd 2>/dev/null || :
+        jl_unlock
+        trap - EXIT
         jl_log 'local-only boot hook activated; no inherited hook will run'
         ;;
     *) exit 2 ;;
