@@ -37,6 +37,11 @@ cp "$repo/runtime/slot/start.sh" "$repo/runtime/slot/stop.sh" \
     "$repo/runtime/slot/health.sh" "$runtime/"
 cp "$repo/runtime/slot/hooks/"*.sh "$runtime/hooks/"
 cp "$repo/web/"*.html "$repo/web/"*.css "$repo/web/"*.js "$runtime/web/"
+for script in $(find "$controller" "$runtime" -name '*.sh'); do
+    awk 'NR == 1 { print; next } /^[[:space:]]*#/ { next } NF { print }' \
+        "$script" > "$script.min"
+    mv "$script.min" "$script"
+done
 find "$controller" "$runtime" -type f -name '*.sh' -exec chmod 755 {} \;
 
 cp -R "$controller" "$stage/install/controller"
@@ -48,7 +53,8 @@ sha256sum "$stage/install/runtime.tar.gz" | awk '{print $1}' > "$stage/install/r
 cp "$stage/install/runtime.tar.gz" "$budget/runtime-A.tar.gz"
 cp "$stage/install/runtime.tar.gz" "$budget/runtime-B.tar.gz"
 cp "$target/shared/jooan-sha256" "$stage/install/"
-cp "$repo/packaging/payload/install-upgrade.sh" "$stage/install/upgrade.sh"
+awk 'NR == 1 { print; next } /^[[:space:]]*#/ { next } NF { print }' \
+    "$repo/packaging/payload/install-upgrade.sh" > "$stage/install/upgrade.sh"
 chmod 755 "$stage/install/upgrade.sh" "$stage/install/jooan-sha256"
 
 cat > "$stage/install/compatibility.sha256" <<'HASHES'
@@ -61,7 +67,8 @@ HASHES
     xargs sha256sum > payload.sha256)
 (cd "$stage/install" && sha256sum runtime.tar.gz runtime.sha256 compatibility.sha256 jooan-sha256 >> payload.sha256)
 
-cp "$repo/packaging/payload/uninstall-upgrade.sh" "$stage/uninstall/upgrade.sh"
+awk 'NR == 1 { print; next } /^[[:space:]]*#/ { next } NF { print }' \
+    "$repo/packaging/payload/uninstall-upgrade.sh" > "$stage/uninstall/upgrade.sh"
 chmod 755 "$stage/uninstall/upgrade.sh"
 printf '%s\n' "$version" > "$stage/install/RELEASE"
 printf '%s\n' "$version" > "$stage/uninstall/RELEASE"

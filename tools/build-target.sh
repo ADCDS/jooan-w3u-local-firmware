@@ -25,8 +25,8 @@ fi
     echo "unexpected mbedTLS revision" >&2; exit 1;
 }
 
-cflags='-Os -muclibc -march=mips32r2 -mhard-float -D_BSD_SOURCE -ffunction-sections -fdata-sections -Wall -Wextra -Werror'
-ldflags="-muclibc -Wl,--gc-sections -L$OEM_ROOTFS/lib -Wl,-rpath-link,$OEM_ROOTFS/lib"
+cflags='-Os -flto -muclibc -march=mips32r2 -mhard-float -D_BSD_SOURCE -ffunction-sections -fdata-sections -Wall -Wextra -Werror'
+ldflags="-flto -muclibc -Wl,--gc-sections -L$OEM_ROOTFS/lib -Wl,-rpath-link,$OEM_ROOTFS/lib"
 make -C "$repo/src/daemon" clean
 make -C "$repo/src/daemon" -j1 TLS=1 CC="$cc" CFLAGS="$cflags" \
     CPPFLAGS="-I. -I$mbedtls/include" LDFLAGS="$ldflags" \
