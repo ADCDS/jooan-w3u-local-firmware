@@ -29,7 +29,16 @@ mkdir -p "$JL_ROOT/slots" "$JL_STATE" "$JL_CONFIG" || exit 1
 [ ! -e "$jl_dest.new" ] && [ ! -e "$jl_dest.previous" ] || {
     jl_log 'stale slot staging requires inspection before retry'; exit 1;
 }
-# Reserve >=64 KiB of measured /opt space even during the temporary third copy.
+# The 384 KiB JFFS2 partition fits the controller plus two compressed slots,
+# not a third temporary archive. The selected target is proven inactive above;
+# discard only that old inactive copy while the stable/running slot remains an
+# intact rollback path across power loss.
+if [ -d "$jl_dest" ]; then
+    rm -f "$jl_dest/runtime.tar.gz" "$jl_dest/runtime.sha256" || exit 1
+    rm -rf "$jl_dest" || exit 1
+    sync
+fi
+# Reserve >=64 KiB while staging beside the stable slot.
 jl_size=$(du -k "$jl_stage/runtime.tar.gz" | awk '{print $1}')
 case "$jl_size" in ''|*[!0-9]*) exit 1 ;; esac
 jl_need=$((jl_size + 8))
@@ -40,18 +49,10 @@ mkdir "$jl_dest.new" || exit 1
 cp "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.sha256" "$jl_dest.new/" || exit 1
 jl_verify_archive "$jl_dest.new/runtime.tar.gz" "$jl_dest.new/runtime.sha256" || exit 1
 sync
-if [ -d "$jl_dest" ]; then
-    mv "$jl_dest" "$jl_dest.previous" || exit 1
-fi
 mv "$jl_dest.new" "$jl_dest" || exit 1
 sync
 jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
 jl_write_selection "$JL_STABLE" "$jl_target" 0 || exit 1
-# This is only the replaced inactive slot; the stable slot remains intact.
-if [ -d "$jl_dest.previous" ]; then
-    rm -f "$jl_dest.previous/runtime.tar.gz" "$jl_dest.previous/runtime.sha256" || exit 1
-    rm -rf "$jl_dest.previous" || exit 1
-fi
 sync
 jl_unlock
 trap - EXIT
