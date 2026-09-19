@@ -30,13 +30,10 @@ mkdir -p "$JL_ROOT/slots" "$JL_STATE" "$JL_CONFIG" || exit 1
     jl_log 'stale slot staging requires inspection before retry'; exit 1;
 }
 # Reserve >=64 KiB of measured /opt space even during the temporary third copy.
-jl_free=$(df -k "$JL_ROOT" | awk 'END {print $4}')
 jl_size=$(du -k "$jl_stage/runtime.tar.gz" | awk '{print $1}')
-jl_old=0
-[ ! -d "$jl_dest" ] || jl_old=$(du -sk "$jl_dest" | awk '{print $1}')
-case "$jl_free:$jl_size:$jl_old" in *[!0-9:]*|:*) exit 1 ;; esac
+case "$jl_size" in ''|*[!0-9]*) exit 1 ;; esac
 jl_need=$((jl_size + 8))
-[ "$jl_free" -ge $((jl_need + 64)) ] || {
+jl_wait_free_kb "$JL_ROOT" $((jl_need + 64)) 20 || {
     jl_log 'compressed update would violate 64 KiB free-space reserve'; exit 1;
 }
 mkdir "$jl_dest.new" || exit 1
@@ -48,9 +45,7 @@ if [ -d "$jl_dest" ]; then
 fi
 mv "$jl_dest.new" "$jl_dest" || exit 1
 sync
-jl_free_after=$(df -k "$JL_ROOT" | awk 'END {print $4}')
-case "$jl_free_after" in ''|*[!0-9]*) exit 1 ;; esac
-[ "$jl_free_after" -ge 64 ] || exit 1
+jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
 jl_write_selection "$JL_STABLE" "$jl_target" 0 || exit 1
 # This is only the replaced inactive slot; the stable slot remains intact.
 if [ -d "$jl_dest.previous" ]; then
