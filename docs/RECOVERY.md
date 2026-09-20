@@ -8,9 +8,9 @@ Two independent paths are required:
   or OEM update transport still works.
 - **External SPI recovery** for a camera that no longer boots or is unreachable.
 
-Do not make persistent changes until the external path has been rehearsed. An
-uninstall package stored only on the camera is not an independent recovery
-method.
+An uninstall package stored only on the camera is not an independent recovery
+method. Keep it off-device. External SPI restore remains the strongest path for
+a camera that cannot boot or accept an update.
 
 ## Recovery assets
 
@@ -40,6 +40,14 @@ Rollback must preserve factory data and the existing Wi-Fi configuration unless
 the reviewed uninstall manifest explicitly says otherwise. If the camera cannot
 authenticate, cannot validate the package, or repeatedly reboots, stop trying
 network updates and use external recovery.
+
+Automatic A/B fallback is narrower than uninstall: it returns from a failed
+candidate runtime to the prior healthy slot. Signed uninstall is destructive
+removal, not restoration of predecessor state. It removes HTTPS, route pruning,
+the process guard, project SSH, and the compressed controller/slots; the next
+boot returns to OEM/GoAhead behavior. It does not restore the old
+unauthenticated telnet hook or an archived predecessor `/opt/etc/local.rc`.
+Keep router isolation active before, during, and after uninstall.
 
 ## External SPI recovery
 

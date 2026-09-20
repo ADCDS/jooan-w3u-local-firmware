@@ -11,7 +11,9 @@ bounded execution, captured logs, and the established cold-recovery procedure.
 - Verify every compatibility-critical source/schema named in
   `ci/compatibility-hashes.sha256` byte-for-byte.
 - Parse every shell script with its declared interpreter.
-- Keep the installed persistent payload at or below **184320 bytes (180 KiB)**.
+- Keep all persistent regular files for the compressed controller and maximum
+  two-slot A/B layout at or below **180224 bytes (176 KiB)** and require at
+  least **81920 bytes (80 KiB)** free after installation/update.
 - Build release artifacts twice with `SOURCE_DATE_EPOCH=0`, `TZ=UTC`, `LC_ALL=C`,
   a fresh `BUILD_OUT`, and compare hashes plus executable modes. Build scripts
   must not embed the build path, hostname, current time, uid/gid, directory
@@ -62,8 +64,11 @@ UNPROVISIONED -> PROVISIONED -> SESSION_AUTHENTICATED
 
 Exercise every allowed transition and every forbidden edge. In particular:
 
-- bootstrap credentials are one-use and unavailable after provisioning;
-- provisioning races have exactly one winner;
+- the public initial `admin` / `change-me-password` remains valid until changed
+  and produces a persistent warning rather than forced setup;
+- warning state survives restart and clears only after password rotation;
+- Web, RTSP, and SSH password records remain synchronized, with a documented
+  early-`0.1` migration state when SSH cannot yet be derived;
 - password/token rotation revokes old sessions;
 - logout, expiry, reboot, and clock rollback cannot resurrect a session;
 - failed-attempt counters survive service restart when intended but cannot be
@@ -72,6 +77,9 @@ Exercise every allowed transition and every forbidden edge. In particular:
   restores a vendor/default password;
 - comparison behavior and response sizes do not disclose which credential
   field was wrong.
+
+SSH tests cover synchronized password login, optional Ed25519 keys, disabled
+forwarding/PAM/X11/SFTP, and removal of all other OEM login shells.
 
 ## Wi-Fi state machine
 
@@ -132,3 +140,9 @@ media holders, explicit time/byte limits, reverse-order cleanup, captured kernel
 logs, and a cold post-test recovery proving both OEM streams and management
 access. Persistent installation requires its separate rollback and pre-boot
 recovery gates.
+
+Promotion also requires main/sub PWA fMP4, direct RTSP, mic listening/PTT, PTZ
+jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
+capture, no-default-route enforcement, the 176 KiB/80 KiB storage contract, and
+destructive uninstall semantics to pass on the physical JA-A12. Until then no
+tag is supported.

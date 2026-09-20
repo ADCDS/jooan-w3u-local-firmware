@@ -1,133 +1,94 @@
 # Installation
 
-Installation modifies only the writable `/opt` configuration partition; it
-does not rewrite the kernel, rootfs, appfs, bootloader, calibration or identity.
-Preserve a flash backup and read [Recovery](RECOVERY.md) before continuing.
-Use a tagged hardware-qualified release for ordinary installations; `0.1.0`
-remains an engineering image until its live acceptance record is published.
+There is no supported tag yet. `0.1.0` is an engineering image until all
+physical JA-A12 promotion gates pass. Installation writes only `/opt`; it does
+not replace the bootloader, kernel, rootfs, appfs, calibration, or identity.
 
-## 1. Isolate the camera
+## Before installation
 
-Create a dedicated router/VLAN segment with no Internet route and no access
-from untrusted LAN clients. Permit only the installation workstation. Keep the
-policy active from power-on: the OEM GoAhead service is known to become
-reachable during early boot before `/opt/etc/local.rc` can terminate it. The
-router remains the controlling boundary throughout that interval.
+1. Put the camera and workstation on an isolated VLAN with no Internet route.
+   OEM GoAhead is reachable during an immutable early-boot interval before
+   `/opt/etc/local.rc` can run, so router isolation is mandatory.
+2. Verify every identifier in [Compatibility](COMPATIBILITY.md). The package is
+   only for `JA-A12`, T23N, dual CV2005/CV2005S1, and USB SKW6316.
+3. Preserve and hash a full 8 MiB SPI-NOR backup. Keep the signed uninstall
+   package off-device and read [Recovery](RECOVERY.md).
+4. Confirm stable power. Do not interrupt an update.
 
-Do not install over a port-forward, public Wi-Fi network, or ordinary shared
-home LAN.
+## Build
 
-## 2. Verify exact hardware
-
-Confirm every item in [Compatibility](COMPATIBILITY.md), including PCB
-silkscreen, both sensor identities, SKW6316 radio, T23N SoC, and 8 MiB flash.
-The supported package model token is `A12`.
-
-Stop if the camera instead contains SC2336P/ATBM6132U hardware. That is the
-different revision supported by the public Thingino W3-U image.
-
-## 3. Back up and prepare recovery
-
-Preserve and hash a complete SPI NOR backup. The installer also preserves a
-failed-runtime fallback to the OEM updater. External-programmer restore remains
-the strongest recovery path but is not a prerequisite imposed by this
-`/opt`-only package.
-
-Do not publish the dump. It may contain Wi-Fi credentials, identifiers, private
-device data, and vendor code that this project cannot redistribute.
-
-## 4. Build the packages
-
-Build the reviewed install and uninstall packages:
+Maintainers build both signed artifacts with an external release key:
 
 ```sh
 TOOLCHAIN_ROOT=/path/to/mips-gcc540-glibc222-64bit-r3.3.0 \
 OEM_ROOTFS=/private/path/to/extracted-rootfs \
+JOOAN_RELEASE_SIGNING_KEY=/secure/release-signing-key.pem \
 ./release.sh
 ```
 
-Maintainers may use `build.sh` to rewrap already-audited stage directories.
+Outputs include `dist/JOOAN_FW_PKG`, `dist/JOOAN_UNINSTALL`, SHA-256 sidecars,
+and `manifest.json`. The device authenticates the inner SHA-256 inventory using
+the pinned ECDSA P-256/SHA-256 release key, checks exact component hashes, and
+rejects downgrade/replay by sequence. OEM MD5 fields are carrier metadata, not
+the authenticity boundary.
 
-To rebuild only the uninstall package:
+The persistent contract stores a compressed controller and maximum two
+compressed A/B slots, caps regular-file content at 180224 bytes (176 KiB), and
+requires at least 81920 bytes (80 KiB) free on `/opt`.
+
+## Upload
+
+On the isolated LAN, use the included carrier tool:
 
 ```sh
-./build-uninstall.sh \
-  --release-version 1.0.0 \
-  --stage /path/to/uninstall-stage
+python3 tools/upload_ota.py \
+  --host CAMERA_IP \
+  --pkg dist/JOOAN_FW_PKG
 ```
 
-Both commands accept `--out-dir` (default `dist`) and
-`--firmware-version` (default `05.02.31.115`). Packaging defaults to xz with a
-128 KiB dictionary. Run either command with `--help` for the checked-out
-version's complete interface.
+It validates the A12 container, POSTs it to the OEM updater, waits for HTTPS on
+443, and prints the per-device certificate SHA-256 fingerprint. Record and
+verify that fingerprint on the isolated segment. First-install GoAhead is
+unauthenticated; never upload over an untrusted network. Later releases use the
+authenticated HTTPS update API.
 
-The default outputs are:
+## First login and migration
 
-```text
-dist/JOOAN_FW_PKG
-dist/JOOAN_FW_PKG.sha256
-dist/JOOAN_UNINSTALL
-dist/JOOAN_UNINSTALL.sha256
-dist/manifest.json
-```
-
-Review `manifest.json` and independently verify the SHA-256 files before
-delivery. A successful package build proves format integrity, not that an
-arbitrary `upgrade.sh` is safe.
-
-## 5. Deliver a qualified release on the isolated network
-
-Use only the release's documented IronMan uploader or offline SD transport.
-The OEM update transport is an installation carrier, not a secure remote update
-service. Never upload a package across the Internet or an untrusted LAN.
-
-Before confirming installation, verify:
-
-- the live device reports `JA-A12` and the expected firmware/kernel family;
-- the package model token is `A12`;
-- free persistent space and MTD layout match the target manifest;
-- the install package and its SHA-256 match the reviewed build;
-- the uninstall package and external flash backup are immediately available;
-- power will remain stable for the full install and first reboot.
-
-Do not interrupt power while persistent data is being updated.
-
-## 6. First boot and enrollment
-
-Keep the camera isolated. Browse to its HTTPS address and verify the per-device
-certificate fingerprint over the trusted installation channel. The initial
-administrator is:
+HTTPS is the default. TCP/80 only redirects. Initial credentials are:
 
 ```text
 username: admin
-password: change-me-now
+password: change-me-password
 ```
 
-Change this password immediately. Setup must not be considered complete until
-the default credential is rejected. Enroll an SSH public key if shell access is
-needed; SSH remains key-only and should not listen until a key exists.
+The public initial password remains valid; setup is not forced. The UI/API
+shows a persistent warning until it is changed. Change it promptly. The same
+`admin` password is synchronized to SSH and RTSP; optional Ed25519 authorized
+keys supplement SSH password authentication.
 
-The generic package contains no Wi-Fi credentials. Existing compatible OEM
-Wi-Fi settings are preserved. If they must change, use the manual Wi-Fi setup
-over the isolated management path and verify connectivity before removing the
-old path.
+An early `0.1` Web password is preserved during upgrade. Because its one-way
+hash cannot generate the SSH hash, status reports `ssh_password_sync: false`
+until the password is changed once. Recognized `/opt/open` predecessor trees
+are migrated through a journal; validated SSH material is preserved and the old
+tree is retired only after activation. Unknown/partial predecessors fail closed.
 
-## 7. Acceptance checks
+Existing OEM Wi-Fi settings are preserved. Replacement Wi-Fi is a manual,
+transactional stage/commit operation. The runtime removes IPv4 and IPv6 default
+routes; connected subnets and explicitly allowed RFC1918/ULA routes remain.
+
+## Acceptance checklist
 
 After a cold reboot:
 
-1. wait for `/api/v1/status` to report hardened/ready;
-2. verify both expected streams and a snapshot;
-3. test bounded PTZ movement and stop;
-4. verify RTSP over TCP/554 from the approved NVR;
-5. verify TCP/80 only redirects to TCP/443;
-6. verify the device's HTTPS fingerprint and changed admin credential;
-7. verify SSH password login fails and enrolled-key login succeeds, if enabled;
-8. scan from the management host and confirm no unexpected steady-state ports;
-9. capture router traffic through a reboot and confirm cloud/P2P traffic cannot
-   leave the VLAN;
-10. verify the uninstall/rollback path remains available.
+1. verify HTTPS identity, warning state, login throttling, and session expiry;
+2. verify main/sub PWA fMP4 playback, both direct RTSP streams, and snapshot;
+3. verify mic listening and bounded press-to-talk;
+4. verify PTZ jog/stop, home, and preset save/recall/delete;
+5. verify SSH `admin` password synchronization and optional keys;
+6. verify DNS-SD announcements for HTTPS, SSH, RTSP, and the camera service;
+7. verify no IPv4/IPv6 default route and no public resolver remains;
+8. scan listeners and capture traffic across reboot, including early GoAhead;
+9. verify the signed uninstall and recovery assets remain available.
 
-If either sensor, hardening status, authentication, or rollback check fails,
-disconnect the camera from all but the recovery workstation and follow
+Failure of any item keeps the image unqualified. Isolate the unit and follow
 [Recovery](RECOVERY.md).

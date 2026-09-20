@@ -2,7 +2,9 @@
 
 ## Supported hardware
 
-Version 1 supports exactly one observed bill of materials:
+The version 1 target is restricted to one observed bill of materials. This
+scope statement is not a release-support claim; no tag is supported until the
+physical promotion gates pass.
 
 | Component | Required value |
 |---|---|
