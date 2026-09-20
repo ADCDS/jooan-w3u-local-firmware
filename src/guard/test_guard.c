@@ -58,13 +58,13 @@ static void test_alaw(void)
 
 static void test_reply_ports(void)
 {
-    assert(jooan_guard_listener_reply_port_allowed(554));
+    assert(jooan_guard_listener_reply_port_allowed(8554));
     assert(jooan_guard_listener_reply_port_allowed(8899));
     assert(jooan_guard_listener_reply_port_allowed(9898));
     assert(jooan_guard_listener_reply_port_allowed(24569));
     assert(!jooan_guard_listener_reply_port_allowed(443));
     assert(!jooan_guard_listener_reply_port_allowed(1883));
-    assert(jooan_guard_listener_bind_external_allowed(554, SOCK_STREAM));
+    assert(!jooan_guard_listener_bind_external_allowed(554, SOCK_STREAM));
     assert(!jooan_guard_listener_bind_external_allowed(554, SOCK_DGRAM));
     assert(!jooan_guard_listener_bind_external_allowed(8899, SOCK_STREAM));
 }

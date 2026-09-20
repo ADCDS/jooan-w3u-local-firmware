@@ -25,8 +25,10 @@
  * an upstream address. Telemetry PUBLISH packets are consumed and discarded;
  * only two explicit local DP namespaces may be published back to the OEM app. */
 static pthread_t thread;
+static pthread_t connectivity_thread;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int running, listen_fd = -1, client_fd = -1, subscribed;
+static int connectivity_fd = -1, connectivity_started;
 static char command_topic[256];
 static char state[96] = "stopped";
 static char bridge_state_dir[256];
@@ -36,6 +38,29 @@ static Operation operations[16];
 static mbedtls_ssl_context client_ssl;
 static int client_tls;
 #endif
+
+static void *connectivity_sink(void *unused)
+{
+    (void)unused;
+    while(running){int fd=accept(connectivity_fd,NULL,NULL);if(fd<0){if(errno==EINTR)continue;break;}close(fd);}
+    return NULL;
+}
+
+static int connectivity_sink_start(void)
+{
+    const char *configured=getenv("JOAN_CONNECTIVITY_PORT");char *end=NULL;
+    unsigned long port=configured?strtoul(configured,&end,10):9443UL;
+    struct sockaddr_in address;int one=1;
+    if(configured&&(!end||*end||port>65535UL))return-1;
+    if(port==0)return 0;
+    connectivity_fd=socket(AF_INET,SOCK_STREAM,0);if(connectivity_fd<0)return-1;
+    setsockopt(connectivity_fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
+    memset(&address,0,sizeof(address));address.sin_family=AF_INET;
+    inet_pton(AF_INET,"127.0.0.4",&address.sin_addr);address.sin_port=htons((uint16_t)port);
+    if(bind(connectivity_fd,(struct sockaddr*)&address,sizeof(address))||listen(connectivity_fd,8)){close(connectivity_fd);connectivity_fd=-1;return-1;}
+    if(pthread_create(&connectivity_thread,NULL,connectivity_sink,NULL)){close(connectivity_fd);connectivity_fd=-1;return-1;}
+    connectivity_started=1;return 0;
+}
 
 static ssize_t mqtt_read(int fd, void *data, size_t len)
 {
@@ -194,12 +219,12 @@ int joan_mqtt_bridge_start(const JoanConfig *cfg)
     JoanConfig *copy;
     if (!cfg->mqtt_port) return 0;
     copy=malloc(sizeof(*copy)); if(!copy)return -1; *copy=*cfg;snprintf(bridge_state_dir,sizeof(bridge_state_dir),"%s",cfg->state_dir);
-    running=1; if(pthread_create(&thread,NULL,broker,copy)){running=0;free(copy);return -1;} return 0;
+    running=1;if(connectivity_sink_start()){running=0;free(copy);return-1;}if(pthread_create(&thread,NULL,broker,copy)){running=0;if(connectivity_fd>=0){shutdown(connectivity_fd,SHUT_RDWR);close(connectivity_fd);connectivity_fd=-1;}if(connectivity_started)pthread_join(connectivity_thread,NULL);connectivity_started=0;free(copy);return -1;} return 0;
 }
 
 void joan_mqtt_bridge_stop(void)
 {
-    int fd,client; if(!running)return; running=0; pthread_mutex_lock(&mutex); fd=listen_fd;client=client_fd; pthread_mutex_unlock(&mutex); if(client>=0)shutdown(client,SHUT_RDWR);if(fd>=0)shutdown(fd,SHUT_RDWR); pthread_join(thread,NULL);
+    int fd,client; if(!running)return; running=0; pthread_mutex_lock(&mutex); fd=listen_fd;client=client_fd; pthread_mutex_unlock(&mutex); if(client>=0)shutdown(client,SHUT_RDWR);if(fd>=0)shutdown(fd,SHUT_RDWR);if(connectivity_fd>=0)shutdown(connectivity_fd,SHUT_RDWR);pthread_join(thread,NULL);if(connectivity_started)pthread_join(connectivity_thread,NULL);connectivity_started=0;if(connectivity_fd>=0)close(connectivity_fd);connectivity_fd=-1;
 }
 
 static size_t mqtt_remaining(unsigned char *out,size_t n){size_t i=0;do{unsigned char c=n%128;n/=128;if(n)c|=128;out[i++]=c;}while(n&&i<4);return i;}

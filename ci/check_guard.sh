@@ -32,11 +32,12 @@ ids = [case["id"] for case in vector["cases"]]
 assert len(ids) == len(set(ids))
 required = {
     "confine-oem-bind-to-loopback",
-    "allow-external-rtsp-bind",
+    "confine-oem-rtsp-bind",
     "deny-unsynced-external-rtsp-accept",
     "allow-unsynced-loopback-rtsp-accept",
     "confine-oem-p2p-bind",
     "redirect-approved-mqtt",
+    "redirect-oem-connectivity-probe",
     "redirect-approved-api",
     "allow-established-rtsp-reply",
     "deny-connected-write-external",

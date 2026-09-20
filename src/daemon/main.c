@@ -21,10 +21,11 @@ int main(int argc,char**argv)
     copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
     copy_env(c.audio_socket,sizeof(c.audio_socket),"JOAN_AUDIO_WS_SOCKET","/run/joan/audio-ws.sock");
-    c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.rtsp_port=554;c.mdns_enabled=1;c.mdns_port=5353;
+    c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.mdns_enabled=1;c.mdns_port=5353;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);
     if(getenv("JOAN_RTSP_PORT"))c.rtsp_port=(unsigned)strtoul(getenv("JOAN_RTSP_PORT"),NULL,10);
+    if(getenv("JOAN_RTSP_PROXY_PORT"))c.rtsp_proxy_port=(unsigned)strtoul(getenv("JOAN_RTSP_PROXY_PORT"),NULL,10);
     if(getenv("JOAN_REDIRECT_PORT"))c.redirect_port=(unsigned)strtoul(getenv("JOAN_REDIRECT_PORT"),NULL,10);
     if(getenv("JOAN_MDNS")&&!strcmp(getenv("JOAN_MDNS"),"0"))c.mdns_enabled=0;
     if(getenv("JOAN_MDNS_PORT"))c.mdns_port=(unsigned)strtoul(getenv("JOAN_MDNS_PORT"),NULL,10);
@@ -34,7 +35,7 @@ int main(int argc,char**argv)
         else if(!strcmp(argv[i],"--port")&&i+1<argc)c.port=(unsigned)strtoul(argv[++i],NULL,10);
         else{usage(argv[0]);return 2;}
     }
-    if(!c.port||c.port>65535||c.mqtt_port>65535||!c.rtsp_port||c.rtsp_port>65535||!c.mdns_port||c.mdns_port>65535){usage(argv[0]);return 2;}
+    if(!c.port||c.port>65535||c.mqtt_port>65535||!c.rtsp_port||c.rtsp_port>65535||c.rtsp_proxy_port>65535||!c.mdns_port||c.mdns_port>65535){usage(argv[0]);return 2;}
     signal(SIGPIPE,SIG_IGN);
     signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);
     if(joan_auth_init(&c)){fprintf(stderr,"cannot initialize authentication state\n");return 1;}
@@ -42,9 +43,11 @@ int main(int argc,char**argv)
     if(c.plain_http)fprintf(stderr,"WARNING: explicit plaintext development mode; do not expose beyond a test namespace\n");
     if(joan_mqtt_bridge_start(&c)){fprintf(stderr,"cannot start loopback MQTT compatibility sink\n");return 1;}
     if(joan_mdns_start(&c)){fprintf(stderr,"cannot start mDNS responder\n");return 1;}
-    if(joan_fmp4_start(&c)){fprintf(stderr,"cannot start fMP4 stream workers\n");return 1;}
+    if(joan_rtsp_proxy_start(&c)){fprintf(stderr,"cannot start authenticated RTSP proxy\n");joan_mdns_stop();joan_mqtt_bridge_stop();return 1;}
+    if(joan_fmp4_start(&c)){fprintf(stderr,"cannot start fMP4 stream workers\n");joan_rtsp_proxy_stop();joan_mdns_stop();joan_mqtt_bridge_stop();return 1;}
     fprintf(stderr,"joan-daemon %s listening on %s:%u (%s)\n",JOAN_VERSION,c.bind_addr,c.port,c.plain_http?"HTTP DEVELOPMENT MODE":"HTTPS ECDSA");
     rc=joan_server_run(&c);
+    joan_rtsp_proxy_stop();
     joan_mdns_stop();
     joan_mqtt_bridge_stop();
     return rc?1:0;

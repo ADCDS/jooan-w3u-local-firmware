@@ -70,11 +70,16 @@ accepted, not completed; poll its `/api/v1/operations/{id}` URL.
 The PWA consumes the main and sub fMP4 routes. The daemon converts the retained
 local RTSP/RTP H.264 streams into initialization segments and bounded fragmented
 MP4; it does not transcode video. Stream readiness is reported separately for
-main and sub. RTSP remains available on TCP/554 for local NVR clients.
+main and sub. RTSP remains available on TCP/554 for local NVR clients through
+the daemon's Digest-authenticated proxy; the username is `admin` and the
+password is synchronized with WebUI/SSH. The OEM upstream is loopback-only on
+TCP/8554.
 
 The audio WebSockets bridge to the bounded local audio router. The UI supports
 microphone listening and explicit press-to-talk; microphone playback pauses
-while talking to reduce feedback. These paths remain hardware-promotion gates.
+while talking to reduce feedback. OEM alarm/voice playback is discarded and
+the active-high speaker amplifier is enabled only for the authenticated,
+deadman-bounded talkback lease. These paths remain hardware-promotion gates.
 
 PTZ requires a short lease so a lost browser cannot leave the motor running.
 The Web UI exposes directional jog/stop, home, and saved presets. Commands use

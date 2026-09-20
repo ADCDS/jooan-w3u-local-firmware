@@ -65,6 +65,9 @@ keys, the HTTPS daemon and PWA, main/sub fMP4, a local TLS MQTT sink, microphone
 and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
 exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
 names to loopback and denies other `jooanipc` connect/datagram traffic.
+It also confines OEM RTSP to loopback TCP/8554, suppresses OEM speaker output,
+and grants the amplifier only to bounded local talkback. An authenticated
+Digest proxy exposes RTSP to local clients on TCP/554.
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
 runtime must total no more than 180224 bytes (176 KiB), with at least 81920 bytes

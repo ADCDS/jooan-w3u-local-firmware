@@ -33,8 +33,9 @@ the device-wide inbound and outbound boundary.
 
 The runtime supplies continuous `telnetd` suppression, password-synchronized
 SSH with optional keys, HTTPS on 443, the port-80 redirect, embedded DNS-SD,
-and an exact-hash `jooanipc` containment DSO. Direct RTSP/TCP 554 is inherited
-from the retained OEM media service.
+and an exact-hash `jooanipc` containment DSO. The daemon owns public RTSP/TCP
+554 and requires Digest authentication; the guard remaps the retained OEM RTSP
+service to loopback TCP/8554 for the proxy and fMP4 ingestion.
 
 ## Early-boot OEM exposure
 

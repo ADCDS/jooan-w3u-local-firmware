@@ -13,4 +13,5 @@ python3 tests/run_optional_vectors.py network_guard --schema-only
 ci/check_guard.sh
 python3 tests/run_optional_vectors.py audio --schema-only
 ci/check_audio.sh
+ci/check_rtsp_proxy.sh
 python3 ci/check_reproducible.py
