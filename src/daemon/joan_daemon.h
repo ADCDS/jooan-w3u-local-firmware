@@ -6,7 +6,8 @@
 #include <sys/types.h>
 
 #define JOAN_VERSION "0.1.0"
-#define JOAN_MAX_BODY (8u * 1024u * 1024u)
+#define JOAN_MAX_BODY (16u * 1024u)
+#define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
 #define JOAN_TOKEN_BYTES 32u
 #define JOAN_TOKEN_HEX (JOAN_TOKEN_BYTES * 2u)
@@ -14,6 +15,7 @@
 typedef struct {
     char state_dir[256];
     char staging_dir[256];
+    char release_sequence_path[256];
     char web_dir[256];
     char bind_addr[64];
     unsigned port;

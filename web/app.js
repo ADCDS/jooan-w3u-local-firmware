@@ -32,5 +32,6 @@ $('#preset-goto').onclick=()=>api('/api/v1/ptz/presets',{method:'PUT',headers:{'
 $('#preset-delete').onclick=()=>api('/api/v1/ptz/presets',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:Number($('#preset-list').value)})}).then(operation).then(loadPresets).catch(x=>notice(x.message));
 $('#firmware-form').addEventListener('submit',async e=>{e.preventDefault();const file=new FormData(e.target).get('image');try{const d=await api('/api/v1/update',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});firmwareId=d.id||'';$('#firmware-result').textContent=JSON.stringify(d,null,2);}catch(x){notice(x.message);}});
 $('#firmware-apply').onclick=()=>api('/api/v1/update',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:firmwareId})}).then(x=>$('#firmware-result').textContent=JSON.stringify(x,null,2)).catch(x=>notice(x.message));
-status().catch(()=>show('#login'));
+async function resume(){const session=await api('/api/v1/session');csrf=session.csrf;await load();}
+resume().catch(()=>show('#login'));
 if('serviceWorker'in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))navigator.serviceWorker.register('/sw.js').catch(()=>{});

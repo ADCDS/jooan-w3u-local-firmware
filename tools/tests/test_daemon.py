@@ -24,6 +24,8 @@ def mqtt_packet(sock):
  return h[0],data
 def websocket_status(cookie,protocol):
  s=socket.create_connection(('127.0.0.1',18081),2);request=(f'GET /api/v1/audio/mic HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nOrigin: http://127.0.0.1:18081\r\nCookie: {cookie}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: {protocol}\r\n\r\n').encode();s.sendall(request);line=s.recv(128).split(b'\r\n',1)[0];s.close();return int(line.split()[1])
+def raw_status(request_bytes):
+ s=socket.create_connection(('127.0.0.1',18081),2);s.sendall(request_bytes);line=s.recv(256).split(b'\r\n',1)[0];s.close();return int(line.split()[1])
 def rtsp_client(c):
  data=b'';challenged=False
  try:
@@ -60,7 +62,8 @@ def rtsp_server(stop):
  finally:s.close()
 stop=threading.Event();rtsp=threading.Thread(target=rtsp_server,args=(stop,),daemon=True);rtsp.start();time.sleep(.1)
 with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as staging:
- env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'1','JOAN_MDNS_PORT':'15353'}
+ sequence=pathlib.Path(state)/'release-sequence';sequence.write_text('7\n')
+ env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_RELEASE_SEQUENCE_PATH':str(sequence),'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'1','JOAN_MDNS_PORT':'15353'}
  p=subprocess.Popen([BIN,'--plain-http','--bind','127.0.0.1','--port','18081'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  try:
   for _ in range(100):
@@ -70,8 +73,21 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   else:raise AssertionError('daemon did not listen')
   ver,rounds,salt,want,warning=(pathlib.Path(state)/'auth.db').read_text().strip().split(':');assert ver=='v1' and warning=='1';assert hashlib.pbkdf2_hmac('sha256',b'change-me-password',bytes.fromhex(salt),int(rounds)).hex()==want
   user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert user=='admin' and crypt_verify('change-me-password',sh)
-  setup=json.loads(request('GET','/api/v1/setup/status')[2]);assert setup['setup_required'] is False and setup['default_password_warning'] is True
+  setup=json.loads(request('GET','/api/v1/setup/status')[2]);assert setup['setup_required'] is False and setup['default_password_warning'] is True and setup['release_version']=='0.1.0' and setup['release_sequence']==7
+  login_body=b'{"username":"admin","password":"change-me-password"}'
+  assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nhost: 127.0.0.1:18081\r\ncontent-length: '+str(len(login_body)).encode()+b'\r\ncontent-type: application/json\r\n\r\n'+login_body)==200
+  smuggled=b'Host: 127.0.0.1:18081\r\nCookie: joan_session=attacker'
+  assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nContent-Length: '+str(len(smuggled)).encode()+b'\r\n\r\n'+smuggled)==400
+  assert raw_status(b'POST /api/v1/network/mdns HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 16385\r\n\r\n')==413
+  assert raw_status(b'POST /api/v1/update HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 2097345\r\n\r\n')==413
+  slow=[]
+  for _ in range(4):
+   s=socket.create_connection(('127.0.0.1',18081),2);s.sendall(b'G');slow.append(s)
+  time.sleep(.1);overflow=socket.create_connection(('127.0.0.1',18081),2);assert b' 503 ' in overflow.recv(128);overflow.close()
+  for s in slow:s.close()
+  time.sleep(.1)
   status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'change-me-password'});assert status==200,(status,b);cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is True
+  resumed=json.loads(request('GET','/api/v1/session',cookie=cookie)[2]);assert resumed['authenticated'] is True and resumed['csrf']==csrf and resumed['default_password_warning'] is True
   assert request('GET','/api/v1/streams',cookie=cookie)[0]==200
   streams=json.loads(request('GET','/api/v1/streams',cookie=cookie)[2])['streams'];assert streams[0]['mime'].endswith('avc1.640032"') and streams[1]['mime'].endswith('avc1.640016"')
   denied=json.loads(request('PUT','/api/v1/network/mdns',{'hostname':'x'},cookie,'wrong')[2]);assert denied['error']['code']=='authentication_required'
@@ -88,7 +104,10 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   m=socket.create_connection(('127.0.0.1',18883),2);m.sendall(b'\x10\x0c\x00\x04MQTT\x04\x02\x00\x1e\x00\x00');assert m.recv(4)==b'\x20\x02\x00\x00';topic=b'qaiot/mqtt/device/command';sub=b'\x00\x01'+struct.pack('!H',len(topic))+topic+b'\x00';m.sendall(b'\x82'+bytes([len(sub)])+sub);assert m.recv(5)==b'\x90\x03\x00\x01\x00'
   for expected in (66516,66517):
    _,command=mqtt_packet(m);assert str(expected).encode() in command
-   response=json.dumps({'cmd':expected,'status':0},separators=(',',':')).encode();reply_topic=b'qaiot/mqtt/device/reply';publish=struct.pack('!H',len(reply_topic))+reply_topic+response;m.sendall(b'\x30'+bytes([len(publish)])+publish)
+   response=json.dumps({'cmd':expected,'cmd_type':'response','status':0},separators=(',',':')).encode();reply_topic=b'qaiot/mqtt/user/device/reply'
+   if expected==66517:
+    bogus=json.dumps({'cmd':expected,'cmd_type':'request','status':0},separators=(',',':')).encode();publish=struct.pack('!H',len(reply_topic))+reply_topic+bogus;m.sendall(b'\x30'+bytes([len(publish)])+publish);time.sleep(.03);assert json.loads(request('GET','/api/v1/status',cookie=cookie)[2])['rtsp_password_sync'] is False
+   publish=struct.pack('!H',len(reply_topic))+reply_topic+response;m.sendall(b'\x30'+bytes([len(publish)])+publish)
   time.sleep(.1);assert json.loads(request('GET','/api/v1/status',cookie=cookie)[2])['rtsp_password_sync'] is True
   status,_,b=request('PUT','/api/v1/network/mdns',{'hostname':'Nursery-Cam'},cookie,csrf);assert status==200 and json.loads(b)['address']=='nursery-cam.local'
   md=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);md.settimeout(3);q=b'\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06_https\x04_tcp\x05local\x00\x00\x0c\x00\x01';md.sendto(q,('127.0.0.1',15353));found=b''
@@ -105,14 +124,19 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert request('POST','/api/v1/ptz/home',{'action':'set'},cookie,csrf)[0]==202
   _,command=mqtt_packet(m);assert b'66485' in command
   preset=request('GET','/api/v1/ptz/presets',cookie=cookie);assert preset[0]==202;operation=json.loads(preset[2])['operation'];_,command=mqtt_packet(m);assert b'66486' in command
-  response=b'{"cmd":66486,"ptz_coordinate":[]}';reply_topic=b'qaiot/mqtt/device/reply';publish=struct.pack('!H',len(reply_topic))+reply_topic+response;m.sendall(b'\x30'+bytes([len(publish)])+publish);time.sleep(.05)
+  assert request('GET','/api/v1/ptz/presets',cookie=cookie)[0]==409
+  response=b'{"cmd":66486,"cmd_type":"response","status":0,"ptz_coordinate":[]}';telemetry_topic=b'qaiot/mqtt/device/reply';publish=struct.pack('!H',len(telemetry_topic))+telemetry_topic+response;m.sendall(b'\x30'+bytes([len(publish)])+publish);time.sleep(.05);assert json.loads(request('GET',f'/api/v1/operations/{operation}',cookie=cookie)[2])['state']=='pending'
+  reply_topic=b'qaiot/mqtt/user/device/reply';not_response=response.replace(b'"response"',b'"request"');publish=struct.pack('!H',len(reply_topic))+reply_topic+not_response;m.sendall(b'\x30'+bytes([len(publish)])+publish);time.sleep(.05);assert json.loads(request('GET',f'/api/v1/operations/{operation}',cookie=cookie)[2])['state']=='pending'
+  publish=struct.pack('!H',len(reply_topic))+reply_topic+response;m.sendall(b'\x30'+bytes([len(publish)])+publish);time.sleep(.05)
   completed=json.loads(request('GET',f'/api/v1/operations/{operation}',cookie=cookie)[2]);assert completed['state']=='complete' and completed['response']['cmd']==66486
   init=request('GET','/api/v1/video/main/init.mp4',cookie=cookie);assert init[0]==200 and b'ftyp' in init[2] and b'moov' in init[2]
   frag=request('GET','/api/v1/video/main/fragment.mp4?after=0',cookie=cookie);assert frag[0]==200 and b'moof' in frag[2] and b'mdat' in frag[2] and int(frag[1]['X-Joan-Sequence'])>0
   assert request('GET','/api/v1/snapshot',cookie=cookie)[0]==501
   manifest=json.loads((ROOT/'web/manifest.webmanifest').read_text());assert manifest['display']=='standalone'
   sw=(ROOT/'web/sw.js').read_text();static=next(line for line in sw.splitlines() if line.startswith('const STATIC='));assert '/api/' not in static and 'audio' not in static and 'video-player.js' in static
-  subprocess.run(['node','--check',str(ROOT/'web/sw.js')],check=True,capture_output=True)
+  player=(ROOT/'web/video-player.js').read_text();assert 'this.failures >= 3' in player and 'await this.initialize(next)' in player and 'this.sequence = 0' in player
+  for script in ('sw.js','video-player.js','app.js'):subprocess.run(['node','--check',str(ROOT/'web'/script)],check=True,capture_output=True)
+  subprocess.run(['node',str(ROOT/'web/video-player.test.js')],check=True,capture_output=True)
   m.close()
   migrated_auth=(pathlib.Path(state)/'auth.db').read_bytes()
   print('PASS: warning auth/SSH sync/CSRF/origin/helpers/PTZ/fMP4/MQTT')
