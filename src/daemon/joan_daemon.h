@@ -23,7 +23,9 @@ typedef struct {
     char integration_helper[256];
     char audio_socket[256];
     unsigned mqtt_port;
+    unsigned rtsp_port;
     int mdns_enabled;
+    unsigned mdns_port;
 } JoanConfig;
 
 typedef struct {
@@ -38,6 +40,9 @@ typedef struct {
     char upgrade[64];
     char ws_key[128];
     char ws_protocol[128];
+    char origin[256];
+    char host[256];
+    char transfer_encoding[64];
     size_t content_length;
     unsigned char *body;
 } JoanRequest;
@@ -63,6 +68,8 @@ void joan_pbkdf2_sha256(const void *password, size_t password_len,
 
 int joan_auth_init(const JoanConfig *cfg);
 int joan_auth_setup_required(const JoanConfig *cfg);
+int joan_auth_ssh_synchronized(const JoanConfig *cfg);
+int joan_auth_rtsp_synchronized(const JoanConfig *cfg);
 int joan_auth_login(const JoanConfig *cfg, const char *remote,
                     const char *user, const char *password, JoanAuthz *out);
 int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out);
@@ -79,14 +86,26 @@ int joan_stage_blob(const JoanConfig *cfg, const char *category,
 int joan_mqtt_bridge_start(const JoanConfig *cfg);
 void joan_mqtt_bridge_stop(void);
 int joan_mqtt_bridge_publish(const char *topic, const void *payload, size_t len);
+int joan_mqtt_request(unsigned command, const char *payload, char operation[65]);
+int joan_mqtt_operation(const char *operation, char *response, size_t capacity);
 const char *joan_mqtt_bridge_status(void);
 
 int joan_mdns_start(const JoanConfig *cfg);
+void joan_mdns_stop(void);
 int joan_mdns_get_hostname(const JoanConfig *cfg, char out[64]);
+int joan_mdns_get_configured_hostname(const JoanConfig *cfg, char out[64]);
 int joan_mdns_set_hostname(const JoanConfig *cfg, const char *hostname);
 const char *joan_mdns_status(void);
 
 int joan_tls_ensure_identity(const JoanConfig *cfg);
+int joan_fmp4_start(const JoanConfig *cfg);
+int joan_fmp4_init_segment(const char *stream, unsigned char **data, size_t *len,
+                           unsigned timeout_ms);
+int joan_fmp4_fragment(const char *stream, uint32_t after,
+                       unsigned char **data, size_t *len, uint32_t *sequence,
+                       unsigned timeout_ms);
+const char *joan_fmp4_status(const char *stream);
 int joan_server_run(const JoanConfig *cfg);
+void joan_server_stop(void);
 
 #endif

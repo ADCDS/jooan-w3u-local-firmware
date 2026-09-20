@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef JOAN_NO_TLS
@@ -28,6 +29,9 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int running, listen_fd = -1, client_fd = -1, subscribed;
 static char command_topic[256];
 static char state[96] = "stopped";
+static char bridge_state_dir[256];
+typedef struct {char id[65];unsigned command;time_t created;int state;char credential_hash[65];char response[2049];} Operation;
+static Operation operations[16];
 #ifndef JOAN_NO_TLS
 static mbedtls_ssl_context client_ssl;
 static int client_tls;
@@ -72,6 +76,21 @@ static int receive_packet(int fd, unsigned char *type, unsigned char *buf, size_
     *type = h; *len = rem; return 0;
 }
 
+static unsigned json_command(const unsigned char *payload,size_t len)
+{
+    size_t i;if(!payload||len<6)return 0;for(i=0;i+5<len;i++)if(!memcmp(payload+i,"\"cmd\"",5)){unsigned v=0;i+=5;while(i<len&&(payload[i]==' '||payload[i]=='\t'||payload[i]==':'))i++;if(i>=len||payload[i]<'0'||payload[i]>'9')return 0;while(i<len&&payload[i]>='0'&&payload[i]<='9'){v=v*10u+(unsigned)(payload[i]-'0');i++;}return v;}return 0;
+}
+static int json_zero(const char*json,const char*field){char needle[48];const char*p;snprintf(needle,sizeof(needle),"\"%s\"",field);p=strstr(json,needle);if(!p)return 0;p+=strlen(needle);while(*p==' '||*p=='\t')p++;if(*p++!=':')return 0;while(*p==' '||*p=='\t')p++;return *p=='0'&&(p[1]==','||p[1]=='}'||p[1]==' '||p[1]=='\t');}
+
+static void correlate(const unsigned char *payload,size_t len)
+{
+    unsigned cmd=json_command(payload,len),i;Operation*best=NULL;if(!cmd)return;
+    pthread_mutex_lock(&mutex);
+    for(i=0;i<16;i++)if(operations[i].state==1&&operations[i].command==cmd&&(!best||operations[i].created<best->created))best=&operations[i];
+    if(best){if(len>=sizeof(best->response))len=sizeof(best->response)-1;memcpy(best->response,payload,len);best->response[len]=0;best->state=2;if(cmd==66517&&best->credential_hash[0]&&(json_zero(best->response,"status")||json_zero(best->response,"result")||json_zero(best->response,"code")||json_zero(best->response,"ret")||strstr(best->response,"\"success\":true"))){char path[512],line[67];snprintf(path,sizeof(path),"%s/rtsp.synced",bridge_state_dir);snprintf(line,sizeof(line),"%s\n",best->credential_hash);(void)joan_write_atomic(path,line,strlen(line),0600);}}
+    pthread_mutex_unlock(&mutex);
+}
+
 static void handle_client(int fd)
 {
     unsigned char type, b[8192], reply[8]; size_t n;
@@ -80,7 +99,8 @@ static void handle_client(int fd)
         case 1: /* CONNECT */
             { static const unsigned char connack[] = {0x20,0x02,0x00,0x00}; if (send_all(fd, connack, sizeof(connack))) return; }
             break;
-        case 3: /* PUBLISH: telemetry is intentionally discarded. */
+        case 3: /* Correlate approved command responses; discard telemetry. */
+            if(n>=2){size_t topic_len=((size_t)b[0]<<8)|b[1],off=2+topic_len;if(off<=n){if((type&6u)!=0)off+=2;if(off<=n)correlate(b+off,n-off);}}
             if ((type & 6u) == 2u && n >= 4) { /* QoS1 PUBACK */
                 size_t topic_len = ((size_t)b[0] << 8) | b[1];
                 if (topic_len + 4 <= n) { reply[0]=0x40; reply[1]=2; reply[2]=b[2+topic_len]; reply[3]=b[3+topic_len]; if(send_all(fd,reply,4))return; }
@@ -96,6 +116,7 @@ static void handle_client(int fd)
               if (strncmp(command_topic, "qaiot/mqtt/", 11) != 0) return;
             }
             subscribed = 1; reply[0]=0x90; reply[1]=3; reply[2]=b[0]; reply[3]=b[1]; reply[4]=0; if(send_all(fd,reply,5))return;
+            {char path[512],password[320],command[768],operation[65];unsigned char*raw=NULL;size_t z=0;snprintf(path,sizeof(path),"%s/rtsp.password",bridge_state_dir);if(!joan_read_file(path,&raw,&z,sizeof(password)-1)){while(z&&(raw[z-1]=='\n'||raw[z-1]=='\r'))z--;if(z<sizeof(password)){memcpy(password,raw,z);password[z]=0;snprintf(command,sizeof(command),"{\"cmd\":66516,\"cmd_type\":\"request\",\"sessionid\":0,\"value\":0,\"security_enhanced_switch\":1}");(void)joan_mqtt_request(66516,command,operation);snprintf(command,sizeof(command),"{\"cmd\":66517,\"cmd_type\":\"request\",\"sessionid\":0,\"value\":0,\"security_password\":\"%s\"}",password);(void)joan_mqtt_request(66517,command,operation);memset(password,0,sizeof(password));}memset(raw,0,z);free(raw);}}
             break;
         case 12: { static const unsigned char pong[]={0xd0,0}; if(send_all(fd,pong,2))return; } break;
         case 14: return;
@@ -171,7 +192,7 @@ int joan_mqtt_bridge_start(const JoanConfig *cfg)
 {
     JoanConfig *copy;
     if (!cfg->mqtt_port) return 0;
-    copy=malloc(sizeof(*copy)); if(!copy)return -1; *copy=*cfg;
+    copy=malloc(sizeof(*copy)); if(!copy)return -1; *copy=*cfg;snprintf(bridge_state_dir,sizeof(bridge_state_dir),"%s",cfg->state_dir);
     running=1; if(pthread_create(&thread,NULL,broker,copy)){running=0;free(copy);return -1;} return 0;
 }
 
@@ -184,11 +205,23 @@ static size_t mqtt_remaining(unsigned char *out,size_t n){size_t i=0;do{unsigned
 int joan_mqtt_bridge_publish(const char *topic,const void *payload,size_t len)
 {
     unsigned char packet[8192],rem[4]; size_t tn,rl,rn,total; int rc=-1;
-    if (!topic || (strncmp(topic,"local/dp/security",17) && strncmp(topic,"local/dp/ptz",12))) return -1;
+    if (!topic || (strcmp(topic,"local/dp/security") && strcmp(topic,"local/dp/ptz"))) return -1;
     pthread_mutex_lock(&mutex);
     if(client_fd<0||!subscribed||!command_topic[0]){pthread_mutex_unlock(&mutex);return -1;}
     tn=strlen(command_topic); rl=2+tn+len; rn=mqtt_remaining(rem,rl); total=1+rn+rl; if(total>sizeof(packet)||tn>65535){pthread_mutex_unlock(&mutex);return -1;}
     packet[0]=0x30;memcpy(packet+1,rem,rn);packet[1+rn]=tn>>8;packet[2+rn]=tn;memcpy(packet+3+rn,command_topic,tn);memcpy(packet+3+rn+tn,payload,len);
     rc=send_all(client_fd,packet,total); pthread_mutex_unlock(&mutex); return rc;
+}
+int joan_mqtt_request(unsigned command,const char*payload,char operation[65])
+{
+    unsigned char random[32];unsigned i,slot=0;time_t oldest=time(NULL);int rc;
+    if(!command||!payload||!operation||joan_random(random,sizeof(random)))return-1;
+    joan_hex(random,sizeof(random),operation);
+    pthread_mutex_lock(&mutex);for(i=0;i<16;i++){if(!operations[i].state||operations[i].created+120<time(NULL)){slot=i;break;}if(operations[i].created<oldest){oldest=operations[i].created;slot=i;}}memset(&operations[slot],0,sizeof(operations[slot]));snprintf(operations[slot].id,sizeof(operations[slot].id),"%s",operation);operations[slot].command=command;operations[slot].created=time(NULL);operations[slot].state=1;if(command==66517){char path[512];unsigned char*raw=NULL,hash[32];size_t n=0;snprintf(path,sizeof(path),"%s/rtsp.password",bridge_state_dir);if(!joan_read_file(path,&raw,&n,512)){joan_sha256(raw,n,hash);joan_hex(hash,32,operations[slot].credential_hash);memset(raw,0,n);free(raw);}}pthread_mutex_unlock(&mutex);
+    rc=joan_mqtt_bridge_publish("local/dp/ptz",payload,strlen(payload));if(rc){pthread_mutex_lock(&mutex);operations[slot].state=3;snprintf(operations[slot].response,sizeof(operations[slot].response),"{\"error\":\"mqtt unavailable\"}");pthread_mutex_unlock(&mutex);}return rc;
+}
+int joan_mqtt_operation(const char*operation,char*response,size_t capacity)
+{
+    unsigned i;int state=-1;if(!operation||!response||!capacity)return-1;pthread_mutex_lock(&mutex);for(i=0;i<16;i++)if(operations[i].state&&!strcmp(operations[i].id,operation)){state=operations[i].state;if(operations[i].response[0])snprintf(response,capacity,"%s",operations[i].response);else response[0]=0;break;}pthread_mutex_unlock(&mutex);return state==2?0:state==1?1:-1;
 }
 const char *joan_mqtt_bridge_status(void){return state;}
