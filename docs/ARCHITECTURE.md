@@ -59,16 +59,20 @@ changed; warning state, rather than forced setup, records that condition.
 ## Current implementation boundary
 
 The implementation includes deterministic signed packaging, a compressed
-controller plus compressed A/B runtime slots, trial rollback, telnet
+controller plus one stable compressed runtime, transient A/B trial/rollback, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
 keys, the HTTPS daemon and PWA, main/sub fMP4, a local TLS MQTT sink, microphone
 and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
 exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
 names to loopback and denies other `jooanipc` connect/datagram traffic.
 
-All persistent regular files under the retrofit root—including the controller
-and maximum two-slot A/B layout—must total no more than 180224 bytes (176 KiB),
-with at least 81920 bytes (80 KiB) left free. Controller and slots stay
+In steady state, persistent regular files for the compressed controller/SSH
+material and exactly one stable runtime must total no more than 180224 bytes
+(176 KiB), with at least 81920 bytes (80 KiB) free. During update, the stable
+slot and one candidate may coexist under a 262144-byte (256 KiB) cap while
+preserving at least 57344 bytes (56 KiB) free, above the OEM startapp cleanup
+threshold of 50 KiB. Promotion/rollback durably selects the result, prunes the
+superseded or failed slot, and returns to one stable slot. Archives remain
 compressed on JFFS2 and expand into tmpfs at boot.
 
 No kernel-wide firewall is claimed. The supervisor repeatedly removes IPv4 and

@@ -11,9 +11,14 @@ bounded execution, captured logs, and the established cold-recovery procedure.
 - Verify every compatibility-critical source/schema named in
   `ci/compatibility-hashes.sha256` byte-for-byte.
 - Parse every shell script with its declared interpreter.
-- Keep all persistent regular files for the compressed controller and maximum
-  two-slot A/B layout at or below **180224 bytes (176 KiB)** and require at
-  least **81920 bytes (80 KiB)** free after installation/update.
+- In steady state, keep the compressed controller/SSH material plus exactly one
+  stable runtime at or below **180224 bytes (176 KiB)** and require at least
+  **81920 bytes (80 KiB)** free.
+- During update, allow only the stable slot plus one candidate, cap transient
+  regular files at **262144 bytes (256 KiB)**, and preserve at least **57344
+  bytes (56 KiB)** free. This is above the OEM startapp cleanup threshold of
+  50 KiB. Promotion/rollback must prune the superseded or failed candidate and
+  return to the one-slot steady state.
 - Build release artifacts twice with `SOURCE_DATE_EPOCH=0`, `TZ=UTC`, `LC_ALL=C`,
   a fresh `BUILD_OUT`, and compare hashes plus executable modes. Build scripts
   must not embed the build path, hostname, current time, uid/gid, directory
@@ -143,6 +148,7 @@ recovery gates.
 
 Promotion also requires main/sub PWA fMP4, direct RTSP, mic listening/PTT, PTZ
 jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
-capture, no-default-route enforcement, the 176 KiB/80 KiB storage contract, and
-destructive uninstall semantics to pass on the physical JA-A12. Until then no
+capture, no-default-route enforcement, the steady 176 KiB/80 KiB contract, the
+transient 256 KiB/56 KiB contract with slot pruning, and destructive uninstall
+semantics to pass on the physical JA-A12. Until then no
 tag is supported.
