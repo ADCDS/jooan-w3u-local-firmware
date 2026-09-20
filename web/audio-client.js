@@ -232,7 +232,9 @@ export class JooanAudioClient extends EventTarget {
   bindPressToTalk(element) {
     const down = (event) => {
       event.preventDefault();
-      if (event.pointerId !== undefined) element.setPointerCapture?.(event.pointerId);
+      if (event.pointerId !== undefined) {
+        try { element.setPointerCapture?.(event.pointerId); } catch (_) { /* synthetic or lost pointer */ }
+      }
       void this.pressToTalk();
     };
     const up = (event) => {

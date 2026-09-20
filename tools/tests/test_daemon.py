@@ -81,10 +81,10 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert raw_status(b'POST /api/v1/network/mdns HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 16385\r\n\r\n')==413
   assert raw_status(b'POST /api/v1/update HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 2097345\r\n\r\n')==413
   slow=[]
-  for _ in range(4):
+  for _ in range(8):
    s=socket.create_connection(('127.0.0.1',18081),2);s.sendall(b'G');slow.append(s)
   time.sleep(.1);overflow=socket.create_connection(('127.0.0.1',18081),2);overflow.sendall(b'GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:18081\r\n\r\n');overflow.settimeout(.2)
-  try:overflow.recv(128);raise AssertionError('queued fifth request ran before a worker slot was free')
+  try:overflow.recv(128);raise AssertionError('queued ninth request ran before a worker slot was free')
   except socket.timeout:pass
   slow.pop().close();overflow.settimeout(2);assert b' 200 ' in overflow.recv(256);overflow.close()
   for s in slow:s.close()
@@ -139,6 +139,8 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   html=(ROOT/'web/index.html').read_text();pattern=re.search(r'name="hostname"[^>]*pattern="([^"]+)"',html).group(1);js=f"const r=new RegExp('^(?:'+{json.dumps(pattern)}+')$','v');const good=['a','camera-1','A1-b',{'a'*63!r}];const bad=['-camera','camera-','bad.name',{'a'*64!r}];if(!good.every(x=>r.test(x))||bad.some(x=>r.test(x)))process.exit(1);";subprocess.run(['node','-e',js],check=True,capture_output=True);assert 'name="username" value="admin" autocomplete="username"' in html
   sw=(ROOT/'web/sw.js').read_text();static=next(line for line in sw.splitlines() if line.startswith('const STATIC='));assert '/api/' not in static and 'audio' not in static and 'video-player.js' in static
   player=(ROOT/'web/video-player.js').read_text();assert 'this.failures >= 3' in player and 'await this.initialize(next)' in player and 'this.sequence = 0' in player
+  app=(ROOT/'web/app.js').read_text();assert 'r.status===204?null' in app and 'r.status===401' in app and 'requireLogin()' in app
+  audio_client=(ROOT/'web/audio-client.js').read_text();assert 'try { element.setPointerCapture?.(event.pointerId); }' in audio_client
   for script in ('sw.js','video-player.js','app.js'):subprocess.run(['node','--check',str(ROOT/'web'/script)],check=True,capture_output=True)
   subprocess.run(['node',str(ROOT/'web/video-player.test.js')],check=True,capture_output=True)
   m.close()

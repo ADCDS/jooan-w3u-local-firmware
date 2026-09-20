@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
         else:raise AssertionError('TLS daemon did not listen')
 
         slow=[]
-        for _ in range(4):slow.append(socket.create_connection(('127.0.0.1',18443),2))
+        for _ in range(8):slow.append(socket.create_connection(('127.0.0.1',18443),2))
         result=[]
         def queued_tls():
             raw=socket.create_connection(('127.0.0.1',18443),2)
@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
                 tls.sendall(b'GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:18443\r\n\r\n')
                 result.append(tls.recv(512))
         queued=threading.Thread(target=queued_tls);queued.start();time.sleep(.25)
-        assert queued.is_alive(),'fifth TLS request was not backpressured'
+        assert queued.is_alive(),'ninth TLS request was not backpressured'
         slow.pop().close();queued.join(4);assert not queued.is_alive() and result and b'HTTP/1.1 200 ' in result[0]
         for connection in slow:connection.close()
         time.sleep(.1)
@@ -39,6 +39,23 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(paths)) as pool:
             statuses=list(pool.map(https_get,paths))
         assert statuses[:-1]==[200]*(len(paths)-1) and statuses[-1]==401,statuses
+
+        body=b'{"username":"admin","password":"change-me-password"}'
+        headers=(b'POST /api/v1/session HTTP/1.1\r\n'
+                 b'Host: 127.0.0.1:18443\r\n'
+                 b'Origin: https://127.0.0.1:18443\r\n'
+                 b'Content-Type: application/json\r\n'
+                 b'Content-Length: '+str(len(body)).encode()+b'\r\n\r\n')
+        raw=socket.create_connection(('127.0.0.1',18443),2)
+        with context.wrap_socket(raw,server_hostname='camera.local') as tls:
+            tls.sendall(headers)
+            time.sleep(.1)
+            tls.sendall(body[:7])
+            time.sleep(.1)
+            tls.sendall(body[7:])
+            response=b''
+            while b'\r\n\r\n' not in response:response+=tls.recv(1024)
+            assert b'HTTP/1.1 200 ' in response,response
         print('PASS: queued TLS overflow and parallel initial assets/API')
     finally:
         process.terminate()
