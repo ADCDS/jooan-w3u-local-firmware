@@ -154,9 +154,9 @@ static void *broker(void *arg)
     listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) goto out;
     { int one=1; setsockopt(listen_fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one)); }
-    memset(&a,0,sizeof(a)); a.sin_family=AF_INET; a.sin_addr.s_addr=htonl(INADDR_LOOPBACK); a.sin_port=htons((uint16_t)cfg->mqtt_port);
+    memset(&a,0,sizeof(a)); a.sin_family=AF_INET; inet_pton(AF_INET,"127.0.0.2",&a.sin_addr); a.sin_port=htons((uint16_t)cfg->mqtt_port);
     if (bind(listen_fd,(struct sockaddr*)&a,sizeof(a)) || listen(listen_fd,1)) goto out;
-    pthread_mutex_lock(&mutex); snprintf(state,sizeof(state),"listening:127.0.0.1:%u",cfg->mqtt_port); pthread_mutex_unlock(&mutex);
+    pthread_mutex_lock(&mutex); snprintf(state,sizeof(state),"listening:127.0.0.2:%u",cfg->mqtt_port); pthread_mutex_unlock(&mutex);
     while (running) {
         int fd = accept(listen_fd,NULL,NULL); if (fd < 0) { if(errno==EINTR)continue; break; }
 #ifndef JOAN_NO_TLS
@@ -178,7 +178,7 @@ static void *broker(void *arg)
 #ifndef JOAN_NO_TLS
         if(client_tls){mbedtls_ssl_close_notify(&client_ssl);client_tls=0;}
 #endif
-        close(fd); client_fd=-1; subscribed=0;command_topic[0]=0; snprintf(state,sizeof(state),"listening:127.0.0.1:%u",cfg->mqtt_port); pthread_mutex_unlock(&mutex);
+        close(fd); client_fd=-1; subscribed=0;command_topic[0]=0; snprintf(state,sizeof(state),"listening:127.0.0.2:%u",cfg->mqtt_port); pthread_mutex_unlock(&mutex);
     }
 out:
     pthread_mutex_lock(&mutex); if(listen_fd>=0)close(listen_fd);listen_fd=-1;snprintf(state,sizeof(state),"stopped");pthread_mutex_unlock(&mutex);

@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   else:raise AssertionError('daemon did not listen')
   ver,rounds,salt,want,warning=(pathlib.Path(state)/'auth.db').read_text().strip().split(':');assert ver=='v1' and warning=='1';assert hashlib.pbkdf2_hmac('sha256',b'change-me-password',bytes.fromhex(salt),int(rounds)).hex()==want
   user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert user=='admin' and crypt_verify('change-me-password',sh)
-  setup=json.loads(request('GET','/api/v1/setup/status')[2]);assert setup['setup_required'] is False and setup['default_password_warning'] is True and setup['release_version']=='0.1.0' and setup['release_sequence']==7
+  setup_status,setup_headers,setup_body=request('GET','/api/v1/setup/status');setup=json.loads(setup_body);assert setup_status==200 and setup['setup_required'] is False and setup['default_password_warning'] is True and setup['release_version']=='0.1.0' and setup['release_sequence']==7;assert "media-src 'self' blob:" in setup_headers['Content-Security-Policy']
   login_body=b'{"username":"admin","password":"change-me-password"}'
   assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nhost: 127.0.0.1:18081\r\ncontent-length: '+str(len(login_body)).encode()+b'\r\ncontent-type: application/json\r\n\r\n'+login_body)==200
   smuggled=b'Host: 127.0.0.1:18081\r\nCookie: joan_session=attacker'
@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert websocket_status(cookie,'jaud.v1, jaud.auth.'+'0'*64)==403
   assert websocket_status(cookie,f'jaud.v1, jaud.auth.{csrf}, jaud.auth.{csrf}')==403
   assert websocket_status(cookie,f'jaud.v1, jaud.auth.{csrf}')==502
-  m=socket.create_connection(('127.0.0.1',18883),2);m.sendall(b'\x10\x0c\x00\x04MQTT\x04\x02\x00\x1e\x00\x00');assert m.recv(4)==b'\x20\x02\x00\x00';topic=b'qaiot/mqtt/device/command';sub=b'\x00\x01'+struct.pack('!H',len(topic))+topic+b'\x00';m.sendall(b'\x82'+bytes([len(sub)])+sub);assert m.recv(5)==b'\x90\x03\x00\x01\x00'
+  m=socket.create_connection(('127.0.0.2',18883),2);m.sendall(b'\x10\x0c\x00\x04MQTT\x04\x02\x00\x1e\x00\x00');assert m.recv(4)==b'\x20\x02\x00\x00';topic=b'qaiot/mqtt/device/command';sub=b'\x00\x01'+struct.pack('!H',len(topic))+topic+b'\x00';m.sendall(b'\x82'+bytes([len(sub)])+sub);assert m.recv(5)==b'\x90\x03\x00\x01\x00'
   for expected in (66516,66517):
    _,command=mqtt_packet(m);assert str(expected).encode() in command
    response=json.dumps({'cmd':expected,'cmd_type':'response','status':0},separators=(',',':')).encode();reply_topic=b'qaiot/mqtt/user/device/reply'
@@ -136,6 +136,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   frag=request('GET','/api/v1/video/main/fragment.mp4?after=0',cookie=cookie);assert frag[0]==200 and b'moof' in frag[2] and b'mdat' in frag[2] and int(frag[1]['X-Joan-Sequence'])>0
   assert request('GET','/api/v1/snapshot',cookie=cookie)[0]==501
   manifest=json.loads((ROOT/'web/manifest.webmanifest').read_text());assert manifest['display']=='standalone'
+  html=(ROOT/'web/index.html').read_text();pattern=re.search(r'name="hostname"[^>]*pattern="([^"]+)"',html).group(1);js=f"const r=new RegExp('^(?:'+{json.dumps(pattern)}+')$','v');const good=['a','camera-1','A1-b',{'a'*63!r}];const bad=['-camera','camera-','bad.name',{'a'*64!r}];if(!good.every(x=>r.test(x))||bad.some(x=>r.test(x)))process.exit(1);";subprocess.run(['node','-e',js],check=True,capture_output=True);assert 'name="username" value="admin" autocomplete="username"' in html
   sw=(ROOT/'web/sw.js').read_text();static=next(line for line in sw.splitlines() if line.startswith('const STATIC='));assert '/api/' not in static and 'audio' not in static and 'video-player.js' in static
   player=(ROOT/'web/video-player.js').read_text();assert 'this.failures >= 3' in player and 'await this.initialize(next)' in player and 'this.sequence = 0' in player
   for script in ('sw.js','video-player.js','app.js'):subprocess.run(['node','--check',str(ROOT/'web'/script)],check=True,capture_output=True)
