@@ -49,10 +49,10 @@ if [ -d "$jl_dest" ]; then
     rm -rf "$jl_dest" || exit 1
     sync
 fi
-# A two-slot trial is temporary. Preserve 32 KiB while staging; promotion or
+# A two-slot trial is temporary. Preserve 56 KiB while staging; promotion or
 # rollback prunes the superseded slot and restores the 80 KiB steady reserve.
-jl_wait_free_kb "$JL_ROOT" $((jl_need + 32)) 20 || {
-    jl_log 'compressed trial would violate 32 KiB transient free-space reserve'; exit 1;
+jl_wait_free_kb "$JL_ROOT" $((jl_need + 56)) 20 || {
+    jl_log 'compressed trial would violate 56 KiB transient free-space reserve'; exit 1;
 }
 mkdir "$jl_dest.new" || exit 1
 cp "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.md5" "$jl_dest.new/" || exit 1

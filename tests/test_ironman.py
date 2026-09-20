@@ -431,6 +431,10 @@ class HostBuilderTests(unittest.TestCase):
             target["persistent_contract"]["transient_regular_file_cap_bytes"],
             256 * 1024,
         )
+        self.assertGreaterEqual(
+            target["persistent_contract"]["transient_final_free_reserve_bytes"],
+            56 * 1024,
+        )
         for soname in ("libmbedcrypto.so.6", "libmbedtls.so.13", "libmbedx509.so.1"):
             self.assertIn(f"/lib/{soname}", target["compatibility_hashes"])
 
@@ -476,6 +480,8 @@ class HostBuilderTests(unittest.TestCase):
         self.assertNotIn('"$jl_running" != - ] && [ -x "$JL_CONTROL/admin/ssh-start.sh"', boot)
         self.assertIn("case \"$1\" in A|B|-)", ssh)
         self.assertIn("$JL_CONTROL/shared/entropy-ready.sh", ssh)
+        self.assertIn("grep -qx 'admin:!'", ssh)
+        self.assertIn('[ ! -s "$jl_keys/authorized_keys" ]', ssh)
         self.assertIn("admin:$1$joorec01$", installer)
         self.assertIn("entropy-ready.sh", assembly)
 
@@ -483,6 +489,39 @@ class HostBuilderTests(unittest.TestCase):
         uninstall = (REPOSITORY / "packaging/payload/uninstall-upgrade.sh").read_text()
         self.assertIn("Do not delete $run here", uninstall)
         self.assertNotIn('rm -rf "$root" /opt/etc/jooan-ssh "$run"', uninstall)
+
+    def test_health_promotion_stays_committed_when_prune_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            fixture = Path(temporary_dir)
+            root = fixture / "root"
+            run = fixture / "run"
+            state = root / "state"
+            slots = root / "slots"
+            health_dir = run / "slot-B"
+            for directory in (state, slots / "A", slots / "B", health_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+            (state / "selection").write_text("A B 1\n", encoding="utf-8")
+            (run / "running").write_text("B\n", encoding="utf-8")
+            health = health_dir / "health.sh"
+            health.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            os.chmod(health, 0o755)
+            os.chmod(slots, 0o500)
+            try:
+                result = subprocess.run(
+                    [str(REPOSITORY / "runtime/admin/mark-healthy.sh"), "B"],
+                    env=os.environ | {
+                        "JL_ROOT": str(root),
+                        "JL_RUN": str(run),
+                        "JL_CONTROL": str(REPOSITORY / "runtime"),
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((state / "selection").read_text(), "B - 0\n")
+                self.assertTrue((slots / "B").is_dir())
+            finally:
+                os.chmod(slots, 0o700)
 
     def test_expanded_product_migration_resumes_after_fault(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -510,7 +549,8 @@ class HostBuilderTests(unittest.TestCase):
             (controller / "boot/common.sh").write_text(
                 "jl_check_storage() { return 0; }\n"
                 "jl_check_transient_storage() { return 0; }\n"
-                "jl_check_current_storage() { return 0; }\n",
+                "jl_check_current_storage() { return 0; }\n"
+                "jl_wait_free_kb() { [ \"${FAKE_FREE_KB:-999999}\" -ge \"$2\" ]; }\n",
                 encoding="utf-8",
             )
             controller_archive = stage / "controller.tar.gz"
@@ -556,7 +596,7 @@ class HostBuilderTests(unittest.TestCase):
                 "state_config_regular_file_reserve_bytes=16384\n"
                 "external_regular_file_reserve_bytes=4096\n"
                 "transient_regular_file_cap_bytes=262144\n"
-                "transient_final_free_reserve_bytes=32768\n",
+                "transient_final_free_reserve_bytes=57344\n",
                 encoding="utf-8",
             )
             (stage / "migration.contract").write_text(
@@ -613,6 +653,7 @@ class HostBuilderTests(unittest.TestCase):
                 (persistent / "shared" / f"{side}.sha256").write_text(
                     hashlib.sha256(content).hexdigest() + "\n"
                 )
+            (persistent / "shared/jooan-sha256").write_bytes(b"replaceable-sha")
             model = sandbox / "deviceModel"
             model.write_text("JA-A12\n")
             activate = sandbox / "local.rc"
@@ -634,6 +675,13 @@ class HostBuilderTests(unittest.TestCase):
             fault_points = (
                 ("JOOAN_FAIL_AFTER_STATE", "expanded-product-0.1-validated"),
                 ("JOOAN_FAIL_AFTER_STATE", "keys-preserved"),
+                ("JOOAN_FAIL_AFTER_STATE", "headroom-reclaiming"),
+                ("JOOAN_FAIL_AT", "after-reclaim-inactive"),
+                ("JOOAN_FAIL_AT", "after-reclaim-prelocal"),
+                ("JOOAN_FAIL_AT", "after-reclaim-sha"),
+                ("JOOAN_FAIL_AT", "after-reclaim-guard"),
+                ("JOOAN_FAIL_AFTER_STATE", "headroom-reclaimed"),
+                ("LOW_FREE", "controller-copy-preflight"),
                 ("JOOAN_FAIL_AT", "after-controller-copy"),
                 ("JOOAN_FAIL_AT", "after-controller-rename"),
                 ("JOOAN_FAIL_AFTER_STATE", "controller-published"),
@@ -650,6 +698,15 @@ class HostBuilderTests(unittest.TestCase):
                 ("JOOAN_FAIL_AFTER_STATE", "release-sequence-published"),
             )
             for variable, point in fault_points:
+                if variable == "LOW_FREE":
+                    fault = subprocess.run(
+                        [str(upgrade)],
+                        env=environment | {"FAKE_FREE_KB": "56"},
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(fault.returncode, 0, point)
+                    self.assertFalse((persistent / "controller.tar.gz.new").exists())
+                    continue
                 fault = subprocess.run(
                     [str(upgrade)],
                     env=environment | {variable: point},

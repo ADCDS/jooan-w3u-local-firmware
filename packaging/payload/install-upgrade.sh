@@ -50,8 +50,12 @@ stage_trial_runtime() {
     case "$trial_stable" in A) trial_target=B ;; B) trial_target=A ;; *) return 1 ;; esac
     trial_dest=$root/slots/$trial_target
     rm -rf "$trial_dest.new"
+    trial_bytes=$(wc -c < "$self/runtime.tar.gz") || return 1
+    trial_md5_bytes=$(wc -c < "$self/runtime.md5") || return 1
+    require_copy_headroom $((trial_bytes + trial_md5_bytes)) || return 1
     mkdir "$trial_dest.new" || return 1
     cp "$self/runtime.tar.gz" "$self/runtime.md5" "$trial_dest.new/" || return 1
+    require_boot_reserve || return 1
     fail_at after-runtime-copy
     expected=$(cat "$trial_dest.new/runtime.md5") || return 1
     actual=$(md5sum "$trial_dest.new/runtime.tar.gz" | awk '{print $1}') || return 1
@@ -65,6 +69,16 @@ stage_trial_runtime() {
     mv -f "$root/state/selection.new" "$root/state/selection"
     sync
     write_state runtime-staged
+}
+require_boot_reserve() {
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" 56 20'
+}
+require_copy_headroom() {
+    copy_bytes=$1
+    copy_kb=$(( (copy_bytes + 1023) / 1024 ))
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control COPY_KB=$copy_kb /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" $((COPY_KB + 56)) 20'
 }
 [ "$(id -u)" = 0 ] || die 'not root'
 [ "$(cat "$device_model_path" 2>/dev/null)" = JA-A12 ] || die 'unsupported model'
@@ -96,7 +110,7 @@ grep -qx 'final_free_reserve_bytes=81920' "$self/persistent.contract" || die 'fr
 grep -qx 'state_config_regular_file_reserve_bytes=16384' "$self/persistent.contract" || die 'state/config reserve mismatch'
 grep -qx 'external_regular_file_reserve_bytes=4096' "$self/persistent.contract" || die 'external reserve mismatch'
 grep -qx 'transient_regular_file_cap_bytes=262144' "$self/persistent.contract" || die 'transient cap mismatch'
-grep -qx 'transient_final_free_reserve_bytes=32768' "$self/persistent.contract" || die 'transient reserve mismatch'
+grep -qx 'transient_final_free_reserve_bytes=57344' "$self/persistent.contract" || die 'transient reserve mismatch'
 grep -qx 'JOOAN-MIGRATION-CONTRACT-V1' "$self/migration.contract" || die 'migration contract missing'
 grep -qx 'state=legacy-retired' "$self/migration.contract" || die 'migration states incomplete'
 
@@ -122,7 +136,7 @@ chmod 700 "$run"
 control=$run/controller-install
 rm -rf "$control"
 mkdir "$control"
-gzip -t "$self/controller.tar.gz" || die 'controller archive CRC mismatch'
+tar -tzf "$self/controller.tar.gz" >/dev/null || die 'controller archive CRC mismatch'
 tar -xzf "$self/controller.tar.gz" -C "$control" || die 'controller extraction failed'
 JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control JOOAN_SHA256=$sha
 export JL_ROOT JL_RUN JL_CONTROL JOOAN_SHA256
@@ -143,16 +157,28 @@ if [ -e "$root/boot" ] || [ -e "$root/admin" ] || [ -e "$root/shared" ]; then
 fi
 if [ "$expanded" = 0 ] &&
    { [ -e "$root/boot" ] || [ -e "$root/admin" ] || [ -e "$root/shared" ]; }; then
+    reclaim_resume=0
+    case "$migration_hint" in
+        headroom-reclaiming|headroom-reclaimed|controller-published|\
+        failclosed-hook-published|activated) reclaim_resume=1 ;;
+    esac
     for old in boot admin shared; do
         [ -d "$root/$old" ] || die 'partial expanded-product-0.1 controller'
     done
     for old in boot/common.sh boot/boot.sh boot/local.rc \
         admin/install-controller.sh admin/install-runtime.sh \
-        shared/libjooan_guard.so shared/guard.sha256 \
         shared/dropbear.tar.gz shared/dropbear.sha256; do
         [ -f "$root/$old" ] || die "expanded-product-0.1 missing $old"
     done
-    for old in libjooan_guard.so dropbear.tar.gz; do
+    if [ "$reclaim_resume" = 0 ]; then
+        [ -f "$root/shared/libjooan_guard.so" ] &&
+            [ -f "$root/shared/guard.sha256" ] &&
+            [ -f "$root/shared/jooan-sha256" ] ||
+            die 'expanded-product-0.1 replaceable shared files are incomplete'
+    fi
+    old_list=dropbear.tar.gz
+    [ "$reclaim_resume" = 1 ] || old_list="libjooan_guard.so $old_list"
+    for old in $old_list; do
         side=guard
         [ "$old" != dropbear.tar.gz ] || side=dropbear
         old_expected=$(cat "$root/shared/$side.sha256") || die 'cannot read expanded digest'
@@ -178,6 +204,7 @@ if [ "$expanded" = 0 ] &&
         die 'cannot hash active runtime'
     [ "$old_actual" = "$old_expected" ] || die 'expanded active runtime mismatch'
     expanded=1
+    [ "$reclaim_resume" = 0 ] || expanded=6
 fi
 if [ "$expanded" = 0 ] && [ -f "$root/state/migration-state" ] &&
    [ -f "$root/controller.tar.gz" ] &&
@@ -210,7 +237,7 @@ chmod 700 "$root" "$root/state" "$root/config" "$root/config/ssh"
 if [ "$expanded" = 1 ]; then
     write_state expanded-product-0.1-validated || die 'cannot journal expanded validation'
 elif [ "$expanded" = 2 ] || [ "$expanded" = 3 ] || [ "$expanded" = 4 ] ||
-     [ "$expanded" = 5 ]; then
+     [ "$expanded" = 5 ] || [ "$expanded" = 6 ]; then
     :
 else
     write_state legacy-validated || die 'cannot journal legacy validation'
@@ -243,7 +270,7 @@ if [ ! -s "$root/config/ssh/passwd" ]; then
     fi
 fi
 if [ "$expanded" != 2 ] && [ "$expanded" != 3 ] && [ "$expanded" != 4 ] &&
-   [ "$expanded" != 5 ]; then
+   [ "$expanded" != 5 ] && [ "$expanded" != 6 ]; then
     write_state keys-preserved || die 'cannot journal key preservation'
 fi
 # The authenticated predecessor admin bundle is larger than the replacement
@@ -255,30 +282,52 @@ if [ "$legacy" = manual-admin ]; then
     sync
 fi
 
-if [ "$expanded" = 1 ]; then
+if [ "$expanded" = 1 ] || [ "$expanded" = 6 ]; then
     # Reclaim only the inactive runtime and an intentionally disabled unsafe
     # hook backup. The active slot remains the rollback candidate.
     old_inactive=A
     [ "$old_active" = A ] && old_inactive=B
+    [ "$expanded" != 1 ] ||
+        write_state headroom-reclaiming || die 'cannot journal headroom reclamation'
     rm -rf "$root/slots/$old_inactive"
+    require_boot_reserve || die 'inactive-slot reclamation fell below boot reserve'
+    fail_at after-reclaim-inactive
     rm -f "$root/state/prelocal-hook.disabled"
+    require_boot_reserve || die 'hook-backup reclamation fell below boot reserve'
+    fail_at after-reclaim-prelocal
+    rm -f "$root/shared/jooan-sha256"
+    require_boot_reserve || die 'SHA reclamation fell below boot reserve'
+    fail_at after-reclaim-sha
+    rm -f "$root/shared/libjooan_guard.so"
     sync
+    require_boot_reserve || die 'guard reclamation fell below boot reserve'
+    fail_at after-reclaim-guard
+    write_state headroom-reclaimed || die 'cannot journal reclaimed headroom'
     # Convert the retained active slot to the compressed controller's MD5
     # corruption sidecar while its SHA-256 was just authenticated above.
     md5sum "$old_slot/runtime.tar.gz" | awk '{print $1}' > "$old_slot/runtime.md5.new"
     chmod 600 "$old_slot/runtime.md5.new"
     sync
     mv -f "$old_slot/runtime.md5.new" "$old_slot/runtime.md5"
-    # Persist the authenticated replacement controller before retiring any
-    # expanded controller file. The checksum is published last.
+    require_boot_reserve || die 'runtime sidecar conversion fell below boot reserve'
+    # Persist the authenticated replacement controller as one atomic gzip before
+    # retiring any expanded controller file.
+    controller_bytes=$(wc -c < "$self/controller.tar.gz") ||
+        die 'cannot size replacement controller'
+    loader_bytes=$(wc -c < "$self/local.rc") || die 'cannot size replacement hook'
+    require_copy_headroom $((controller_bytes + loader_bytes)) ||
+        die 'insufficient boot-safe headroom for replacement controller'
     cp "$self/controller.tar.gz" "$root/controller.tar.gz.new"
+    require_boot_reserve || die 'controller copy fell below boot reserve'
     fail_at after-controller-copy
     cp "$self/local.rc" "$root/local.rc.new"
+    require_boot_reserve || die 'hook copy fell below boot reserve'
     chmod 600 "$root/controller.tar.gz.new"
     chmod 755 "$root/local.rc.new"
-    gzip -t "$root/controller.tar.gz.new" || die 'staged compressed controller CRC mismatch'
+    tar -tzf "$root/controller.tar.gz.new" >/dev/null || die 'staged compressed controller CRC mismatch'
     sync
     mv -f "$root/controller.tar.gz.new" "$root/controller.tar.gz"
+    require_boot_reserve || die 'controller publication fell below boot reserve'
     fail_at after-controller-rename
     mv -f "$root/local.rc.new" "$root/local.rc"
     sync
@@ -294,11 +343,15 @@ if [ "$expanded" = 1 ]; then
     # Publish the already-verified fail-closed compressed-controller hook. The
     # generic activate helper's final-size gate cannot run until expanded files
     # are retired, but every replacement component is durable at this point.
+    hook_bytes=$(wc -c < "$root/local.rc") || die 'cannot size compressed hook'
+    require_copy_headroom "$hook_bytes" || die 'insufficient boot-safe headroom for hook activation'
     cp "$root/local.rc" "$activate.new" || die 'cannot stage compressed hook'
+    require_boot_reserve || die 'hook activation copy fell below boot reserve'
     chmod 755 "$activate.new"
     sync
     mv -f "$activate.new" "$activate" || die 'cannot activate compressed hook'
     sync
+    require_boot_reserve || die 'hook publication fell below boot reserve'
     fail_at after-hook-rename
     write_state failclosed-hook-published || die 'cannot journal fail-closed hook publication'
     write_state activated || die 'cannot journal activation'
@@ -338,7 +391,7 @@ elif [ "$expanded" = 2 ] || [ "$expanded" = 4 ] || [ "$expanded" = 5 ]; then
         write_state expanded-controller-retired || die 'cannot finish expanded retirement'
         expanded=5
     fi
-    gzip -t "$root/controller.tar.gz" || die 'resumed controller archive CRC mismatch'
+    tar -tzf "$root/controller.tar.gz" >/dev/null || die 'resumed controller archive CRC mismatch'
     [ -f "$activate" ] && grep -q '/opt/custom/jooan-local' "$activate" ||
         die 'resumed migration has no active compressed hook'
     JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \

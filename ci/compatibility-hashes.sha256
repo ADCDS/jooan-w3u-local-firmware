@@ -6,5 +6,5 @@
 # Do not add vendor binaries or secrets to satisfy this gate. Pin recovered
 # source descriptions, generated ABI tables, protocol schemas, and toolchain
 # lockfiles instead. The gate deliberately rejects missing files and symlinks.
-5d593c97df5a3ad219cc51f0cfbbd4770666aee78d807548cdb37b3dad5276c3  packaging/targets/ja-a12.json
-18ab921ca7c09d03e34d61a20e57b283f91afbd2e2905252d5b5573244c366d3  runtime/boot/local.rc
+c1970bc014368173d36328c926056e427c2d78ea4848c5c3890994a743b7f89c  packaging/targets/ja-a12.json
+5fa1ff1315e4be1835e3acbd6651be23d39992b5a3c4ebee5d370a64d29c36aa  runtime/boot/local.rc
