@@ -915,7 +915,10 @@ static void *talkback_main(void *unused)
             continue;
         }
         if (frame.type == JOOAN_AUDIO_PTT_ACQUIRE) {
-            if (active_session == 0 && frame.sequence == 1) {
+            if (frame.sequence == 1) {
+                if (active_session != 0 &&
+                    active_session != frame.session_id)
+                    (void)speaker_set_enabled(0);
                 active_session = frame.session_id;
                 session_started = now;
                 last_sequence = frame.sequence;

@@ -30,6 +30,8 @@
 #define DEFAULT_GUARD_SOCKET "/tmp/jooan-guard-talkback.sock"
 #define DEFAULT_MIC_DRIVER "/dev/dsp"
 #define DEFAULT_SPEAKER_DRIVER "/dev/dsp"
+#define SPEAKER_VALUE_PATH "/sys/class/gpio/gpio63/value"
+#define SPEAKER_ENABLED_LEVEL '0'
 
 #define AMIC_AI_SET_PARAM 0x40085071UL
 #define AMIC_AI_ENABLE_STREAM 0x40045060UL
@@ -81,6 +83,7 @@ static pthread_t microphone_thread;
 static int microphone_thread_started;
 static int speaker_output_descriptor = -1;
 static int speaker_output_direct;
+static int speaker_talk_logged;
 
 struct microphone_driver_parameter {
     uint32_t sample_rate;
@@ -326,6 +329,31 @@ static int speaker_output_submit(const uint8_t *pcma, size_t length)
         return -1;
     }
     return 0;
+}
+
+static int speaker_amplifier_confirm_enabled(void)
+{
+    struct timespec delay = { 0, 2000000L };
+    int attempt;
+
+    for (attempt = 0; attempt < 10; ++attempt) {
+        char level = '\0';
+        int descriptor = open(SPEAKER_VALUE_PATH, O_RDONLY);
+        ssize_t amount = -1;
+
+        if (descriptor >= 0) {
+            amount = read(descriptor, &level, 1);
+            close(descriptor);
+        }
+        if (amount == 1 && level == SPEAKER_ENABLED_LEVEL)
+            return 0;
+        while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+        }
+        delay.tv_sec = 0;
+        delay.tv_nsec = 2000000L;
+    }
+    errno = EIO;
+    return -1;
 }
 
 static void speaker_output_stop(void)
@@ -854,6 +882,7 @@ static int client_audio_frame(struct client *client,
         }
         client->talk_deadline = monotonic_milliseconds() +
                                 maximum_talk_ms;
+        speaker_talk_logged = 0;
         if (queue_audio_state(client, JOOAN_AUDIO_STATE_ACQUIRED) != 0)
             return -1;
     } else if (frame.type == JOOAN_AUDIO_PTT_PCMA) {
@@ -863,10 +892,23 @@ static int client_audio_frame(struct client *client,
         guard_sequence = client->guard.last_sequence == UINT32_MAX ? 1u :
                          client->guard.last_sequence + 1u;
         if (speaker_output_direct) {
-            if (speaker_output_submit(frame.payload, frame.payload_length) != 0 ||
-                jooan_audio_guard_speaker_lease(&client->guard,
-                                                guard_sequence) != 0)
+            if (speaker_output_submit(frame.payload, frame.payload_length) != 0) {
+                perror("audio speaker submit");
                 return -1;
+            }
+            if (jooan_audio_guard_speaker_lease(&client->guard,
+                                                guard_sequence) != 0) {
+                perror("audio speaker lease");
+                return -1;
+            }
+            if (!speaker_talk_logged) {
+                if (speaker_amplifier_confirm_enabled() != 0) {
+                    perror("audio speaker amplifier");
+                    return -1;
+                }
+                fprintf(stderr, "authenticated speaker PCM started\n");
+                speaker_talk_logged = 1;
+            }
         } else if (jooan_audio_guard_pcma(&client->guard, guard_sequence,
                                           frame.payload,
                                           frame.payload_length) != 0) {
