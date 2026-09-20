@@ -2,15 +2,18 @@
 #include "joan_daemon.h"
 
 #include <pthread.h>
+#include <crypt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define PBKDF2_ROUNDS 120000u
 #define SESSION_SECONDS (30u * 60u)
 #define SESSIONS 16
 #define BUCKETS 16
+#define DEFAULT_PASSWORD "change-me-password"
 
 typedef struct { int used; char token[65], csrf[65]; time_t expires; int must_change; } Session;
 typedef struct { char remote[64]; time_t since; unsigned failures; } Bucket;
@@ -20,18 +23,73 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void auth_path(const JoanConfig *cfg, char out[512]) { snprintf(out, 512, "%s/auth.db", cfg->state_dir); }
 
-static int save_record(const JoanConfig *cfg, const char *password, int must_change)
+static int ssh_password_path(const JoanConfig *cfg, char out[512])
+{
+    char dir[512];
+    if (snprintf(dir, sizeof(dir), "%s/ssh", cfg->state_dir) >= (int)sizeof(dir) ||
+        joan_mkdir_p(dir, 0700)) return -1;
+    return snprintf(out, 512, "%s/passwd", dir) < 512 ? 0 : -1;
+}
+
+static int build_records(const char *password, int warning,
+                         char auth[192], size_t *auth_len,
+                         char ssh[384], size_t *ssh_len,
+                         char rtsp[320],size_t *rtsp_len)
 {
     unsigned char salt[16], key[32];
-    char hs[33], hk[65], line[192], path[512];
+    char hs[33], hk[65], crypt_salt[40];
+    static const char alphabet[]="./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    char *hash;
     int n;
     if (joan_random(salt, sizeof(salt))) return -1;
     joan_pbkdf2_sha256(password, strlen(password), salt, sizeof(salt), PBKDF2_ROUNDS, key, sizeof(key));
     joan_hex(salt, sizeof(salt), hs); joan_hex(key, sizeof(key), hk);
-    n = snprintf(line, sizeof(line), "v1:%u:%s:%s:%d\n", PBKDF2_ROUNDS, hs, hk, must_change);
-    auth_path(cfg, path);
+    n = snprintf(auth, 192, "v1:%u:%s:%s:%d\n", PBKDF2_ROUNDS, hs, hk, warning);
+    if (n <= 0 || n >= 192) return -1;
+    *auth_len=(size_t)n;
+    /* This camera's uClibc 0.9.33.2 libcrypt implements modular `$1$` and
+     * legacy DES, but not `$5$`/`$6$`. Use its strongest compatible format;
+     * the HTTPS account itself remains PBKDF2-SHA256 above. */
+    strcpy(crypt_salt,"$1$");
+    for(n=0;n<8;n++)crypt_salt[3+n]=alphabet[salt[n]&63u];
+    crypt_salt[11]='$';crypt_salt[12]=0;
+    hash=crypt(password,crypt_salt);
+    if(!hash||strchr(hash,'\n')||strchr(hash,':'))return-1;
+    n=snprintf(ssh,384,"admin:%s\n",hash);
     memset(key, 0, sizeof(key));
-    return n > 0 && (size_t)n < sizeof(line) ? joan_write_atomic(path, line, (size_t)n, 0600) : -1;
+    if(n<=0||n>=384)return-1;
+    *ssh_len=(size_t)n;
+    n=snprintf(rtsp,320,"%s\n",password);if(n<=0||n>=320)return-1;*rtsp_len=(size_t)n;
+    return 0;
+}
+
+static int save_record(const JoanConfig *cfg, const char *password, int warning)
+{
+    char auth[192],ssh[384],rtsp[320],auth_file[512],ssh_file[512],rtsp_file[512];
+    unsigned char *old_auth=NULL,*old_ssh=NULL,*old_rtsp=NULL;size_t an,sn,rn,old_an=0,old_sn=0,old_rn=0;
+    int had_auth,had_ssh,had_rtsp;
+    if(build_records(password,warning,auth,&an,ssh,&sn,rtsp,&rn))return-1;
+    auth_path(cfg,auth_file);if(ssh_password_path(cfg,ssh_file))return-1;
+    if(snprintf(rtsp_file,sizeof(rtsp_file),"%s/rtsp.password",cfg->state_dir)>=(int)sizeof(rtsp_file))return-1;
+    had_auth=!joan_read_file(auth_file,&old_auth,&old_an,512);
+    had_ssh=!joan_read_file(ssh_file,&old_ssh,&old_sn,1024);
+    had_rtsp=!joan_read_file(rtsp_file,&old_rtsp,&old_rn,512);
+    if(joan_write_atomic(ssh_file,ssh,sn,0600))goto fail;
+    if(joan_write_atomic(rtsp_file,rtsp,rn,0600)){if(had_ssh)joan_write_atomic(ssh_file,old_ssh,old_sn,0600);else unlink(ssh_file);goto fail;}
+    if(joan_write_atomic(auth_file,auth,an,0600)){
+        if(had_ssh)joan_write_atomic(ssh_file,old_ssh,old_sn,0600);else unlink(ssh_file);
+        if(had_rtsp)joan_write_atomic(rtsp_file,old_rtsp,old_rn,0600);else unlink(rtsp_file);
+        goto fail;
+    }
+    {char marker[512];snprintf(marker,sizeof(marker),"%s/rtsp.synced",cfg->state_dir);unlink(marker);}
+    memset(auth,0,sizeof(auth));memset(ssh,0,sizeof(ssh));memset(rtsp,0,sizeof(rtsp));
+    if(old_auth){memset(old_auth,0,old_an);free(old_auth);}if(old_ssh){memset(old_ssh,0,old_sn);free(old_ssh);}if(old_rtsp){memset(old_rtsp,0,old_rn);free(old_rtsp);}
+    return 0;
+fail:
+    if(!had_auth)unlink(auth_file);
+    memset(auth,0,sizeof(auth));memset(ssh,0,sizeof(ssh));memset(rtsp,0,sizeof(rtsp));
+    if(old_auth){memset(old_auth,0,old_an);free(old_auth);}if(old_ssh){memset(old_ssh,0,old_sn);free(old_ssh);}if(old_rtsp){memset(old_rtsp,0,old_rn);free(old_rtsp);}
+    return -1;
 }
 
 static int verify(const JoanConfig *cfg, const char *password, int *must_change)
@@ -60,15 +118,25 @@ done:
 
 int joan_auth_init(const JoanConfig *cfg)
 {
-    char path[512];
+    char path[512],ssh_path[512];
     FILE *f;
     if (joan_mkdir_p(cfg->state_dir, 0700)) return -1;
     auth_path(cfg, path);
     f = fopen(path, "r");
-    if (f) { fclose(f); return 0; }
+    if (f) {
+        fclose(f);
+        if(ssh_password_path(cfg,ssh_path))return-1;
+        f=fopen(ssh_path,"r");if(f){char rtsp_path[512];fclose(f);snprintf(rtsp_path,sizeof(rtsp_path),"%s/rtsp.password",cfg->state_dir);f=fopen(rtsp_path,"r");if(f){fclose(f);return 0;}}
+        /* A pre-sync bootstrap database can be repaired because its public
+         * initial secret is known. Never guess or reset a customized secret. */
+        if(verify(cfg,DEFAULT_PASSWORD,NULL))return save_record(cfg,DEFAULT_PASSWORD,1);
+        /* Upgraded 0.1 databases contain no recoverable plaintext. Preserve
+         * the web credential and mark SSH unsynchronized until rotation. */
+        return 0;
+    }
     /* Deliberately recognizable bootstrap secret; API access remains local TLS,
      * and all privileged endpoints remain locked until it is replaced. */
-    return save_record(cfg, "change-me-now", 1); /* hygiene: allow-public-bootstrap */
+    return save_record(cfg, DEFAULT_PASSWORD, 1); /* hygiene: allow-public-bootstrap */
 }
 
 int joan_auth_setup_required(const JoanConfig *cfg)
@@ -81,6 +149,16 @@ int joan_auth_setup_required(const JoanConfig *cfg)
     }
     if (raw) free(raw);
     return required;
+}
+
+int joan_auth_ssh_synchronized(const JoanConfig *cfg)
+{
+    char path[512];FILE*f;if(ssh_password_path(cfg,path))return 0;f=fopen(path,"r");if(!f)return 0;{char line[512];int ok=fgets(line,sizeof(line),f)!=NULL&&!strncmp(line,"admin:$",7)&&strchr(line,'\n')!=NULL;fclose(f);return ok;}
+}
+
+int joan_auth_rtsp_synchronized(const JoanConfig *cfg)
+{
+    char path[512],marker_path[512],want[65];unsigned char*secret=NULL,*marker=NULL,hash[32];size_t n=0,m=0;snprintf(path,sizeof(path),"%s/rtsp.password",cfg->state_dir);snprintf(marker_path,sizeof(marker_path),"%s/rtsp.synced",cfg->state_dir);if(joan_read_file(path,&secret,&n,512)||joan_read_file(marker_path,&marker,&m,128)){free(secret);free(marker);return 0;}joan_sha256(secret,n,hash);joan_hex(hash,32,want);{int ok=m>=64&&!memcmp(marker,want,64);memset(secret,0,n);free(secret);free(marker);return ok;}
 }
 
 static Bucket *bucket_for(const char *remote, time_t now)
@@ -152,10 +230,11 @@ int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out)
 int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
                               const char *old_password, const char *new_password)
 {
-    unsigned i; int ignored;
-    if (!auth->authenticated || !verify(cfg, old_password, &ignored) || strlen(new_password) < 12 ||
-        !strcmp(new_password, "change-me-now") || /* hygiene: allow-public-bootstrap */
-        save_record(cfg, new_password, 0)) return -1;
+    unsigned i; int ignored;size_t password_len=new_password?strlen(new_password):0;
+    if(password_len<12||password_len>128)return-1;
+    for(i=0;i<password_len;i++)if((unsigned char)new_password[i]<0x20||(unsigned char)new_password[i]==0x7f)return-1;
+    if (!auth->authenticated || !verify(cfg, old_password, &ignored) ||
+        save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
     pthread_mutex_lock(&lock);
     for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
     pthread_mutex_unlock(&lock); return 0;

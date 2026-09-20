@@ -6,7 +6,9 @@ id=${3:--}
 case "$op" in
   snapshot) printf '\377\330FAKEJPEG\377\331' ;;
   ssh-list) printf 'test-key SHA256:example\n' ;;
-  wifi-stage|wifi-commit|wifi-rollback|ssh-add|ssh-delete|ptz-move|ptz-stop|firmware-verify|firmware-apply)
+  routes-list) printf '{"cidrs":[]}\n' ;;
+  ptz-presets-list) printf '[]\n' ;;
+  wifi-stage|wifi-commit|wifi-rollback|ssh-add|ssh-delete|routes-set|ptz-move|ptz-jog|ptz-stop|ptz-home|ptz-preset-set|ptz-preset-goto|ptz-preset-delete|firmware-verify|firmware-apply)
     test "$path" = - || test -r "$path"
     printf '%s %s\n' "$op" "$id"
     ;;

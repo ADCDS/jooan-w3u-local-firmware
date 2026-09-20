@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Jooan Local Camera</title>
+  <meta name="theme-color" content="#19222c">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -11,20 +14,21 @@
 <main>
   <section id="login" class="card narrow">
     <h2>Administrator sign in</h2>
-    <p>First setup uses <code>admin</code> / <code>change-me-now</code> and immediately requires a new password.</p>
+    <p>Initial access uses <code>admin</code> / <code>change-me-password</code>. It remains usable, but a warning remains until it is changed.</p>
     <form id="login-form"><label>User<input name="username" value="admin" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form>
   </section>
   <section id="setup" class="card narrow hidden">
-    <h2>Secure first setup</h2><p>Choose a unique password of at least 12 characters.</p>
+    <h2>Change administrator password</h2><p>Choose a unique password of at least 12 characters. This password is shared with SSH.</p>
     <form id="password-form"><label>Current password<input name="old_password" type="password" required></label><label>New password<input name="new_password" type="password" minlength="12" required></label><button>Change password</button></form>
   </section>
   <div id="dashboard" class="hidden grid">
     <section class="card"><h2>Status</h2><pre id="status">Loading…</pre><button id="refresh">Refresh</button><button id="logout" class="secondary">Sign out</button></section>
-    <section class="card"><h2>Video</h2><div id="streams"></div><img id="snapshot" alt="Camera snapshot"><button id="snapshot-button">Refresh snapshot</button></section>
+    <section class="card video-card"><h2>Live video</h2><div id="default-password-warning" class="warning hidden">The public initial password is still active. Change it from this page.</div><div class="video-grid"><figure><video id="video-main" muted autoplay playsinline controls></video><figcaption>Main stream</figcaption></figure><figure><video id="video-sub" muted autoplay playsinline controls></video><figcaption>Sub stream</figcaption></figure></div><div id="streams"></div><button id="change-password">Change password</button></section>
     <section class="card"><h2>Wi-Fi transaction</h2><form id="wifi-form"><label>SSID<input name="ssid" required></label><label>Passphrase<input name="password" type="password" minlength="8" required></label><button>Stage</button></form><div class="row"><button id="wifi-commit">Commit staged</button><button id="wifi-rollback" class="danger">Roll back</button></div><output id="wifi-result"></output></section>
     <section class="card"><h2>Local address</h2><p>Use this name on the same network even when DHCP changes the numeric address.</p><form id="mdns-form"><label>Hostname<input name="hostname" maxlength="63" pattern="[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" required></label><button>Save .local name</button></form><output id="mdns-result"></output></section>
+    <section class="card"><h2>Local routes</h2><p>Only private RFC1918 or ULA networks are accepted. Default and public routes are rejected.</p><form id="routes-form"><label>Approved CIDRs<textarea name="cidrs" rows="3" placeholder="10.42.0.0/24, fd00::/64"></textarea></label><button>Apply routes</button></form><output id="routes-result"></output></section>
     <section class="card"><h2>SSH keys</h2><pre id="ssh-list"></pre><form id="ssh-form"><label>Public key<textarea name="key" rows="4" required></textarea></label><button>Add key</button></form></section>
-    <section class="card"><h2>Pan / tilt</h2><div class="ptz"><button data-ptz="up">↑</button><button data-ptz="left">←</button><button data-ptz="stop">■</button><button data-ptz="right">→</button><button data-ptz="down">↓</button></div><p id="ptz-state">No lease</p></section>
+    <section class="card"><h2>Pan / tilt</h2><div class="ptz"><button data-ptz="up">↑</button><button data-ptz="left">←</button><button data-ptz="stop">■</button><button data-ptz="right">→</button><button data-ptz="down">↓</button></div><label>Jog speed<input id="ptz-speed" type="range" min="1" max="5" value="3"></label><div class="row"><button id="ptz-home">Home</button><button id="preset-set">Save preset</button></div><label>Preset<select id="preset-list"></select></label><div class="row"><button id="preset-goto">Go to preset</button><button id="preset-delete" class="danger">Delete preset</button></div><p id="ptz-state">No lease</p></section>
     <section class="card"><h2>Two-way audio</h2><p>Listen to the camera microphone, then hold the button to speak. Microphone playback pauses while talking to prevent feedback.</p><div class="row"><button id="audio-connect">Listen</button><button id="push-to-talk" class="danger" disabled>Hold to talk</button></div><p id="audio-state">Disconnected</p></section>
     <section class="card"><h2>Firmware staging</h2><p>Images are staged and verified before a separate apply action.</p><form id="firmware-form"><input name="image" type="file" required><button>Stage image</button></form><button id="firmware-apply" class="danger">Apply verified image</button><output id="firmware-result"></output></section>
   </div>
