@@ -490,6 +490,17 @@ class HostBuilderTests(unittest.TestCase):
         self.assertIn("Do not delete $run here", uninstall)
         self.assertNotIn('rm -rf "$root" /opt/etc/jooan-ssh "$run"', uninstall)
 
+    def test_camera_archive_checks_use_supported_busybox_tar(self) -> None:
+        paths = (
+            "packaging/payload/install-upgrade.sh",
+            "runtime/admin/install-controller.sh",
+            "runtime/boot/local.rc",
+        )
+        for relative in paths:
+            source = (REPOSITORY / relative).read_text()
+            self.assertNotIn("gzip -t", source, relative)
+            self.assertIn("tar -tzf", source, relative)
+
     def test_health_promotion_stays_committed_when_prune_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             fixture = Path(temporary_dir)
@@ -550,9 +561,19 @@ class HostBuilderTests(unittest.TestCase):
                 "jl_check_storage() { return 0; }\n"
                 "jl_check_transient_storage() { return 0; }\n"
                 "jl_check_current_storage() { return 0; }\n"
-                "jl_wait_free_kb() { [ \"${FAKE_FREE_KB:-999999}\" -ge \"$2\" ]; }\n",
+                "jl_wait_free_kb() {\n"
+                "  free=${FAKE_FREE_KB:-124}\n"
+                "  [ -f \"$JL_ROOT/shared/dropbear.tar.gz\" ] || "
+                "free=$((free + ${FAKE_DROPBEAR_KB:-59}))\n"
+                "  [ \"$free\" -ge \"$2\" ]\n"
+                "}\n",
                 encoding="utf-8",
             )
+            pseudo_random = b"".join(
+                hashlib.sha256(f"controller-pad-{counter}".encode()).digest()
+                for counter in range(3000)
+            )[:90000]
+            (controller / "padding.bin").write_bytes(pseudo_random)
             controller_archive = stage / "controller.tar.gz"
             subprocess.run(
                 [
@@ -562,6 +583,8 @@ class HostBuilderTests(unittest.TestCase):
                 ],
                 check=True,
             )
+            self.assertGreater(controller_archive.stat().st_size, 85 * 1024)
+            self.assertLess(controller_archive.stat().st_size, 95 * 1024)
             new_runtime = stage / "runtime.tar.gz"
             new_runtime.write_bytes(b"new-runtime")
             (stage / "runtime.md5").write_text(
@@ -600,7 +623,12 @@ class HostBuilderTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (stage / "migration.contract").write_text(
-                "JOOAN-MIGRATION-CONTRACT-V1\nstate=legacy-retired\n",
+                "JOOAN-MIGRATION-CONTRACT-V1\n"
+                f"expanded_sha256={hashlib.sha256(b'dropbear').hexdigest()}  shared/dropbear.tar.gz\n"
+                f"expanded_sha256={hashlib.sha256(b'replaceable-sha').hexdigest()}  shared/jooan-sha256\n"
+                f"expanded_sha256={hashlib.sha256(b'guard').hexdigest()}  shared/libjooan_guard.so\n"
+                f"expanded_sha256={hashlib.sha256(b'old-stable-runtime').hexdigest()}  slots/runtime.tar.gz\n"
+                "state=legacy-retired\n",
                 encoding="utf-8",
             )
             component = compatible / "component"
@@ -671,6 +699,8 @@ class HostBuilderTests(unittest.TestCase):
                 "JOOAN_DEVICE_MODEL_PATH": str(model),
                 "JOOAN_COMPAT_ROOT": str(compatible),
                 "JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin:/sbin:/usr/sbin",
+                "FAKE_FREE_KB": "124",
+                "FAKE_DROPBEAR_KB": "59",
             }
             fault_points = (
                 ("JOOAN_FAIL_AFTER_STATE", "expanded-product-0.1-validated"),
@@ -680,6 +710,8 @@ class HostBuilderTests(unittest.TestCase):
                 ("JOOAN_FAIL_AT", "after-reclaim-prelocal"),
                 ("JOOAN_FAIL_AT", "after-reclaim-sha"),
                 ("JOOAN_FAIL_AT", "after-reclaim-guard"),
+                ("JOOAN_FAIL_AT", "after-reclaim-dropbear"),
+                ("JOOAN_FAIL_AT", "after-reclaim-dropbear-sidecar"),
                 ("JOOAN_FAIL_AFTER_STATE", "headroom-reclaimed"),
                 ("LOW_FREE", "controller-copy-preflight"),
                 ("JOOAN_FAIL_AT", "after-controller-copy"),
@@ -713,6 +745,12 @@ class HostBuilderTests(unittest.TestCase):
                     capture_output=True,
                 )
                 self.assertNotEqual(fault.returncode, 0, point)
+                if point == "headroom-reclaimed":
+                    self.assertFalse(
+                        (persistent / "shared/dropbear.tar.gz").exists()
+                    )
+                if point == "after-controller-copy":
+                    self.assertTrue((persistent / "controller.tar.gz.new").is_file())
             resumed = subprocess.run(
                 [str(upgrade)], env=environment, text=True, capture_output=True
             )

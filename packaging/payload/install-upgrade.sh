@@ -20,6 +20,11 @@ signature=$self/release.manifest.sig
 die() { echo "jooan-local install: $*" >&2; exit 1; }
 meta() { sed -n "s/^$1=//p" "$manifest"; }
 fail_at() { [ "${JOOAN_FAIL_AT:-}" != "$1" ] || die "injected failure at $1"; }
+migration_hash() {
+    migration_path=$1
+    sed -n "s|^expanded_sha256=\([0-9a-f][0-9a-f]*\)  $migration_path$|\1|p" \
+        "$self/migration.contract"
+}
 bounded_sha() {
     hash_file=$1 hash_output=/tmp/jooan-sha.$$
     "$sha" "$hash_file" > "$hash_output" 2>/dev/null &
@@ -166,22 +171,26 @@ if [ "$expanded" = 0 ] &&
         [ -d "$root/$old" ] || die 'partial expanded-product-0.1 controller'
     done
     for old in boot/common.sh boot/boot.sh boot/local.rc \
-        admin/install-controller.sh admin/install-runtime.sh \
-        shared/dropbear.tar.gz shared/dropbear.sha256; do
+        admin/install-controller.sh admin/install-runtime.sh; do
         [ -f "$root/$old" ] || die "expanded-product-0.1 missing $old"
     done
     if [ "$reclaim_resume" = 0 ]; then
         [ -f "$root/shared/libjooan_guard.so" ] &&
             [ -f "$root/shared/guard.sha256" ] &&
-            [ -f "$root/shared/jooan-sha256" ] ||
+            [ -f "$root/shared/jooan-sha256" ] &&
+            [ -f "$root/shared/dropbear.tar.gz" ] &&
+            [ -f "$root/shared/dropbear.sha256" ] ||
             die 'expanded-product-0.1 replaceable shared files are incomplete'
     fi
-    old_list=dropbear.tar.gz
+    old_list=
+    if [ -f "$root/shared/dropbear.tar.gz" ]; then
+        old_list=dropbear.tar.gz
+    fi
+    [ ! -f "$root/shared/jooan-sha256" ] || old_list="jooan-sha256 $old_list"
     [ "$reclaim_resume" = 1 ] || old_list="libjooan_guard.so $old_list"
     for old in $old_list; do
-        side=guard
-        [ "$old" != dropbear.tar.gz ] || side=dropbear
-        old_expected=$(cat "$root/shared/$side.sha256") || die 'cannot read expanded digest'
+        old_expected=$(migration_hash "shared/$old") || die 'cannot read pinned expanded digest'
+        [ "${#old_expected}" = 64 ] || die "invalid pinned expanded digest: $old"
         old_actual=$(bounded_sha "$root/shared/$old") || die 'cannot hash expanded controller'
         [ "$old_actual" = "$old_expected" ] || die "expanded controller mismatch: $old"
     done
@@ -199,7 +208,7 @@ if [ "$expanded" = 0 ] &&
     old_slot=$root/slots/$old_active
     [ -f "$old_slot/runtime.tar.gz" ] && [ -f "$old_slot/runtime.sha256" ] ||
         die 'expanded active runtime is incomplete'
-    old_expected=$(cat "$old_slot/runtime.sha256") || die 'cannot read active runtime digest'
+    old_expected=$(migration_hash slots/runtime.tar.gz) || die 'cannot read pinned runtime digest'
     old_actual=$(bounded_sha "$old_slot/runtime.tar.gz") ||
         die 'cannot hash active runtime'
     [ "$old_actual" = "$old_expected" ] || die 'expanded active runtime mismatch'
@@ -302,6 +311,13 @@ if [ "$expanded" = 1 ] || [ "$expanded" = 6 ]; then
     sync
     require_boot_reserve || die 'guard reclamation fell below boot reserve'
     fail_at after-reclaim-guard
+    rm -f "$root/shared/dropbear.tar.gz"
+    sync
+    require_boot_reserve || die 'Dropbear reclamation fell below boot reserve'
+    fail_at after-reclaim-dropbear
+    rm -f "$root/shared/dropbear.sha256"
+    require_boot_reserve || die 'Dropbear sidecar reclamation fell below boot reserve'
+    fail_at after-reclaim-dropbear-sidecar
     write_state headroom-reclaimed || die 'cannot journal reclaimed headroom'
     # Convert the retained active slot to the compressed controller's MD5
     # corruption sidecar while its SHA-256 was just authenticated above.
