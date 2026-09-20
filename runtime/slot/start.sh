@@ -34,7 +34,8 @@ JOAN_STAGING_DIR="$JL_RUN/staging" \
 JOAN_WEB_DIR="$JL_SLOT_DIR/web" \
 JOAN_INTEGRATION_HELPER="$JL_SLOT_DIR/hooks/integration-helper.sh" \
 JOAN_AUDIO_WS_SOCKET="$JL_RUN/audio-ws.sock" \
-JOAN_MQTT_PORT=1883 JOAN_PUBLIC_HOST="jooan-w3u.local" \
+JOAN_MQTT_PORT=1883 JOAN_RTSP_PORT=8554 JOAN_RTSP_PROXY_PORT=554 \
+JOAN_PUBLIC_HOST="jooan-w3u.local" \
     "$JL_SLOT_DIR/bin/joan-daemon" >"$JL_RUN/daemon.log" 2>&1 &
 echo $! > "$JL_RUN/daemon.pid"
 exit 0

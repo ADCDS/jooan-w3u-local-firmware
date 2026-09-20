@@ -63,7 +63,7 @@ def rtsp_server(stop):
 stop=threading.Event();rtsp=threading.Thread(target=rtsp_server,args=(stop,),daemon=True);rtsp.start();time.sleep(.1)
 with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as staging:
  sequence=pathlib.Path(state)/'release-sequence';sequence.write_text('7\n')
- env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_RELEASE_SEQUENCE_PATH':str(sequence),'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'1','JOAN_MDNS_PORT':'15353'}
+ env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_RELEASE_SEQUENCE_PATH':str(sequence),'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_CONNECTIVITY_PORT':'0','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'1','JOAN_MDNS_PORT':'15353'}
  p=subprocess.Popen([BIN,'--plain-http','--bind','127.0.0.1','--port','18081'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  try:
   for _ in range(100):
@@ -80,6 +80,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nContent-Length: '+str(len(smuggled)).encode()+b'\r\n\r\n'+smuggled)==400
   assert raw_status(b'POST /api/v1/network/mdns HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 16385\r\n\r\n')==413
   assert raw_status(b'POST /api/v1/update HTTP/1.1\r\nHost: 127.0.0.1:18081\r\nContent-Length: 2097345\r\n\r\n')==413
+  idle=socket.create_connection(('127.0.0.1',18081),2);idle.shutdown(socket.SHUT_WR);idle.settimeout(2);assert idle.recv(128)==b'';idle.close()
   slow=[]
   for _ in range(8):
    s=socket.create_connection(('127.0.0.1',18081),2);s.sendall(b'G');slow.append(s)
@@ -137,9 +138,9 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert request('GET','/api/v1/snapshot',cookie=cookie)[0]==501
   manifest=json.loads((ROOT/'web/manifest.webmanifest').read_text());assert manifest['display']=='standalone'
   html=(ROOT/'web/index.html').read_text();pattern=re.search(r'name="hostname"[^>]*pattern="([^"]+)"',html).group(1);js=f"const r=new RegExp('^(?:'+{json.dumps(pattern)}+')$','v');const good=['a','camera-1','A1-b',{'a'*63!r}];const bad=['-camera','camera-','bad.name',{'a'*64!r}];if(!good.every(x=>r.test(x))||bad.some(x=>r.test(x)))process.exit(1);";subprocess.run(['node','-e',js],check=True,capture_output=True);assert 'name="username" value="admin" autocomplete="username"' in html
-  sw=(ROOT/'web/sw.js').read_text();static=next(line for line in sw.splitlines() if line.startswith('const STATIC='));assert '/api/' not in static and 'audio' not in static and 'video-player.js' in static
+  sw=(ROOT/'web/sw.js').read_text();static=next(line for line in sw.splitlines() if line.startswith('const STATIC='));assert '/api/' not in static and 'audio' not in static and 'video-player.js' in static and "CACHE='jooan-ui-v2'" in sw and "fetch(event.request,{cache:'no-store'})" in sw
   player=(ROOT/'web/video-player.js').read_text();assert 'this.failures >= 3' in player and 'await this.initialize(next)' in player and 'this.sequence = 0' in player
-  app=(ROOT/'web/app.js').read_text();assert 'r.status===204?null' in app and 'r.status===401' in app and 'requireLogin()' in app
+  app=(ROOT/'web/app.js').read_text();assert 'r.status===204?null' in app and 'r.status===401' in app and 'requireLogin()' in app and 'if(!ptzHeld)releasePtz()' in app
   audio_client=(ROOT/'web/audio-client.js').read_text();assert 'try { element.setPointerCapture?.(event.pointerId); }' in audio_client
   for script in ('sw.js','video-player.js','app.js'):subprocess.run(['node','--check',str(ROOT/'web'/script)],check=True,capture_output=True)
   subprocess.run(['node',str(ROOT/'web/video-player.test.js')],check=True,capture_output=True)

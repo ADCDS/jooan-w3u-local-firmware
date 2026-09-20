@@ -658,7 +658,7 @@ class HostBuilderTests(unittest.TestCase):
                 "JOOAN-PERSISTENT-CONTRACT-V1\n"
                 "logical_regular_file_cap_bytes=180224\n"
                 "final_free_reserve_bytes=81920\n"
-                "state_config_regular_file_reserve_bytes=16384\n"
+                "state_config_regular_file_reserve_bytes=12288\n"
                 "external_regular_file_reserve_bytes=4096\n"
                 "maintenance_regular_file_cap_bytes=180224\n"
                 "maintenance_final_free_reserve_bytes=57344\n",

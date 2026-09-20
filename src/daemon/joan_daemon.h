@@ -26,6 +26,7 @@ typedef struct {
     char audio_socket[256];
     unsigned mqtt_port;
     unsigned rtsp_port;
+    unsigned rtsp_proxy_port;
     int mdns_enabled;
     unsigned mdns_port;
 } JoanConfig;
@@ -107,6 +108,8 @@ int joan_fmp4_fragment(const char *stream, uint32_t after,
                        unsigned char **data, size_t *len, uint32_t *sequence,
                        unsigned timeout_ms);
 const char *joan_fmp4_status(const char *stream);
+int joan_rtsp_proxy_start(const JoanConfig *cfg);
+void joan_rtsp_proxy_stop(void);
 int joan_server_run(const JoanConfig *cfg);
 void joan_server_stop(void);
 

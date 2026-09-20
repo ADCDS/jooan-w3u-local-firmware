@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/ioctl.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -49,6 +50,7 @@ static int policy_probe(void)
     int mqtt_listener = -1;
     int mqtt_client = -1;
     int mqtt_accepted = -1;
+    int connectivity_client = -1;
     int api_listener = -1;
     int api_client = -1;
     int api_accepted = -1;
@@ -96,10 +98,10 @@ static int policy_probe(void)
         goto done;
     memset(&local, 0, sizeof(local));
     local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_addr.s_addr = htonl(0x7f000002UL);
     local.sin_port = 0;
     local_length = sizeof(local);
-    if (bind(mqtt_listener, (struct sockaddr *)&local, sizeof(local)) != 0 ||
+    if (syscall(SYS_bind,mqtt_listener,(struct sockaddr *)&local,sizeof(local)) != 0 ||
         listen(mqtt_listener, 1) != 0 ||
         getsockname(mqtt_listener, (struct sockaddr *)&local,
                     &local_length) != 0 ||
@@ -151,7 +153,8 @@ static int policy_probe(void)
                     &local_length) != 0 ||
         snprintf(rtsp_port, sizeof(rtsp_port), "%u",
                  (unsigned)ntohs(local.sin_port)) <= 0 ||
-        setenv("JOOAN_GUARD_TEST_RTSP_PORT", rtsp_port, 1) != 0)
+        setenv("JOOAN_GUARD_TEST_RTSP_PORT", rtsp_port, 1) != 0 ||
+        setenv("JOOAN_GUARD_TEST_RTSP_UPSTREAM_PORT", rtsp_port, 1) != 0)
         goto done;
     {
         static const char password[] = "temporary-password\n";
@@ -206,9 +209,16 @@ rtsp_gate_done:
     blocked.sin_family = AF_INET;
     blocked.sin_port = htons(443);
     inet_pton(AF_INET, "192.0.2.1", &blocked.sin_addr);
+    connectivity_client=socket(AF_INET,SOCK_DGRAM,0);
+    local_length=sizeof(local);memset(&local,0,sizeof(local));
+    if(connectivity_client<0||
+       connect(connectivity_client,(struct sockaddr*)&blocked,sizeof(blocked))!=0||
+       getpeername(connectivity_client,(struct sockaddr*)&local,&local_length)!=0||
+       local.sin_family!=AF_INET||ntohl(local.sin_addr.s_addr)!=0x7f000004UL||
+       ntohs(local.sin_port)!=JOOAN_GUARD_CONNECTIVITY_PORT)
+        goto done;
     errno = 0;
-    if (connect(client, (struct sockaddr *)&blocked, sizeof(blocked)) != -1 ||
-        errno != EACCES)
+    if (connect(client, (struct sockaddr *)&blocked, sizeof(blocked)) != -1)
         goto done;
 
     datagram = socket(AF_INET, SOCK_DGRAM, 0);
@@ -263,6 +273,8 @@ done:
         close(mqtt_client);
     if (mqtt_listener >= 0)
         close(mqtt_listener);
+    if (connectivity_client >= 0)
+        close(connectivity_client);
     if (api_accepted >= 0)
         close(api_accepted);
     if (api_client >= 0)

@@ -528,7 +528,7 @@ static const char *configured_rtsp_sync_path(void)
     return JOOAN_GUARD_RTSP_SYNC_PATH;
 }
 
-static uint16_t configured_rtsp_port(void)
+static uint16_t configured_rtsp_public_port(void)
 {
 #ifdef GUARD_TESTING
     const char *value = getenv("JOOAN_GUARD_TEST_RTSP_PORT");
@@ -541,7 +541,23 @@ static uint16_t configured_rtsp_port(void)
             return (uint16_t)port;
     }
 #endif
-    return 554U;
+    return JOOAN_GUARD_RTSP_PUBLIC_PORT;
+}
+
+static uint16_t configured_rtsp_upstream_port(void)
+{
+#ifdef GUARD_TESTING
+    const char *value = getenv("JOOAN_GUARD_TEST_RTSP_UPSTREAM_PORT");
+    char *end = NULL;
+    unsigned long port;
+
+    if (value != NULL && value[0] != '\0') {
+        port = strtoul(value, &end, 10);
+        if (end != value && *end == '\0' && port > 0 && port <= 65535UL)
+            return (uint16_t)port;
+    }
+#endif
+    return JOOAN_GUARD_RTSP_UPSTREAM_PORT;
 }
 
 static void disable_dsp_if_current(int descriptor)
@@ -1009,7 +1025,7 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
     struct sockaddr_in6 address6;
     socklen_t option_length;
     int socket_type;
-    uint16_t port;
+    uint16_t port,upstream_port;
 
     if (next_bind == NULL)
         resolve_symbols();
@@ -1033,8 +1049,14 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
         if (next_getsockopt != NULL &&
             next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
                             &option_length) == 0 &&
-            port == configured_rtsp_port() && socket_type == SOCK_STREAM)
-            return next_bind(descriptor, address, length);
+            port == configured_rtsp_public_port() && socket_type == SOCK_STREAM) {
+            address4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            upstream_port=configured_rtsp_upstream_port();
+            ((unsigned char *)&address4.sin_port)[0]=(unsigned char)(upstream_port>>8);
+            ((unsigned char *)&address4.sin_port)[1]=(unsigned char)(upstream_port&0xff);
+            return next_bind(descriptor, (const struct sockaddr *)&address4,
+                             sizeof(address4));
+        }
         address4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         return next_bind(descriptor, (const struct sockaddr *)&address4,
                          sizeof(address4));
@@ -1051,8 +1073,14 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
         if (next_getsockopt != NULL &&
             next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
                             &option_length) == 0 &&
-            port == configured_rtsp_port() && socket_type == SOCK_STREAM)
-            return next_bind(descriptor, address, length);
+            port == configured_rtsp_public_port() && socket_type == SOCK_STREAM) {
+            address6.sin6_addr = in6addr_loopback;
+            upstream_port=configured_rtsp_upstream_port();
+            ((unsigned char *)&address6.sin6_port)[0]=(unsigned char)(upstream_port>>8);
+            ((unsigned char *)&address6.sin6_port)[1]=(unsigned char)(upstream_port&0xff);
+            return next_bind(descriptor, (const struct sockaddr *)&address6,
+                             sizeof(address6));
+        }
         address6.sin6_addr = in6addr_loopback;
         return next_bind(descriptor, (const struct sockaddr *)&address6,
                          sizeof(address6));
@@ -1122,7 +1150,7 @@ static int accepted_rtsp_must_close(int listener,
     } else {
         return 0;
     }
-    if (port != configured_rtsp_port())
+    if (port != configured_rtsp_upstream_port())
         return 0;
 #ifdef GUARD_TESTING
     if (getenv("JOOAN_GUARD_TEST_RTSP_GATE_ALL") == NULL &&
@@ -1199,22 +1227,37 @@ static int connected_socket_is_allowed(int descriptor);
 int connect(int descriptor, const struct sockaddr *address, socklen_t length)
 {
     struct sockaddr_in redirected;
+    uint16_t connectivity_port;
 
     if (next_connect == NULL)
         resolve_symbols();
-    if (guard_applies() && !jooan_guard_sockaddr_is_loopback(address, length))
-        return deny_network();
     if (next_connect == NULL) {
         errno = ENOSYS;
         return -1;
     }
     if (guard_applies() && address != NULL &&
         length >= (socklen_t)sizeof(redirected) &&
+        address->sa_family == AF_INET &&
+        !jooan_guard_sockaddr_is_loopback(address,length) &&
+        ((const unsigned char *)&((const struct sockaddr_in *)address)->sin_port)[0] == 1 &&
+        ((const unsigned char *)&((const struct sockaddr_in *)address)->sin_port)[1] == 0xbb) {
+        memcpy(&redirected,address,sizeof(redirected));
+        inet_pton(AF_INET,JOOAN_GUARD_CONNECTIVITY_LOOPBACK4,
+                  &redirected.sin_addr);
+        connectivity_port=JOOAN_GUARD_CONNECTIVITY_PORT;
+        ((unsigned char *)&redirected.sin_port)[0]=(unsigned char)(connectivity_port>>8);
+        ((unsigned char *)&redirected.sin_port)[1]=(unsigned char)(connectivity_port&0xff);
+        return next_connect(descriptor,(const struct sockaddr *)&redirected,
+                            sizeof(redirected));
+    }
+    if (guard_applies() && !jooan_guard_sockaddr_is_loopback(address, length))
+        return deny_network();
+    if (guard_applies() && address != NULL &&
+        length >= (socklen_t)sizeof(redirected) &&
         address->sa_family == AF_INET) {
         memcpy(&redirected, address, sizeof(redirected));
         if (ntohl(redirected.sin_addr.s_addr) == 0x7f000002UL) {
             uint16_t mqtt_port = configured_local_mqtt_port();
-            redirected.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             ((unsigned char *)&redirected.sin_port)[0] =
                 (unsigned char)(mqtt_port >> 8);
             ((unsigned char *)&redirected.sin_port)[1] =

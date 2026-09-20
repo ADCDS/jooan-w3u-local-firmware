@@ -120,7 +120,7 @@
     ],
     "logical_regular_file_cap_bytes": 180224,
     "root": "/opt/custom/jooan-local",
-    "state_config_regular_file_reserve_bytes": 16384,
+    "state_config_regular_file_reserve_bytes": 12288,
     "maintenance_final_free_reserve_bytes": 57344,
     "maintenance_regular_file_cap_bytes": 180224
   },

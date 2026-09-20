@@ -102,13 +102,16 @@ int jooan_guard_sockaddr_is_loopback(const struct sockaddr *address,
 
 int jooan_guard_listener_reply_port_allowed(uint16_t port)
 {
-    return port == 554U || port == 8899U || port == 9898U || port == 24569U;
+    return port == JOOAN_GUARD_RTSP_UPSTREAM_PORT || port == 8899U ||
+           port == 9898U || port == 24569U;
 }
 
 int jooan_guard_listener_bind_external_allowed(uint16_t port,
                                                 int socket_type)
 {
-    return port == 554U && socket_type == SOCK_STREAM;
+    (void)port;
+    (void)socket_type;
+    return 0;
 }
 
 int16_t jooan_guard_alaw_to_pcm16(uint8_t value)

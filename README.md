@@ -39,12 +39,15 @@ The target release surface is local and authenticated:
   never contain a shared private key;
 - SSH on TCP/22 uses the same `admin` password as HTTPS; changing it updates
   both services, and optional Ed25519 authorized keys may be added;
-- RTSP over TCP/554 remains available for local video clients;
+- RTSP over TCP/554 is protected by Digest authentication using the same
+  administrator password; the retained OEM RTSP service is loopback-only;
 - embedded DNS-SD advertises HTTPS, SSH, RTSP, and the camera service under a
   configurable `.local` hostname;
 - IPv4 and IPv6 default routes are removed and continuously pruned. Connected
   local-subnet routes remain, so local clients work without an Internet route;
 - exact-binary `jooanipc` containment blocks vendor cloud/P2P egress.
+- the OEM speaker and motion-alarm playback paths stay muted; the amplifier is
+  enabled only for a bounded, authenticated WebUI push-to-talk lease.
 
 The generic image does not contain Wi-Fi credentials. It preserves the
 compatible unit's existing OEM Wi-Fi configuration, and replacement Wi-Fi
