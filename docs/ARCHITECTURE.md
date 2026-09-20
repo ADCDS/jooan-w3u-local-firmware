@@ -61,7 +61,7 @@ changed; warning state, rather than forced setup, records that condition.
 The implementation includes deterministic signed packaging, a compressed
 controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
-keys, the HTTPS daemon and PWA, main/sub fMP4, a local TLS MQTT sink, microphone
+keys, the HTTPS daemon and Web UI, main/sub fMP4, a local TLS MQTT sink, microphone
 and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
 exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
 names to loopback and denies other `jooanipc` connect/datagram traffic.

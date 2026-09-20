@@ -69,8 +69,10 @@ isolation. See [Network security](docs/NETWORK-SECURITY.md).
 
 `release.sh` builds the deployable MIPS/uClibc runtime, assembles the audited
 install/uninstall stages, and emits both packages under `dist/`. It requires
-`TOOLCHAIN_ROOT` and a private compatible `OEM_ROOTFS` extraction for link-time
-ABI libraries; neither is redistributed. The package is model- and hash-gated
+`TOOLCHAIN_ROOT`, a private compatible `OEM_ROOTFS` extraction for link-time
+ABI libraries, and the `zopfli` compressor (the persistent budget has no room
+for `gzip -9`; zopfli emits a smaller, standard gzip stream the camera reads
+unchanged). The private inputs are not redistributed. The package is model- and hash-gated
 and remains subject to the OEM IronMan limit of `0x200001` bytes. The persistent
 steady layout stores a compressed controller core, a separate SSH recovery
 bundle, and exactly one compressed runtime. Project regular files remain below

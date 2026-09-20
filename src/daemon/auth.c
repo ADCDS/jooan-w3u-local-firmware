@@ -246,3 +246,13 @@ void joan_auth_logout(const JoanAuthz *auth)
     for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) memset(&sessions[i], 0, sizeof(sessions[i]));
     pthread_mutex_unlock(&lock);
 }
+
+/* Re-issue this session's lifetime against the current clock. Setting the
+   system time forward would otherwise leave every session's absolute expiry
+   in the past, logging the caller out on their next request. */
+void joan_auth_restamp(const JoanAuthz *auth)
+{
+    unsigned i; time_t now = time(NULL); pthread_mutex_lock(&lock);
+    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) sessions[i].expires = now + SESSION_SECONDS;
+    pthread_mutex_unlock(&lock);
+}

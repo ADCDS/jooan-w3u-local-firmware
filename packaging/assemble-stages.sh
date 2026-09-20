@@ -49,6 +49,10 @@ find "$repo/web" -maxdepth 1 -type f \( -name '*.html' -o -name '*.css' -o \
     ! -name '*.test.js' -print | LC_ALL=C sort | while IFS= read -r file; do
         cp "$file" "$runtime/web/"
     done
+# Under 2 KiB of the persistent budget is spare, so readable Web UI source
+# cannot ship verbatim. Same treatment the shell scripts below already get:
+# the repository keeps the comments, the device gets the program.
+python3 "$repo/packaging/minify-web.py" "$runtime/web"
 
 find "$controller" "$runtime" -type f -name '*.sh' -print | while IFS= read -r script; do
     awk 'NR == 1 { print; next } /^[[:space:]]*#/ { next } NF { print }' \
@@ -57,10 +61,23 @@ find "$controller" "$runtime" -type f -name '*.sh' -print | while IFS= read -r s
 done
 find "$controller" "$runtime" -type f -name '*.sh' -exec chmod 755 {} \;
 
-tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -C "$controller" -cf - . | gzip -9n > "$stage/install/controller.tar.gz"
-tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -C "$runtime" -cf - . | gzip -9n > "$stage/install/runtime.tar.gz"
+# The persistent budget (176 KiB, /opt is mtd5 384 KiB JFFS2) has no room for
+# gzip -9. Zopfli emits a smaller, standard gzip stream the OEM busybox reads
+# with `tar -xzf` unchanged; the size gate depends on it, so it is required.
+# Deterministic output keeps ci/check_reproducible.py green.
+command -v zopfli >/dev/null 2>&1 || {
+    echo "assemble-stages: zopfli is required for release compression" >&2
+    echo "  install it (e.g. 'apt-get install zopfli'); gzip -9 overflows the /opt budget" >&2
+    exit 1
+}
+jl_gz() { # jl_gz <src-dir> <out.gz>
+    _t=$(mktemp)
+    tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$1" -cf "$_t" .
+    zopfli --i25 --gzip -c "$_t" > "$2"
+    rm -f "$_t"
+}
+jl_gz "$controller" "$stage/install/controller.tar.gz"
+jl_gz "$runtime" "$stage/install/runtime.tar.gz"
 (cd "$stage/install" && md5sum runtime.tar.gz | awk '{print $1}' > runtime.md5)
 cp "$target/shared/dropbear.tar.gz" "$stage/install/recovery.tar.gz"
 (cd "$stage/install" && md5sum recovery.tar.gz | awk '{print $1}' > recovery.md5)

@@ -2,38 +2,221 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="description" content="Private local control, video, networking, and updates for this camera.">
   <title>Jooan Local Camera</title>
-  <meta name="theme-color" content="#19222c">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0e1519">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<header><h1>Jooan Local</h1><span id="connection">Offline</span></header>
+<header id="top">
+  <h1>Jooan Local</h1>
+  <span id="connection" class="pill"><i class="led"></i>Offline</span>
+</header>
+
 <main>
   <section id="login" class="card narrow">
     <h2>Administrator sign in</h2>
-    <p>Initial access uses <code>admin</code> / <code>change-me-password</code>. It remains usable, but a warning remains until it is changed.</p>
-    <form id="login-form"><label>User<input name="username" value="admin" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form>
+    <p>Initial access uses <code>admin</code> with the documented bootstrap password. It stays usable, and a warning stays visible, until it is changed.</p>
+    <form id="login-form">
+      <label>User<input name="username" value="admin" autocomplete="username"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary">Sign in</button>
+    </form>
   </section>
+
   <section id="setup" class="card narrow hidden">
-    <h2>Change administrator password</h2><p>Choose a unique password of at least 12 characters. This password is shared with SSH.</p>
-    <form id="password-form"><input type="hidden" name="username" value="admin" autocomplete="username"><label>Current password<input name="old_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" required></label><button>Change password</button></form>
+    <h2>Change administrator password</h2>
+    <p>Choose a unique password of at least 12 characters. It is shared with SSH and RTSP.</p>
+    <form id="password-form">
+      <input type="hidden" name="username" value="admin" autocomplete="username">
+      <label>Current password<input name="old_password" type="password" autocomplete="current-password" required></label>
+      <label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <button class="primary">Change password</button>
+      <button type="button" id="setup-cancel" class="ghost">Cancel</button>
+    </form>
   </section>
-  <div id="dashboard" class="hidden grid">
-    <section class="card"><h2>Status</h2><pre id="status">Loading…</pre><button id="refresh">Refresh</button><button id="logout" class="secondary">Sign out</button></section>
-    <section class="card video-card"><h2>Live video</h2><div id="default-password-warning" class="warning hidden">The public initial password is still active. Change it from this page.</div><div class="video-grid"><figure><video id="video-main" muted autoplay playsinline controls></video><figcaption>Main stream</figcaption></figure><figure><video id="video-sub" muted autoplay playsinline controls></video><figcaption>Sub stream</figcaption></figure></div><div id="streams"></div><button id="change-password">Change password</button></section>
-    <section class="card"><h2>Wi-Fi transaction</h2><form id="wifi-form"><label>SSID<input name="ssid" autocomplete="off" required></label><label>Passphrase<input name="password" type="password" autocomplete="new-password" minlength="8" required></label><button>Stage</button></form><div class="row"><button id="wifi-commit">Commit staged</button><button id="wifi-rollback" class="danger">Roll back</button></div><output id="wifi-result"></output></section>
-    <section class="card"><h2>Local address</h2><p>Use this name on the same network even when DHCP changes the numeric address.</p><form id="mdns-form"><label>Hostname<input name="hostname" maxlength="63" pattern="[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?" required></label><button>Save .local name</button></form><output id="mdns-result"></output></section>
-    <section class="card"><h2>Local routes</h2><p>Only private RFC1918 or ULA networks are accepted. Default and public routes are rejected.</p><form id="routes-form"><label>Approved CIDRs<textarea name="cidrs" rows="3" placeholder="10.42.0.0/24, fd00::/64"></textarea></label><button>Apply routes</button></form><output id="routes-result"></output></section>
-    <section class="card"><h2>SSH keys</h2><pre id="ssh-list"></pre><form id="ssh-form"><label>Public key<textarea name="key" rows="4" required></textarea></label><button>Add key</button></form></section>
-    <section class="card"><h2>Pan / tilt</h2><div class="ptz"><button data-ptz="up">↑</button><button data-ptz="left">←</button><button data-ptz="stop">■</button><button data-ptz="right">→</button><button data-ptz="down">↓</button></div><label>Jog speed<input id="ptz-speed" type="range" min="1" max="5" value="3"></label><div class="row"><button id="ptz-home">Home</button><button id="preset-set">Save preset</button></div><label>Preset<select id="preset-list"></select></label><div class="row"><button id="preset-goto">Go to preset</button><button id="preset-delete" class="danger">Delete preset</button></div><p id="ptz-state">No lease</p></section>
-    <section class="card"><h2>Two-way audio</h2><p>Listen to the camera microphone, then hold the button to speak. Microphone playback pauses while talking to prevent feedback.</p><div class="row"><button id="audio-connect">Listen</button><button id="push-to-talk" class="danger" disabled>Hold to talk</button></div><p id="audio-state">Disconnected</p></section>
-    <section class="card"><h2>Firmware staging</h2><p>Images are staged and verified before a separate apply action.</p><form id="firmware-form"><label>Firmware image<input name="image" type="file" required></label><button>Stage image</button></form><button id="firmware-apply" class="danger">Apply verified image</button><output id="firmware-result"></output></section>
+
+  <div id="console" class="hidden" data-zone="live">
+    <nav id="rail" aria-label="Sections">
+      <span class="brand"><b>Jooan Local</b><small id="rail-host">&nbsp;</small></span>
+      <button data-zone="live" aria-current="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg><span>Live</span></button>
+      <button data-zone="control"><svg viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/><circle cx="12" cy="12" r="2.6"/></svg><span>Control</span></button>
+      <button data-zone="network"><svg viewBox="0 0 24 24"><path d="M2.5 9a15 15 0 0 1 19 0M6 12.8a10 10 0 0 1 12 0M9.5 16.5a5 5 0 0 1 5 0"/><circle cx="12" cy="20" r="1.1"/></svg><span>Network</span></button>
+      <button data-zone="system"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.1"/><circle cx="10" cy="17" r="2.1"/></svg><span>System</span></button>
+    </nav>
+
+    <div id="view">
+      <div id="chips" class="chips"></div>
+      <div id="pw-warning" class="banner hidden">
+        <svg viewBox="0 0 24 24" class="warn-icon"><path d="M12 4 2.8 20h18.4Z"/><path d="M12 10v4M12 17v.5"/></svg>
+        <span class="grow"><strong>Initial password still active.</strong> Anyone on this network can sign in.</span>
+        <button id="goto-password">Change it</button>
+      </div>
+
+      <section id="zone-live" class="zone">
+        <div class="cams">
+          <div class="cam main" id="tile-main" tabindex="0" data-fs="main" role="button" aria-label="Main stream, full screen">
+            <video id="video-main" muted autoplay playsinline></video>
+            <span class="badge"><i></i>LIVE</span>
+            <span class="cap" id="cap-main">Main</span>
+            <span class="camfs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"/></svg><b>Full screen</b></span>
+          </div>
+          <div class="cam sub" id="tile-sub" tabindex="0" data-fs="sub" role="button" aria-label="Sub stream, full screen">
+            <video id="video-sub" muted autoplay playsinline></video>
+            <span class="badge"><i></i>LIVE</span>
+            <span class="cap" id="cap-sub">Sub</span>
+            <span class="camfs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"/></svg><b>Full screen</b></span>
+          </div>
+        </div>
+        <aside class="side">
+          <div class="card">
+            <h2>Jog</h2>
+            <div class="dpad">
+              <button data-ptz="up" class="u" aria-label="Tilt up">&uarr;</button>
+              <button data-ptz="left" class="l" aria-label="Pan left">&larr;</button>
+              <button data-ptz="stop" class="c" aria-label="Stop">&#9632;</button>
+              <button data-ptz="right" class="r" aria-label="Pan right">&rarr;</button>
+              <button data-ptz="down" class="d" aria-label="Tilt down">&darr;</button>
+            </div>
+            <p id="ptz-state" class="muted">No lease</p>
+          </div>
+          <div class="card">
+            <h2>Talkback</h2>
+            <button id="audio-connect" class="wide">Listen</button>
+            <button id="push-to-talk" class="wide primary" disabled>Hold to talk</button>
+            <p id="audio-state" class="muted">Disconnected</p>
+          </div>
+        <div class="card desktop-only">
+              <h2>RTSP for NVR clients</h2>
+              <div id="streams" class="kv stack"></div>
+            </div>
+          </aside>
+      </section>
+
+      <section id="zone-control" class="zone hidden" data-scrollport>
+        <div class="card">
+          <h2>Presets</h2>
+          <div id="preset-chips" class="chips row-chips"></div>
+          <div class="grid2">
+            <button id="preset-set">Save current</button>
+            <button id="preset-delete" class="danger">Delete preset</button>
+          </div>
+          <div id="preset-confirm"></div>
+        </div>
+        <div class="card">
+          <h2>Jog speed</h2>
+          <div id="speed-chips" class="chips row-chips"></div>
+          <div class="kv">
+            <div class="row"><span>Home position</span><b><button id="ptz-home" class="link">Go to home</button></b></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Talkback</h2>
+          <button id="audio-connect-2" class="wide">Listen</button>
+          <p class="muted">Microphone playback pauses while talking to prevent feedback.</p>
+        </div>
+      </section>
+
+      <section id="zone-network" class="zone hidden" data-scrollport>
+        <div class="card">
+          <h2>Wi-Fi</h2>
+          <form id="wifi-form">
+            <label>SSID<input name="ssid" autocomplete="off" required></label>
+            <label>Passphrase<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+            <button>Stage</button>
+          </form>
+          <div class="grid2">
+            <button id="wifi-commit" class="primary">Commit staged</button>
+            <button id="wifi-rollback" class="danger">Roll back</button>
+          </div>
+          <div id="wifi-confirm"></div>
+          <output id="wifi-result"></output>
+        </div>
+        <div class="card">
+          <h2>Local name</h2>
+          <form id="mdns-form">
+            <label>Hostname<input name="hostname" maxlength="63" pattern="[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?" required></label>
+            <button>Save .local name</button>
+          </form>
+          <output id="mdns-result"></output>
+        </div>
+        <div class="card">
+          <h2>Approved routes</h2>
+          <p class="muted">Only private RFC1918 or ULA networks are accepted. Default and public routes are rejected.</p>
+          <form id="routes-form">
+            <label>Approved CIDRs<textarea name="cidrs" rows="2" placeholder="10.42.0.0/24, fd00::/64"></textarea></label>
+            <button>Apply routes</button>
+          </form>
+          <output id="routes-result"></output>
+        </div>
+      </section>
+
+      <section id="zone-system" class="zone hidden" data-scrollport>
+        <div class="card">
+          <h2>State</h2>
+          <div id="state-chips" class="chips"></div>
+          <div id="state-detail" class="kv gap-top"></div>
+        </div>
+        <div class="card">
+          <h2>Administrator password</h2>
+          <div class="kv">
+            <div class="row"><span>Shared with</span><b>HTTPS &middot; RTSP &middot; SSH</b></div>
+            <div class="row"><span>State</span><b id="pw-state">&mdash;</b></div>
+          </div>
+          <button id="change-password" class="primary">Change password</button>
+        </div>
+        <div class="card">
+          <h2>SSH keys</h2>
+          <div id="ssh-list" class="kv stack"></div>
+          <form id="ssh-form">
+            <label>Public key<textarea name="key" rows="2" required></textarea></label>
+            <button>Add key</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Firmware</h2>
+          <p class="muted">Images are staged and verified before a separate apply action.</p>
+          <form id="firmware-form">
+            <label>Firmware image<input name="image" type="file" required></label>
+            <button>Stage image</button>
+          </form>
+          <button id="firmware-apply" class="danger">Apply verified image</button>
+          <div id="firmware-confirm"></div>
+          <output id="firmware-result"></output>
+        </div>
+        <div class="card">
+          <h2>Camera time</h2>
+          <div class="kv">
+            <div class="row"><span>This device</span><b id="time-local">&mdash;</b></div>
+            <div class="row"><span>Camera clock</span><b id="time-camera">&mdash;</b></div>
+            <div class="row"><span>Time zone</span><b id="time-zone">&mdash;</b></div>
+          </div>
+          <button id="time-sync" class="primary">Sync time &amp; zone to this device</button>
+          <label>Or set a specific time<input id="time-manual" type="datetime-local" step="1"></label>
+          <button id="time-set-manual">Set this time</button>
+          <output id="time-result"></output>
+        </div>
+        <div class="card">
+          <h2>Session</h2>
+          <div class="grid2">
+            <button id="refresh">Refresh</button>
+            <button id="logout" class="ghost">Sign out</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="fs-bar" class="hidden">
+      <button data-fs-pick="main" class="primary">Main</button>
+      <button data-fs-pick="sub">Sub</button>
+      <span id="fs-sensor" class="pill"><i class="led"></i></span>
+      <span class="grow"></span>
+      <button id="fs-exit">Back</button>
+    </div>
   </div>
-  <p id="notice" role="status"></p>
+
+  <p id="notice" role="status" class="hidden"><span id="notice-text"></span><button id="notice-close" aria-label="Dismiss">&times;</button></p>
 </main>
 <script type="module" src="/app.js"></script>
 </body>
