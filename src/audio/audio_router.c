@@ -48,6 +48,7 @@ struct client {
     uint32_t receive_sequence;
     uint32_t transmit_sequence;
     uint64_t session_id;
+    uint64_t talk_deadline;
     struct jooan_audio_guard_client guard;
 };
 
@@ -60,6 +61,7 @@ struct sha1_context {
 
 static volatile sig_atomic_t stopping;
 static const char *guard_socket_path;
+static uint32_t maximum_talk_ms = JOOAN_AUDIO_MAX_TALK_MS;
 
 static uint16_t read_be16(const uint8_t *p)
 {
@@ -309,6 +311,16 @@ static uint64_t new_session_id(void)
     return value ? value : 1;
 }
 
+static uint64_t monotonic_milliseconds(void)
+{
+    struct timespec timestamp;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0)
+        return 0;
+    return (uint64_t)timestamp.tv_sec * UINT64_C(1000) +
+           (uint64_t)timestamp.tv_nsec / UINT64_C(1000000);
+}
+
 static void client_init(struct client *client)
 {
     memset(client, 0, sizeof(*client));
@@ -389,6 +401,35 @@ static int queue_ws_frame(struct client *client, uint8_t opcode,
     return 0;
 }
 
+static int queue_audio_state(struct client *client, uint8_t state)
+{
+    uint8_t frame[JOOAN_AUDIO_WIRE_HEADER_SIZE + 1];
+    size_t frame_length;
+    uint32_t sequence = client->transmit_sequence == UINT32_MAX ? 1u :
+                        client->transmit_sequence + 1u;
+
+    if (jooan_audio_wire_build(frame, sizeof(frame), JOOAN_AUDIO_STATE, 0,
+                               sequence, &state, 1, &frame_length) != 0 ||
+        queue_ws_frame(client, 0x2u, frame, frame_length) != 0)
+        return -1;
+    client->transmit_sequence = sequence;
+    return 0;
+}
+
+static int client_release_guard(struct client *client, uint8_t state)
+{
+    int result = 0;
+
+    if (client->guard.acquired &&
+        jooan_audio_guard_release(&client->guard, 0) != 0)
+        result = -1;
+    jooan_audio_guard_close(&client->guard);
+    client->talk_deadline = 0;
+    if (queue_audio_state(client, state) != 0)
+        result = -1;
+    return result;
+}
+
 static int valid_websocket_key(const char *key)
 {
     size_t i;
@@ -422,49 +463,6 @@ static int token_list_contains(const char *value, const char *wanted)
         cursor = *end ? end + 1 : NULL;
     }
     return 0;
-}
-
-static int valid_protocols(const char *value)
-{
-    const char *cursor = value;
-    int application_seen = 0;
-    int authentication_seen = 0;
-    size_t prefix_length = strlen(JOOAN_AUDIO_WS_AUTH_PREFIX);
-
-    while (cursor && *cursor) {
-        const char *end;
-        size_t length, i;
-
-        while (*cursor == ' ' || *cursor == '\t' || *cursor == ',')
-            ++cursor;
-        end = strchr(cursor, ',');
-        if (!end)
-            end = cursor + strlen(cursor);
-        while (end > cursor && (end[-1] == ' ' || end[-1] == '\t'))
-            --end;
-        length = (size_t)(end - cursor);
-        if (length == strlen(JOOAN_AUDIO_WS_PROTOCOL) &&
-            !memcmp(cursor, JOOAN_AUDIO_WS_PROTOCOL, length)) {
-            if (application_seen)
-                return 0;
-            application_seen = 1;
-        } else if (length > prefix_length &&
-                   !memcmp(cursor, JOOAN_AUDIO_WS_AUTH_PREFIX, prefix_length)) {
-            size_t token_length = length - prefix_length;
-            if (authentication_seen || token_length < 16 || token_length > 512)
-                return 0;
-            for (i = prefix_length; i < length; ++i) {
-                if (!(isalnum((unsigned char)cursor[i]) || cursor[i] == '_' ||
-                      cursor[i] == '-'))
-                    return 0;
-            }
-            authentication_seen = 1;
-        } else if (length != 0) {
-            return 0;
-        }
-        cursor = *end ? end + 1 : NULL;
-    }
-    return application_seen && authentication_seen;
 }
 
 static char *trim(char *value)
@@ -511,7 +509,9 @@ static int client_handshake(struct client *client)
         strcmp(method, "GET") || strcmp(http_version, "HTTP/1.1") ||
         (strcmp(path, "/ws/audio/mic") && strcmp(path, "/ws/audio/talk")))
         return -1;
-    client->allow_talk = !strcmp(path, "/ws/audio/talk");
+    /* Both public routes are duplex. Keeping the aliases equivalent lets the
+     * bundled listen UI add repeated push-to-talk without a second socket. */
+    client->allow_talk = 1;
     while ((line = strtok_r(NULL, "\r\n", &save)) != NULL) {
         char *colon = strchr(line, ':');
         char *value;
@@ -545,7 +545,8 @@ static int client_handshake(struct client *client)
         key_count != 1 || protocol_count != 1 ||
         strcasecmp(upgrade, "websocket") ||
         !token_list_contains(connection, "Upgrade") || strcmp(version, "13") ||
-        !valid_websocket_key(key) || !valid_protocols(protocols) ||
+        !valid_websocket_key(key) ||
+        jooan_audio_ws_protocol_validate(protocols, NULL) != 0 ||
         websocket_accept(key, accept) != 0)
         return -1;
     response_length = snprintf(
@@ -579,19 +580,31 @@ static int client_audio_frame(struct client *client,
     if (frame.type == JOOAN_AUDIO_PTT_ACQUIRE) {
         if (client->guard.acquired)
             return -1;
-        if (client->guard.fd < 0 &&
-            jooan_audio_guard_open(&client->guard, guard_socket_path,
+        if (client->guard.fd >= 0)
+            jooan_audio_guard_close(&client->guard);
+        client->session_id = new_session_id();
+        if (jooan_audio_guard_open(&client->guard, guard_socket_path,
                                    client->session_id) != 0)
             return -1;
-        if (jooan_audio_guard_acquire(&client->guard, frame.sequence) != 0)
+        /* JAUD is monotonic for the WebSocket lifetime. Each press is a new
+         * leased JAGD session and therefore begins its own sequence at one. */
+        if (jooan_audio_guard_acquire(&client->guard, 1) != 0)
+            return -1;
+        client->talk_deadline = monotonic_milliseconds() +
+                                maximum_talk_ms;
+        if (queue_audio_state(client, JOOAN_AUDIO_STATE_ACQUIRED) != 0)
             return -1;
     } else if (frame.type == JOOAN_AUDIO_PTT_PCMA) {
-        if (jooan_audio_guard_pcma(&client->guard, frame.sequence,
+        uint32_t guard_sequence;
+        if (!client->guard.acquired)
+            return 0;
+        guard_sequence = client->guard.last_sequence == UINT32_MAX ? 1u :
+                         client->guard.last_sequence + 1u;
+        if (jooan_audio_guard_pcma(&client->guard, guard_sequence,
                                    frame.payload, frame.payload_length) != 0)
             return -1;
     } else if (frame.type == JOOAN_AUDIO_PTT_RELEASE) {
-        if (!client->guard.acquired ||
-            jooan_audio_guard_release(&client->guard, frame.sequence) != 0)
+        if (client_release_guard(client, JOOAN_AUDIO_STATE_RELEASED) != 0)
             return -1;
     } else {
         return -1;
@@ -716,6 +729,21 @@ static int broadcast_microphone(struct client *clients,
     return 0;
 }
 
+static void expire_talk_leases(struct client *clients)
+{
+    uint64_t now = monotonic_milliseconds();
+    unsigned i;
+
+    for (i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i].fd < 0 || !clients[i].guard.acquired ||
+            clients[i].talk_deadline == 0 || now < clients[i].talk_deadline)
+            continue;
+        if (client_release_guard(&clients[i],
+                                 JOOAN_AUDIO_STATE_LEASE_EXPIRED) != 0)
+            client_close(&clients[i]);
+    }
+}
+
 static int add_client(struct client *clients, int listener)
 {
     int fd;
@@ -743,7 +771,7 @@ static void usage(const char *program)
 {
     fprintf(stderr,
             "usage: %s [--ws-socket PATH] [--mic-socket PATH] "
-            "[--guard-socket PATH]\n", program);
+            "[--guard-socket PATH] [--max-talk-ms 1..60000]\n", program);
 }
 
 int main(int argc, char **argv)
@@ -775,6 +803,15 @@ int main(int argc, char **argv)
             mic_path = argv[argument + 1];
         else if (!strcmp(argv[argument], "--guard-socket"))
             guard_path = argv[argument + 1];
+        else if (!strcmp(argv[argument], "--max-talk-ms")) {
+            char *end = NULL;
+            unsigned long value = strtoul(argv[argument + 1], &end, 10);
+            if (!end || *end || value == 0 || value > JOOAN_AUDIO_MAX_TALK_MS) {
+                usage(argv[0]);
+                return 2;
+            }
+            maximum_talk_ms = (uint32_t)value;
+        }
         else {
             usage(argv[0]);
             return 2;
@@ -806,6 +843,7 @@ int main(int argc, char **argv)
         struct pollfd descriptors[2 + MAX_CLIENTS];
         int ready;
 
+        expire_talk_leases(clients);
         descriptors[0].fd = listener;
         descriptors[0].events = POLLIN;
         descriptors[1].fd = microphone;
@@ -817,7 +855,7 @@ int main(int argc, char **argv)
                 descriptors[2 + i].events |= POLLOUT;
             descriptors[2 + i].revents = 0;
         }
-        ready = poll(descriptors, 2 + MAX_CLIENTS, 1000);
+        ready = poll(descriptors, 2 + MAX_CLIENTS, 250);
         if (ready < 0) {
             if (errno == EINTR)
                 continue;

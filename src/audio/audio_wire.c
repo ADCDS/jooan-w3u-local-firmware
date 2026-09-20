@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "audio_wire.h"
 
 #include <errno.h>
@@ -130,5 +131,80 @@ int jooan_audio_sequence_accept(uint32_t *last_sequence, uint32_t candidate)
         return -1;
     }
     *last_sequence = candidate;
+    return 0;
+}
+
+static char *trim_protocol(char *value)
+{
+    char *end;
+
+    while (*value == ' ' || *value == '\t')
+        ++value;
+    end = value + strlen(value);
+    while (end > value && (end[-1] == ' ' || end[-1] == '\t'))
+        *--end = '\0';
+    return value;
+}
+
+int jooan_audio_ws_protocol_validate(const char *offered,
+                                     const char *expected_token)
+{
+    char copy[256];
+    char *cursor;
+    char *save = NULL;
+    const char *token = NULL;
+    size_t prefix_length = strlen(JOOAN_AUDIO_WS_AUTH_PREFIX);
+    size_t index;
+    unsigned difference = 0;
+    int application_seen = 0;
+
+    if (!offered || strlen(offered) >= sizeof(copy) ||
+        (expected_token && strlen(expected_token) !=
+                           JOOAN_AUDIO_AUTH_TOKEN_HEX_LENGTH)) {
+        errno = EINVAL;
+        return -1;
+    }
+    strcpy(copy, offered);
+    cursor = strtok_r(copy, ",", &save);
+    while (cursor) {
+        char *value = trim_protocol(cursor);
+        if (!strcmp(value, JOOAN_AUDIO_WS_PROTOCOL)) {
+            if (application_seen) {
+                errno = EPROTO;
+                return -1;
+            }
+            application_seen = 1;
+        } else if (!strncmp(value, JOOAN_AUDIO_WS_AUTH_PREFIX,
+                            prefix_length)) {
+            if (token) {
+                errno = EPROTO;
+                return -1;
+            }
+            token = value + prefix_length;
+        } else {
+            errno = EPROTO;
+            return -1;
+        }
+        cursor = strtok_r(NULL, ",", &save);
+    }
+    if (!application_seen || !token ||
+        strlen(token) != JOOAN_AUDIO_AUTH_TOKEN_HEX_LENGTH) {
+        errno = EPROTO;
+        return -1;
+    }
+    for (index = 0; index < JOOAN_AUDIO_AUTH_TOKEN_HEX_LENGTH; ++index) {
+        if (!((token[index] >= '0' && token[index] <= '9') ||
+              (token[index] >= 'a' && token[index] <= 'f'))) {
+            errno = EPROTO;
+            return -1;
+        }
+        if (expected_token)
+            difference |= (unsigned char)token[index] ^
+                          (unsigned char)expected_token[index];
+    }
+    if (expected_token && difference) {
+        errno = EACCES;
+        return -1;
+    }
     return 0;
 }

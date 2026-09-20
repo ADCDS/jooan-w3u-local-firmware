@@ -37,6 +37,26 @@
       "id": "guard-release-on-close",
       "input": {"operation": "guard_session", "session_id": 72623859790382856, "events": ["acquire", "close"]},
       "expected": {"status": "ok", "wire_types": [1, 3], "sequences": [1, 2]}
+    },
+    {
+      "id": "duplex-repeat-ptt",
+      "input": {"operation": "router_session", "route": "/ws/audio/mic", "events": ["acquire", "pcma", "release", "acquire", "pcma", "release"]},
+      "expected": {"status": "ok", "jaud_sequences": [1, 2, 3, 4, 5, 6], "jagd_sequences": [[1, 2, 3], [1, 2, 3]], "distinct_guard_sessions": true}
+    },
+    {
+      "id": "talk-lease-limit",
+      "input": {"operation": "talk_lease", "requested_ms": 90000},
+      "expected": {"status": "released", "maximum_ms": 60000, "disconnect_deadman_ms": 2000}
+    },
+    {
+      "id": "websocket-auth-token-match",
+      "input": {"operation": "ws_protocol", "offered": "jaud.v1, jaud.auth.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "expected": {"status": "ok"}
+    },
+    {
+      "id": "websocket-auth-token-mismatch",
+      "input": {"operation": "ws_protocol", "offered": "jaud.v1, jaud.auth.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "expected_token": "baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "expected": {"status": "error", "reason": "token-mismatch"}
     }
   ]
 }

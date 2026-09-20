@@ -11,7 +11,7 @@ import time
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 KEY = "dGhlIHNhbXBsZSBub25jZQ=="
-TOKEN = "ABCDEFGHIJKLMNOP"  # hygiene: allow-test-vector
+TOKEN = "a" * 64  # hygiene: allow-test-vector
 
 
 def wait_path(path):
@@ -88,6 +88,16 @@ def receive_server_frame(client):
     return payload
 
 
+def receive_jaud(client, expected_type):
+    payload = receive_server_frame(client)
+    magic, version, kind, flags, header_size, sequence, length, reserved = \
+        struct.unpack("!4sBBBBIHH", payload[:16])
+    assert (magic, version, kind, flags, header_size, reserved) == \
+           (b"JAUD", 1, expected_type, 0, 16, 0)
+    assert sequence != 0 and len(payload) == 16 + length
+    return sequence, payload[16:]
+
+
 def receive_guard(receiver, expected_type, expected_sequence):
     packet = receiver.recv(2048)
     assert len(packet) in (24, 344)
@@ -112,6 +122,7 @@ def main():
             "--ws-socket", ws_path,
             "--mic-socket", mic_path,
             "--guard-socket", guard_path,
+            "--max-talk-ms", "1000",
         ], cwd=os.path.dirname(__file__), stdout=subprocess.PIPE,
            stderr=subprocess.PIPE)
         try:
@@ -119,22 +130,57 @@ def main():
             wait_path(mic_path)
 
             # Full PTT lifecycle.
-            client, _ = websocket_connect(ws_path)
+            client, _ = websocket_connect(ws_path, "/ws/audio/mic")
             pcma = bytes([0xD5]) * 320
             client.sendall(client_frame(jaud(1, 1)))
             session, _ = receive_guard(guard, 1, 1)
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x01"
             client.sendall(client_frame(jaud(2, 2, pcma)))
             same_session, forwarded = receive_guard(guard, 2, 2)
             assert same_session == session and forwarded == pcma
             client.sendall(client_frame(jaud(3, 3)))
             same_session, _ = receive_guard(guard, 3, 3)
             assert same_session == session
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x02"
+
+            # Repeated press on one authenticated WebSocket keeps JAUD
+            # monotonic while each JAGD lease starts at sequence one.
+            client.sendall(client_frame(jaud(1, 4)))
+            second_session, _ = receive_guard(guard, 1, 1)
+            assert second_session != session
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x01"
+            client.sendall(client_frame(jaud(2, 5, pcma)))
+            same_session, forwarded = receive_guard(guard, 2, 2)
+            assert same_session == second_session and forwarded == pcma
+            client.sendall(client_frame(jaud(3, 6)))
+            same_session, _ = receive_guard(guard, 3, 3)
+            assert same_session == second_session
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x02"
+            client.close()
+
+            # Router-side maximum lease is independent of browser timers.
+            client, _ = websocket_connect(ws_path)
+            client.sendall(client_frame(jaud(1, 1)))
+            session, _ = receive_guard(guard, 1, 1)
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x01"
+            time.sleep(1.3)
+            same_session, _ = receive_guard(guard, 3, 2)
+            assert same_session == session
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x03"
             client.close()
 
             # Disconnect while holding talk must synthesize RELEASE.
             client, _ = websocket_connect(ws_path)
             client.sendall(client_frame(jaud(1, 1)))
             session, _ = receive_guard(guard, 1, 1)
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x01"
             client.close()
             same_session, _ = receive_guard(guard, 3, 2)
             assert same_session == session
@@ -143,6 +189,8 @@ def main():
             client, _ = websocket_connect(ws_path)
             client.sendall(client_frame(jaud(1, 1)))
             session, _ = receive_guard(guard, 1, 1)
+            _, state = receive_jaud(client, 0x82)
+            assert state == b"\x01"
             client.sendall(client_frame(jaud(2, 2, pcma), masked=False))
             same_session, _ = receive_guard(guard, 3, 2)
             assert same_session == session
@@ -157,13 +205,8 @@ def main():
             # existed, so the first observed sequence need not be one.
             jagm = struct.pack("!4sBBHI", b"JAGM", 1, 12, 320, 17) + pcma
             producer.send(jagm)
-            downlink = receive_server_frame(listener)
-            magic, version, kind, flags, header_size, sequence, length, reserved = \
-                struct.unpack("!4sBBBBIHH", downlink[:16])
-            assert (magic, version, kind, flags, header_size) == \
-                   (b"JAUD", 1, 0x81, 0, 16)
-            assert sequence == 1 and length == 320 and reserved == 0
-            assert downlink[16:] == pcma
+            sequence, downlink = receive_jaud(listener, 0x81)
+            assert sequence == 1 and downlink == pcma
             producer.close()
             listener.close()
 
