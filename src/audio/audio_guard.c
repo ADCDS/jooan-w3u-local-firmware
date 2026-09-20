@@ -6,6 +6,7 @@
 #include "g711_alaw.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -30,7 +31,9 @@ static int send_guard(struct jooan_audio_guard_client *client, uint8_t type,
             datagram, sizeof(datagram), type, client->session_id, sequence,
             payload, (uint16_t)length, &datagram_length) != 0)
         return -1;
-    sent = send(client->fd, datagram, datagram_length, MSG_NOSIGNAL);
+    sent = sendto(client->fd, datagram, datagram_length, MSG_NOSIGNAL,
+                  (const struct sockaddr *)&client->address,
+                  client->address_length);
     if (sent != (ssize_t)datagram_length) {
         if (sent >= 0)
             errno = EIO;
@@ -42,35 +45,32 @@ static int send_guard(struct jooan_audio_guard_client *client, uint8_t type,
 int jooan_audio_guard_open(struct jooan_audio_guard_client *client,
                            const char *socket_path, uint64_t session_id)
 {
-    struct sockaddr_un address;
     size_t path_length;
     int fd;
+    int descriptor_flags;
 
     if (!client || !socket_path || session_id == 0) {
         errno = EINVAL;
         return -1;
     }
     path_length = strlen(socket_path);
-    if (path_length == 0 || path_length >= sizeof(address.sun_path)) {
+    if (path_length == 0 || path_length >= sizeof(client->address.sun_path)) {
         errno = ENAMETOOLONG;
         return -1;
     }
     memset(client, 0, sizeof(*client));
     client->fd = -1;
-    memset(&address, 0, sizeof(address));
-    address.sun_family = AF_UNIX;
-    memcpy(address.sun_path, socket_path, path_length + 1);
+    memset(&client->address, 0, sizeof(client->address));
+    client->address.sun_family = AF_UNIX;
+    memcpy(client->address.sun_path, socket_path, path_length + 1);
+    client->address_length = sizeof(client->address);
 
-    fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (fd < 0)
         return -1;
-    if (connect(fd, (struct sockaddr *)&address,
-                offsetof(struct sockaddr_un, sun_path) + path_length + 1) != 0) {
-        int saved = errno;
-        close(fd);
-        errno = saved;
-        return -1;
-    }
+    descriptor_flags = fcntl(fd, F_GETFD, 0);
+    if (descriptor_flags >= 0)
+        (void)fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC);
     client->fd = fd;
     client->session_id = session_id;
     return 0;

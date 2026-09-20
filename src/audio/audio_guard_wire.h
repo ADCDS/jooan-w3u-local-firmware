@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 #define JOOAN_AUDIO_GUARD_HEADER_SIZE 24u
-/* ACQUIRE reserves a session. Each SPEAKER_LEASE follows successful direct
+/* ACQUIRE reserves a muted session with a bounded two-second arming grace.
+ * Each SPEAKER_LEASE follows successful direct
  * PCM submission and refreshes the physical amplifier deadman. The guard must
  * force release when this interval expires, covering router crashes where no
  * RELEASE datagram can be emitted. */

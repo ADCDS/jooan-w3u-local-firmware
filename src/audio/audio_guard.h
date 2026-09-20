@@ -3,12 +3,16 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 struct jooan_audio_guard_client {
     int fd;
     uint64_t session_id;
     uint32_t last_sequence;
     int acquired;
+    struct sockaddr_un address;
+    socklen_t address_length;
 };
 
 int jooan_audio_guard_open(struct jooan_audio_guard_client *client,

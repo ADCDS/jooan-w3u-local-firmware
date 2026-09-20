@@ -333,10 +333,10 @@ static int speaker_output_submit(const uint8_t *pcma, size_t length)
 
 static int speaker_amplifier_confirm_enabled(void)
 {
-    struct timespec delay = { 0, 2000000L };
+    struct timespec delay = { 0, 4000000L };
     int attempt;
 
-    for (attempt = 0; attempt < 10; ++attempt) {
+    for (attempt = 0; attempt < 100; ++attempt) {
         char level = '\0';
         int descriptor = open(SPEAKER_VALUE_PATH, O_RDONLY);
         ssize_t amount = -1;
@@ -350,7 +350,7 @@ static int speaker_amplifier_confirm_enabled(void)
         while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
         }
         delay.tv_sec = 0;
-        delay.tv_nsec = 2000000L;
+        delay.tv_nsec = 4000000L;
     }
     errno = EIO;
     return -1;

@@ -33,6 +33,7 @@
 
 #define TALKBACK_PACKET_MAX (JOOAN_AUDIO_GUARD_HEADER_SIZE + 1024U)
 #define TALKBACK_POLL_MS 250
+#define TALKBACK_ACQUIRE_MS 2000U
 #define TALKBACK_LEASE_MS 500U
 #define TALKBACK_MAX_MS 60000U
 #define GUARD_TRACKED_FDS 1024
@@ -922,7 +923,10 @@ static void *talkback_main(void *unused)
                 active_session = frame.session_id;
                 session_started = now;
                 last_sequence = frame.sequence;
-                lease_deadline = now + TALKBACK_LEASE_MS;
+                /* ACQUIRE never enables hardware. Allow the authenticated
+                 * router time to initialize/submit its first PCM frame; the
+                 * 500 ms physical deadman begins with SPEAKER_LEASE. */
+                lease_deadline = now + TALKBACK_ACQUIRE_MS;
             }
             continue;
         }
