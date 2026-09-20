@@ -110,9 +110,9 @@ def scan(root: Path) -> list[str]:
                     continue
                 if (description == "embedded default credential" and
                         "hygiene: allow-public-bootstrap" in line):
-                    # Product decision: the generic image has one documented,
-                    # setup-only password and blocks normal routes until it is
-                    # replaced. Keep this exception exact and line-local.
+                    # Product decision: the generic image has one documented
+                    # bootstrap password and keeps a warning visible until it
+                    # is replaced. Keep this exception exact and line-local.
                     continue
                 value = match.group(1).lower() if match.lastindex else line.lower()
                 if any(marker in value for marker in SAFE_VALUE_MARKERS):

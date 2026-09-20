@@ -1,93 +1,383 @@
 #!/bin/sh
-# IronMan executes this as uid 0 from its mounted SquashFS payload.
+# Signed, exact-target, resumable installer executed by the IronMan carrier.
 set -eu
-PATH=/bin:/sbin:/usr/bin:/usr/sbin:/mnt/mtd/run
+PATH=${JOOAN_PATH:-/bin:/sbin:/usr/bin:/usr/sbin:/mnt/mtd/run}
 export PATH
+umask 077
+
 self=${0%/*}
 root=${JOOAN_ROOT:-/opt/custom/jooan-local}
 activate=${JOOAN_ACTIVATE:-/opt/etc/local.rc}
 run=${JOOAN_RUN:-/run/jooan-local}
-verify=$self/jooan-sha256
+legacy_root=${JOOAN_LEGACY_ROOT:-/opt/open}
+device_model_path=${JOOAN_DEVICE_MODEL_PATH:-/etc/deviceModel}
+compat_root=${JOOAN_COMPAT_ROOT:-}
+sha=$self/jooan-sha256
+auth=$self/jooan-auth-verify
+manifest=$self/release.manifest
+signature=$self/release.manifest.sig
 
 die() { echo "jooan-local install: $*" >&2; exit 1; }
+meta() { sed -n "s/^$1=//p" "$manifest"; }
+fail_at() { [ "${JOOAN_FAIL_AT:-}" != "$1" ] || die "injected failure at $1"; }
+bounded_sha() {
+    hash_file=$1 hash_output=/tmp/jooan-sha.$$
+    "$sha" "$hash_file" > "$hash_output" 2>/dev/null &
+    hash_pid=$!
+    ( sleep 30; kill -TERM "$hash_pid" 2>/dev/null || : ) \
+        </dev/null >/dev/null 2>&1 &
+    timer_pid=$!
+    if wait "$hash_pid"; then hash_rc=0; else hash_rc=$?; fi
+    kill "$timer_pid" 2>/dev/null || :
+    [ "$hash_rc" = 0 ] || { rm -f "$hash_output"; return 1; }
+    awk '{print $1}' "$hash_output"
+    rm -f "$hash_output"
+}
+write_state() {
+    mkdir -p "$root/state" || return 1
+    printf '%s\n' "$1" > "$root/state/migration-state.new" || return 1
+    chmod 600 "$root/state/migration-state.new" || return 1
+    sync
+    mv -f "$root/state/migration-state.new" "$root/state/migration-state" || return 1
+    sync
+    [ "${JOOAN_FAIL_AFTER_STATE:-}" != "$1" ] || return 99
+}
+stage_trial_runtime() {
+    IFS=' ' read -r trial_stable trial_pending trial_attempted trial_extra \
+        < "$root/state/selection" || return 1
+    [ -z "$trial_extra" ] && [ "$trial_pending" = - ] &&
+        [ "$trial_attempted" = 0 ] || return 1
+    case "$trial_stable" in A) trial_target=B ;; B) trial_target=A ;; *) return 1 ;; esac
+    trial_dest=$root/slots/$trial_target
+    rm -rf "$trial_dest.new"
+    mkdir "$trial_dest.new" || return 1
+    cp "$self/runtime.tar.gz" "$self/runtime.md5" "$trial_dest.new/" || return 1
+    fail_at after-runtime-copy
+    expected=$(cat "$trial_dest.new/runtime.md5") || return 1
+    actual=$(md5sum "$trial_dest.new/runtime.tar.gz" | awk '{print $1}') || return 1
+    [ "$actual" = "$expected" ] || return 1
+    sync
+    rm -rf "$trial_dest"
+    mv "$trial_dest.new" "$trial_dest" || return 1
+    printf '%s %s 0\n' "$trial_stable" "$trial_target" > "$root/state/selection.new"
+    chmod 600 "$root/state/selection.new"
+    sync
+    mv -f "$root/state/selection.new" "$root/state/selection"
+    sync
+    write_state runtime-staged
+}
 [ "$(id -u)" = 0 ] || die 'not root'
-[ "$(cat /etc/deviceModel 2>/dev/null)" = JA-A12 ] || die 'unsupported model'
-[ -x "$verify" ] || die 'SHA-256 verifier missing'
-
+[ "$(cat "$device_model_path" 2>/dev/null)" = JA-A12 ] || die 'unsupported model'
+[ -x "$sha" ] && [ -x "$auth" ] || die 'release verifiers missing'
+"$auth" "$manifest" "$signature" "$self" || die 'signed release inventory rejected'
+grep -qx 'target_id=jooan-ja-a12-t23n-dual-cv2005-skw6316' "$manifest" || die 'wrong target'
+grep -qx 'device_model=JA-A12' "$manifest" || die 'wrong device model'
+grep -qx 'model_token=A12' "$manifest" || die 'wrong package token'
+grep -qx 'artifact_kind=install' "$manifest" || die 'not an install artifact'
+release=$(cat "$self/RELEASE") || die 'release marker missing'
+[ "$(meta release_version)" = "$release" ] || die 'release marker mismatch'
+sequence=$(meta release_sequence)
+minimum=$(meta minimum_sequence)
+[ -n "$sequence" ] && [ -n "$minimum" ] || die 'missing release sequence'
+case "$sequence:$minimum" in *[!0-9:]*) die 'invalid release sequence' ;; esac
+[ "$sequence" -ge "$minimum" ] || die 'release below minimum sequence'
+# Exact device and retained userspace ABI gates are generated from target JSON.
 while read -r expected file; do
     [ -n "$expected" ] || continue
-    actual=$($verify "$self/$file" 2>/dev/null | awk '{print $1}')
-    [ "$actual" = "$expected" ] || die "payload verification failed: $file"
-done < "$self/payload.sha256"
-
-while read -r expected file; do
-    [ -n "$expected" ] || continue
-    [ -e "$file" ] || die "compatible component unavailable: $file"
-    actual=$($verify "$file" 2>/dev/null | awk '{print $1}')
+    check_file=$compat_root$file
+    [ -e "$check_file" ] || die "compatible component unavailable: $file"
+    actual=$(bounded_sha "$check_file") || die "compatibility hash timed out or failed: $file"
     [ "$actual" = "$expected" ] || die "incompatible camera component: $file"
 done < "$self/compatibility.sha256"
 
+grep -qx 'JOOAN-PERSISTENT-CONTRACT-V1' "$self/persistent.contract" || die 'persistent contract missing'
+grep -qx 'logical_regular_file_cap_bytes=180224' "$self/persistent.contract" || die 'persistent cap mismatch'
+grep -qx 'final_free_reserve_bytes=81920' "$self/persistent.contract" || die 'free-space reserve mismatch'
+grep -qx 'state_config_regular_file_reserve_bytes=16384' "$self/persistent.contract" || die 'state/config reserve mismatch'
+grep -qx 'external_regular_file_reserve_bytes=4096' "$self/persistent.contract" || die 'external reserve mismatch'
+grep -qx 'transient_regular_file_cap_bytes=262144' "$self/persistent.contract" || die 'transient cap mismatch'
+grep -qx 'transient_final_free_reserve_bytes=32768' "$self/persistent.contract" || die 'transient reserve mismatch'
+grep -qx 'JOOAN-MIGRATION-CONTRACT-V1' "$self/migration.contract" || die 'migration contract missing'
+grep -qx 'state=legacy-retired' "$self/migration.contract" || die 'migration states incomplete'
+
+if [ -f "$root/state/release-sequence" ]; then
+    current=$(cat "$root/state/release-sequence") || die 'cannot read installed sequence'
+    case "$current" in ''|*[!0-9]*) die 'installed sequence is invalid' ;; esac
+    if [ "$sequence" -le "$current" ]; then
+        if [ "$sequence" = "$current" ] &&
+           [ "$(cat "$root/state/migration-state" 2>/dev/null)" = legacy-retired ]; then
+            echo 'jooan-local signed install already complete'
+            exit 0
+        fi
+        die 'downgrade or replay rejected'
+    fi
+fi
 if [ "${JOOAN_PREFLIGHT_ONLY:-0}" = 1 ]; then
-    echo 'jooan-local preflight passed'
+    echo 'jooan-local signed preflight passed'
     exit 0
 fi
 
-controller=$self/controller
-[ -d "$controller" ] || die 'controller tree missing'
+mkdir -p "$run" || die 'cannot create runtime directory'
+chmod 700 "$run"
+control=$run/controller-install
+rm -rf "$control"
+mkdir "$control"
+gzip -t "$self/controller.tar.gz" || die 'controller archive CRC mismatch'
+tar -xzf "$self/controller.tar.gz" -C "$control" || die 'controller extraction failed'
+JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control JOOAN_SHA256=$sha
+export JL_ROOT JL_RUN JL_CONTROL JOOAN_SHA256
 
-controller_was_ready=0
-[ ! -f "$root/state/controller.ready" ] || controller_was_ready=1
-if [ ! -f "$root/state/controller.ready" ]; then
-    migration=$root/state/key-migration
-    if [ "$root" = /opt/custom/jooan-local ] &&
-       [ -f /opt/open/admin/manifest.md5 ] && [ -f /opt/open/current ] &&
-       [ -s /opt/open/admin/ssh/authorized_keys ] &&
-       [ -s /opt/open/admin/ssh/host_ed25519 ]; then
-        mkdir -p "$root/state" "$migration.new"
-        cp /opt/open/admin/ssh/authorized_keys "$migration.new/authorized_keys"
-        cp /opt/open/admin/ssh/host_ed25519 "$migration.new/host_ed25519"
-        chmod 600 "$migration.new/"*
-        sync
-        mv "$migration.new" "$migration"
-        sync
-        # This exact tree belongs to the predecessor project and otherwise
-        # consumes most of the 384 KiB partition. The only irreplaceable
-        # inputs are now on the same persistent filesystem, not in tmpfs.
-        rm -rf /opt/open
-        sync
-    fi
-    if [ ! -f "$root/boot/common.sh" ]; then
-        JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
-            "$controller/admin/install-controller.sh" prepare "$controller" ||
-            die 'controller preparation failed'
+# Validate every recognized predecessor before preserving keys. Unknown partial
+# trees fail without deletion; the operator can recover them manually.
+legacy=none
+expanded=0
+migration_hint=$(cat "$root/state/migration-state" 2>/dev/null || :)
+if [ -e "$root/boot" ] || [ -e "$root/admin" ] || [ -e "$root/shared" ]; then
+    case "$migration_hint" in
+        activated|expanded-controller-retired|legacy-retired)
+            [ -f "$root/controller.tar.gz" ] && [ -f "$root/local.rc" ] &&
+                [ -f "$activate" ] || die 'partial retirement lacks durable replacement'
+            expanded=4
+            ;;
+    esac
+fi
+if [ "$expanded" = 0 ] &&
+   { [ -e "$root/boot" ] || [ -e "$root/admin" ] || [ -e "$root/shared" ]; }; then
+    for old in boot admin shared; do
+        [ -d "$root/$old" ] || die 'partial expanded-product-0.1 controller'
+    done
+    for old in boot/common.sh boot/boot.sh boot/local.rc \
+        admin/install-controller.sh admin/install-runtime.sh \
+        shared/libjooan_guard.so shared/guard.sha256 \
+        shared/dropbear.tar.gz shared/dropbear.sha256; do
+        [ -f "$root/$old" ] || die "expanded-product-0.1 missing $old"
+    done
+    for old in libjooan_guard.so dropbear.tar.gz; do
+        side=guard
+        [ "$old" != dropbear.tar.gz ] || side=dropbear
+        old_expected=$(cat "$root/shared/$side.sha256") || die 'cannot read expanded digest'
+        old_actual=$(bounded_sha "$root/shared/$old") || die 'cannot hash expanded controller'
+        [ "$old_actual" = "$old_expected" ] || die "expanded controller mismatch: $old"
+    done
+    [ -f "$root/state/selection" ] || die 'expanded-product-0.1 has no selection'
+    IFS=' ' read -r old_stable old_pending old_attempted old_extra < "$root/state/selection" ||
+        die 'cannot read expanded selection'
+    [ -z "$old_extra" ] || die 'expanded selection has extra fields'
+    case "$old_stable:$old_pending:$old_attempted" in
+        A:-:0|B:-:0) old_active=$old_stable ;;
+        -:A:0|-:B:0) old_active=$old_pending ;;
+        A:B:0|A:B:1) old_active=A ;;
+        B:A:0|B:A:1) old_active=B ;;
+        *) die 'expanded selection is not safely migratable' ;;
+    esac
+    old_slot=$root/slots/$old_active
+    [ -f "$old_slot/runtime.tar.gz" ] && [ -f "$old_slot/runtime.sha256" ] ||
+        die 'expanded active runtime is incomplete'
+    old_expected=$(cat "$old_slot/runtime.sha256") || die 'cannot read active runtime digest'
+    old_actual=$(bounded_sha "$old_slot/runtime.tar.gz") ||
+        die 'cannot hash active runtime'
+    [ "$old_actual" = "$old_expected" ] || die 'expanded active runtime mismatch'
+    expanded=1
+fi
+if [ "$expanded" = 0 ] && [ -f "$root/state/migration-state" ] &&
+   [ -f "$root/controller.tar.gz" ] &&
+   [ -f "$root/local.rc" ]; then
+    case "$migration_hint" in
+        expanded-controller-retired) expanded=5 ;;
+        runtime-staged) expanded=2 ;;
+        activated) expanded=4 ;;
+        failclosed-hook-published|legacy-retired) expanded=2 ;;
+    esac
+fi
+if [ -e "$legacy_root" ]; then
+    if [ -f "$legacy_root/admin/manifest.md5" ] && [ -s "$legacy_root/admin/ssh/authorized_keys" ] &&
+       [ -s "$legacy_root/admin/ssh/host_ed25519" ] &&
+       (cd "$legacy_root/admin" && md5sum -c manifest.md5 >/dev/null 2>&1); then
+        legacy=manual-admin
+    elif [ -f "$legacy_root/current" ]; then
+        old_version=$(cat "$legacy_root/current" 2>/dev/null || :)
+        case "$old_version" in ''|*[!0-9A-Za-z._-]*) die 'unknown predecessor version' ;; esac
+        [ -f "$legacy_root/$old_version/manifest.sha256" ] &&
+            [ -f "$legacy_root/$old_version/local.rc" ] || die 'partial predecessor tree'
+        legacy=developer-launcher
     else
-        JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
-            "$controller/admin/install-controller.sh" validate "$controller" ||
-            die 'partial controller validation failed'
+        die 'unrecognized predecessor tree; refusing destructive migration'
     fi
 fi
 
-if [ "$controller_was_ready" = 1 ]; then
-    JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify \
-        "$controller/admin/install-controller.sh" validate "$controller" ||
-        die 'controller script refresh failed'
+mkdir -p "$root/state" "$root/config/ssh" || die 'cannot prepare migration state'
+chmod 700 "$root" "$root/state" "$root/config" "$root/config/ssh"
+if [ "$expanded" = 1 ]; then
+    write_state expanded-product-0.1-validated || die 'cannot journal expanded validation'
+elif [ "$expanded" = 2 ] || [ "$expanded" = 3 ] || [ "$expanded" = 4 ] ||
+     [ "$expanded" = 5 ]; then
+    :
+else
+    write_state legacy-validated || die 'cannot journal legacy validation'
+fi
+if [ "$legacy" = manual-admin ]; then
+    cp "$legacy_root/admin/ssh/authorized_keys" "$root/config/ssh/authorized_keys.new"
+    cp "$legacy_root/admin/ssh/host_ed25519" "$root/config/ssh/dropbear_ed25519_host_key.new"
+    chmod 600 "$root/config/ssh/"*.new
+    mv -f "$root/config/ssh/authorized_keys.new" "$root/config/ssh/authorized_keys"
+    mv -f "$root/config/ssh/dropbear_ed25519_host_key.new" \
+        "$root/config/ssh/dropbear_ed25519_host_key"
+fi
+# Never invent a password for a migrated customized Web account. A migrated
+# authorized key gets locked-password recovery until the owner rotates the Web
+# password, which atomically synchronizes SSH. Clean installs use the documented
+# temporary credential because no auth database exists yet.
+if [ ! -s "$root/config/ssh/passwd" ]; then
+    if [ -f "$root/config/auth.db" ]; then
+        if [ -s "$root/config/ssh/authorized_keys" ]; then
+            printf '%s\n' 'admin:!' > "$root/config/ssh/passwd.new"
+        fi
+    else
+        printf '%s\n' 'admin:$1$joorec01$e4zY3XKFPREtq8.7yI/lE0' > \
+            "$root/config/ssh/passwd.new"
+    fi
+    if [ -f "$root/config/ssh/passwd.new" ]; then
+        chmod 600 "$root/config/ssh/passwd.new"
+        mv -f "$root/config/ssh/passwd.new" "$root/config/ssh/passwd"
+        sync
+    fi
+fi
+if [ "$expanded" != 2 ] && [ "$expanded" != 3 ] && [ "$expanded" != 4 ] &&
+   [ "$expanded" != 5 ]; then
+    write_state keys-preserved || die 'cannot journal key preservation'
+fi
+# The authenticated predecessor admin bundle is larger than the replacement
+# compressed controller. Once its irreplaceable keys are durable above, retire
+# only that validated sub-tree to create installation headroom. The predecessor
+# launcher and OEM updater remain intact until replacement activation.
+if [ "$legacy" = manual-admin ]; then
+    rm -rf "$legacy_root/admin" || die 'cannot retire validated predecessor admin bundle'
+    sync
 fi
 
-migration=$root/state/key-migration
-if [ -d "$migration" ]; then
-    mkdir -p "$root/config/ssh"
-    cp "$migration/authorized_keys" "$root/config/ssh/authorized_keys"
-    cp "$migration/host_ed25519" "$root/config/ssh/dropbear_ed25519_host_key"
-    chmod 600 "$root/config/ssh/"*
+if [ "$expanded" = 1 ]; then
+    # Reclaim only the inactive runtime and an intentionally disabled unsafe
+    # hook backup. The active slot remains the rollback candidate.
+    old_inactive=A
+    [ "$old_active" = A ] && old_inactive=B
+    rm -rf "$root/slots/$old_inactive"
+    rm -f "$root/state/prelocal-hook.disabled"
     sync
-    rm -rf "$migration"
+    # Convert the retained active slot to the compressed controller's MD5
+    # corruption sidecar while its SHA-256 was just authenticated above.
+    md5sum "$old_slot/runtime.tar.gz" | awk '{print $1}' > "$old_slot/runtime.md5.new"
+    chmod 600 "$old_slot/runtime.md5.new"
     sync
+    mv -f "$old_slot/runtime.md5.new" "$old_slot/runtime.md5"
+    # Persist the authenticated replacement controller before retiring any
+    # expanded controller file. The checksum is published last.
+    cp "$self/controller.tar.gz" "$root/controller.tar.gz.new"
+    fail_at after-controller-copy
+    cp "$self/local.rc" "$root/local.rc.new"
+    chmod 600 "$root/controller.tar.gz.new"
+    chmod 755 "$root/local.rc.new"
+    gzip -t "$root/controller.tar.gz.new" || die 'staged compressed controller CRC mismatch'
+    sync
+    mv -f "$root/controller.tar.gz.new" "$root/controller.tar.gz"
+    fail_at after-controller-rename
+    mv -f "$root/local.rc.new" "$root/local.rc"
+    sync
+    write_state controller-published || die 'cannot journal compressed controller'
+    # Normalize the retained known-good runtime as stable before switching the
+    # controller hook. The replacement trial is staged only after old expanded
+    # files are retired and space is recovered.
+    printf '%s - 0\n' "$old_active" > "$root/state/selection.new"
+    chmod 600 "$root/state/selection.new"
+    sync
+    mv -f "$root/state/selection.new" "$root/state/selection"
+    sync
+    # Publish the already-verified fail-closed compressed-controller hook. The
+    # generic activate helper's final-size gate cannot run until expanded files
+    # are retired, but every replacement component is durable at this point.
+    cp "$root/local.rc" "$activate.new" || die 'cannot stage compressed hook'
+    chmod 755 "$activate.new"
+    sync
+    mv -f "$activate.new" "$activate" || die 'cannot activate compressed hook'
+    sync
+    fail_at after-hook-rename
+    write_state failclosed-hook-published || die 'cannot journal fail-closed hook publication'
+    write_state activated || die 'cannot journal activation'
+    # New persistent controller, active fallback, pending replacement, and hook
+    # now exist. Retire only the obsolete expanded controller and SHA sidecars.
+    rm -rf "$root/boot"
+    fail_at after-retire-boot
+    rm -rf "$root/admin"
+    fail_at after-retire-admin
+    rm -rf "$root/shared"
+    fail_at after-retire-shared
+    rm -f "$root/slots/A/runtime.sha256" "$root/slots/B/runtime.sha256"
+    sync
+    write_state expanded-controller-retired || die 'cannot journal expanded retirement'
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
+        die 'migrated persistent layout violates final storage contract'
+    stage_trial_runtime || die 'cannot stage replacement runtime trial'
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
+        die 'replacement trial violates transient storage contract'
+elif [ "$expanded" = 3 ]; then
+    JL_ACTIVATE=$activate
+    export JL_ACTIVATE
+    "$control/admin/install-controller.sh" activate || die 'resumed activation failed'
+    write_state activated || die 'cannot journal resumed activation'
+elif [ "$expanded" = 2 ] || [ "$expanded" = 4 ] || [ "$expanded" = 5 ]; then
+    if [ "$expanded" = 4 ]; then
+        rm -rf "$root/boot"
+        fail_at after-retire-boot
+        rm -rf "$root/admin"
+        fail_at after-retire-admin
+        rm -rf "$root/shared"
+        fail_at after-retire-shared
+        rm -f "$root/slots/A/runtime.sha256" "$root/slots/B/runtime.sha256"
+        sync
+        write_state expanded-controller-retired || die 'cannot finish expanded retirement'
+        expanded=5
+    fi
+    gzip -t "$root/controller.tar.gz" || die 'resumed controller archive CRC mismatch'
+    [ -f "$activate" ] && grep -q '/opt/custom/jooan-local' "$activate" ||
+        die 'resumed migration has no active compressed hook'
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
+        die 'resumed migration violates final storage contract'
+    if [ "$expanded" = 5 ]; then
+        stage_trial_runtime || die 'cannot resume replacement runtime trial'
+        JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
+            '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
+            die 'resumed trial violates transient storage contract'
+    fi
+else
+    action=prepare
+    [ ! -f "$root/state/controller.ready" ] || action=validate
+    "$control/admin/install-controller.sh" "$action" "$self" || die 'controller publication failed'
+    write_state controller-published || die 'cannot journal controller publication'
+    "$control/admin/install-runtime.sh" "$self" || die 'runtime staging failed'
+    write_state runtime-staged || die 'cannot journal runtime staging'
+    JL_ACTIVATE=$activate
+    export JL_ACTIVATE
+    "$control/admin/install-controller.sh" activate || die 'activation failed'
+    write_state activated || die 'cannot journal activation'
 fi
 
-JL_ROOT=$root JL_RUN=$run JOOAN_SHA256=$verify "$controller/admin/install-runtime.sh" "$self" ||
-    die 'runtime staging failed'
-JL_ROOT=$root JL_RUN=$run JL_ACTIVATE=$activate "$controller/admin/install-controller.sh" activate || die 'activation failed'
+# Retire only a fully recognized predecessor and only after replacement
+# activation. A failure/power cut before this point leaves the old tree intact.
+if [ "$legacy" != none ]; then
+    rm -rf "$legacy_root" || die 'cannot retire predecessor tree'
+    sync
+fi
+write_state legacy-retired || die 'cannot finalize migration journal'
+printf '%s\n' "$sequence" > "$root/state/release-sequence.new"
+chmod 600 "$root/state/release-sequence.new"
+sync
+mv -f "$root/state/release-sequence.new" "$root/state/release-sequence"
+sync
+[ "${JOOAN_FAIL_AFTER_STATE:-}" != release-sequence-published ] ||
+    die 'injected failure after sequence publication'
 killall telnetd 2>/dev/null || :
 sync
-echo 'jooan-local install complete; rebooting through OEM updater'
+echo 'jooan-local signed install complete; rebooting through carrier'
 exit 0

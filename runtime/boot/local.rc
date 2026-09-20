@@ -1,23 +1,58 @@
 #!/bin/sh
-# Sourced by the OEM launcher. Never source or restore an earlier hook here.
-# The supervisor remains separate so a failed local service cannot block boot.
-killall telnetd 2>/dev/null || :
-# This function MUST live in the sourcing startapp shell. OEM startapp invokes
-# bare `jooanipc &`; a function in the background supervisor cannot intercept it.
-# Every invocation rechecks the pinned shared guard, independent of A/B health.
-jooanipc() {
-    /bin/sh /opt/custom/jooan-local/shared/verify-guard.sh || return 127
-    LD_PRELOAD=/opt/custom/jooan-local/shared/libjooan_guard.so
-    export LD_PRELOAD
-    exec /mnt/mtd/run/jooanipc "$@"
+# Sourced by OEM startapp. OTA authenticates code; gzip CRC detects corruption.
+# Always define the fail-closed media wrapper before attempting any extraction.
+killall telnetd goahead 2>/dev/null || :
+jooanipc() { return 127; }
+jl_load_controller() {
+    JL_ROOT=/opt/custom/jooan-local
+    JL_RUN=/run/jooan-local
+    JL_CONTROL=$JL_RUN/controller
+    export JL_ROOT JL_RUN JL_CONTROL
+    mkdir -p "$JL_RUN" || return 1
+    chmod 700 "$JL_RUN" || return 1
+    gzip -t "$JL_ROOT/controller.tar.gz" || return 1
+    jl_identity=$(md5sum "$JL_ROOT/controller.tar.gz") || return 1
+    jl_identity=${jl_identity%% *}
+    if [ -d "$JL_CONTROL" ]; then
+        [ "$(cat "$JL_RUN/controller.loaded" 2>/dev/null)" = "$jl_identity" ] || return 1
+    else
+        [ ! -e "$JL_RUN/controller.new" ] || return 1
+        mkdir "$JL_RUN/controller.new" || return 1
+        tar -xzf "$JL_ROOT/controller.tar.gz" -C "$JL_RUN/controller.new" || return 1
+        [ -r "$JL_RUN/controller.new/boot/common.sh" ] &&
+            [ -r "$JL_RUN/controller.new/boot/boot.sh" ] || return 1
+        mv "$JL_RUN/controller.new" "$JL_CONTROL" || return 1
+        printf '%s\n' "$jl_identity" > "$JL_RUN/controller.loaded" || return 1
+    fi
 }
-if [ -r /opt/custom/jooan-local/boot/boot.sh ]; then
-    /bin/sh /opt/custom/jooan-local/boot/boot.sh </dev/null >/dev/null 2>&1 &
-fi
-# Development units may already have a key-only recovery SSH service. Preserve
-# that locally provisioned path during first enrollment; public images contain
-# neither this directory nor its keys, so clean installations do not enable it.
-if [ -x /opt/open/admin/boot-admin.sh ] && [ ! -f /opt/open/admin/disabled ]; then
-    /bin/sh /opt/open/admin/boot-admin.sh </dev/null >/tmp/jooan-legacy-admin.log 2>&1 &
+if jl_load_controller; then
+    # Function lives in the sourcing shell; background boot.sh cannot intercept
+    # OEM startapp's later bare `jooanipc &` invocation.
+    jooanipc() {
+        # jooanipc normally opens its one TLS MQTT session immediately and may
+        # not retry after a refused connection. Give the loopback broker time
+        # to come up so local password/preset commands remain available. This
+        # wait is bounded: media still starts if the optional bridge is sick.
+        jl_mqtt_wait=0
+        while [ "$jl_mqtt_wait" -lt 30 ]; do
+            netstat -lnt 2>/dev/null |
+                grep -q '127\.0\.0\.1:1883[[:space:]]' && break
+            sleep 1
+            jl_mqtt_wait=$((jl_mqtt_wait + 1))
+        done
+        /bin/sh /run/jooan-local/controller/shared/verify-guard.sh || return 127
+        LD_PRELOAD=/run/jooan-local/controller/shared/libjooan_guard.so
+        export LD_PRELOAD
+        exec /mnt/mtd/run/jooanipc "$@"
+    }
+    /bin/sh "$JL_CONTROL/boot/boot.sh" </dev/null >/dev/null 2>&1 &
+else
+    # Even an invalid controller must not revive unauthenticated OEM management.
+    (
+        while :; do
+            killall telnetd goahead 2>/dev/null || :
+            sleep 1
+        done
+    ) </dev/null >/dev/null 2>&1 &
 fi
 :

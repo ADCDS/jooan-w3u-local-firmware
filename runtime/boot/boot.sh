@@ -1,5 +1,5 @@
 #!/bin/sh
-. "${JL_ROOT:-/opt/custom/jooan-local}/boot/common.sh" || exit 1
+. "${JL_CONTROL:-/run/jooan-local/controller}/boot/common.sh" || exit 1
 jl_init_run || exit 1
 
 # Atomic directory ownership prevents two sourced boot hooks launching services.
@@ -9,16 +9,17 @@ fi
 trap 'rm -rf "$JL_RUN/supervisor.lock" 2>/dev/null || :' EXIT
 printf '%s\n' "$$" > "$JL_RUN/supervisor.pid"
 
-# OEM initialization may start telnet after local.rc has returned. This watcher
-# deliberately survives a controller error; runtime failure must not enable it.
-if mkdir "$JL_RUN/telnet-deny.lock" 2>/dev/null; then
+# OEM initialization may start services/routes after local.rc has returned.
+# This independent watcher survives runtime/controller failure.
+if mkdir "$JL_RUN/local-policy.lock" 2>/dev/null; then
     (
         while :; do
-            killall telnetd 2>/dev/null || :
+            jl_enforce_local_policy
             sleep 1
         done
     ) &
 fi
+jl_enforce_local_policy
 
 jl_lock || exit 1
 if ! jl_read_selection; then
@@ -29,12 +30,17 @@ else
     if [ "$JL_PENDING" != - ] && [ "$JL_ATTEMPTED" = 1 ]; then
         jl_log "unconfirmed trial $JL_PENDING rolled back to $JL_STABLE"
         jl_write_selection "$JL_STABLE" - 0 || { jl_unlock; exit 1; }
+        jl_prune_other_slots "$JL_STABLE" || { jl_unlock; exit 1; }
         JL_PENDING=- JL_ATTEMPTED=0
     fi
     if [ "$JL_PENDING" != - ]; then
         jl_write_selection "$JL_STABLE" "$JL_PENDING" 1 || { jl_unlock; exit 1; }
     fi
     jl_unlock
+fi
+
+if [ "$JL_PENDING" = - ]; then
+    jl_prune_other_slots "$JL_STABLE" || jl_log 'steady slot cleanup/storage check failed'
 fi
 
 jl_running=$JL_STABLE
@@ -49,7 +55,7 @@ if [ "$jl_running" != - ]; then
             jl_checks=0
             while [ "$jl_checks" -lt 12 ]; do
                 sleep 5
-                if "$JL_ROOT/admin/mark-healthy.sh" "$jl_running"; then
+                if "$JL_CONTROL/admin/mark-healthy.sh" "$jl_running"; then
                     jl_trial_ok=1
                     break
                 fi
@@ -63,6 +69,7 @@ if [ "$jl_running" != - ]; then
         if [ "$JL_SLOT_STARTED" = 0 ] || jl_stop_slot "$jl_trial"; then
             if jl_lock; then
                 jl_write_selection "$jl_old_stable" - 0 || :
+                jl_prune_other_slots "$jl_old_stable" || :
                 jl_unlock
             fi
             jl_running=$jl_old_stable
@@ -79,17 +86,17 @@ if [ "$jl_running" != - ]; then
 fi
 
 # Selected runtime supplies platform Wi-Fi recovery hooks after extraction.
-if [ -x "$JL_ROOT/admin/wifi-transaction.sh" ]; then
-    "$JL_ROOT/admin/wifi-transaction.sh" recover || jl_log 'Wi-Fi recovery hook failed'
+if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
+    "$JL_CONTROL/admin/wifi-transaction.sh" recover || jl_log 'Wi-Fi recovery hook failed'
 fi
 
 # This supervisor never invokes a saved OEM/user hook or revives telnet.
 while :; do
-    if [ -x "$JL_ROOT/admin/wifi-transaction.sh" ]; then
-        "$JL_ROOT/admin/wifi-transaction.sh" tick || :
+    if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
+        "$JL_CONTROL/admin/wifi-transaction.sh" tick || :
     fi
-    if [ "$jl_running" != - ] && [ -x "$JL_ROOT/admin/ssh-start.sh" ]; then
-        "$JL_ROOT/admin/ssh-start.sh" "$jl_running" || :
+    if [ -x "$JL_CONTROL/admin/ssh-start.sh" ]; then
+        "$JL_CONTROL/admin/ssh-start.sh" "$jl_running" || :
     fi
     sleep 5
 done

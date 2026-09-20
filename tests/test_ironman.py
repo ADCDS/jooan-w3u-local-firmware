@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,12 @@ import sys
 sys.path.insert(0, str(REPOSITORY / "src"))
 
 from ironman.package import build_package, validate_stage  # noqa: E402
+from ironman.signing import (  # noqa: E402
+    public_key_bytes,
+    public_key_id,
+    sign_bytes,
+    verify_bytes,
+)
 from ironman.trailer import (  # noqa: E402
     HEADER_LEN,
     PAYLOAD_LIMIT,
@@ -32,6 +39,41 @@ from ironman.trailer import (  # noqa: E402
 
 def legacy_md5(data: bytes) -> bytes:
     return hashlib.md5(data, usedforsecurity=False).hexdigest().encode("ascii")
+
+
+def load_stage_signer():
+    path = REPOSITORY / "packaging" / "sign-stage.py"
+    specification = importlib.util.spec_from_file_location("test_sign_stage", path)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def temporary_release_key(root: Path) -> tuple[Path, str]:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private = ec.generate_private_key(ec.SECP256R1())
+    path = root / "release-key.pem"
+    path.write_bytes(private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ))
+    os.chmod(path, 0o600)
+    return path, public_key_bytes(private.public_key()).hex()
+
+
+def temporary_target(root: Path, public_key: str) -> Path:
+    target = json.loads(
+        (REPOSITORY / "packaging" / "targets" / "ja-a12.json").read_text()
+    )
+    target["release_authenticity"]["public_key_sec1"] = public_key
+    target["release_authenticity"]["key_id"] = public_key_id(public_key)
+    path = root / "target.json"
+    path.write_text(json.dumps(target, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 class TrailerCodecTests(unittest.TestCase):
@@ -129,6 +171,241 @@ class PackageCodecTests(unittest.TestCase):
         with self.assertRaises(PackageValidationError):
             inspect_package(bytes(bad_size))
 
+        bad_trailer = bytearray(package)
+        bad_trailer[-1] ^= 0x04
+        with self.assertRaises(PackageValidationError):
+            inspect_package(bytes(bad_trailer))
+
+
+class SignedReleaseTests(unittest.TestCase):
+    def test_rfc6979_signature_is_deterministic_and_tamper_evident(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            key, public = temporary_release_key(root)
+            data = b"signed release manifest\n"
+            first = sign_bytes(data, key)
+            second = sign_bytes(data, key)
+            self.assertEqual(first, second)
+            verify_bytes(data, first, public)
+            with self.assertRaises(ValueError):
+                verify_bytes(data + b"tamper", first, public)
+
+    def test_signed_stage_inventory_rejects_tampering(self) -> None:
+        signer = load_stage_signer()
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            key, public = temporary_release_key(root)
+            target = temporary_target(root, public)
+            stage = root / "stage"
+            stage.mkdir()
+            upgrade = stage / "upgrade.sh"
+            upgrade.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            os.chmod(upgrade, 0o755)
+            (stage / "RELEASE").write_text("test-1\n", encoding="utf-8")
+            signer.sign_stage(
+                stage,
+                target,
+                kind="install",
+                release_version="test-1",
+                release_sequence=1,
+                signing_key=key,
+            )
+            metadata = signer.verify_stage(stage, target, "install")
+            self.assertEqual(metadata["release_sequence"], "1")
+            upgrade.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "inventory"):
+                signer.verify_stage(stage, target, "install")
+
+    def test_direct_update_helper_verifies_applies_and_cleans_mounts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            persistent = root / "persistent"
+            run = root / "run"
+            control = run / "controller"
+            shared = control / "shared"
+            boot = control / "boot"
+            staging = run / "staging" / "firmware"
+            fixture = root / "mounted"
+            fake_bin = root / "bin"
+            slot = run / "slot-A"
+            for directory in (
+                persistent / "state", shared, boot, staging, fixture, fake_bin,
+                slot / "hooks",
+            ):
+                directory.mkdir(parents=True, exist_ok=True)
+            (boot / "common.sh").write_text(
+                'jl_local_network_policy() { echo routes-applied >> "$FAKE_MOUNT_LOG"; }\n',
+                encoding="utf-8",
+            )
+
+            image = b"H" * 96 + b"SQUASHFS-PAYLOAD" + b"T" * 96
+            package_id = hashlib.sha256(image).hexdigest()
+            package = staging / f"{package_id}.bin"
+            package.write_bytes(image)
+            manifest = fixture / "release.manifest"
+            manifest.write_text(
+                "\n".join((
+                    "JOOAN-SIGNED-RELEASE-V1",
+                    "target_id=jooan-ja-a12-t23n-dual-cv2005-skw6316",
+                    "device_model=JA-A12",
+                    "model_token=A12",
+                    "release_version=0.2.0",
+                    "release_sequence=2",
+                    "minimum_sequence=1",
+                    "artifact_kind=install",
+                    "files-begin",
+                    "0" * 64 + "  upgrade.sh",
+                    "files-end",
+                    "",
+                )),
+                encoding="utf-8",
+            )
+            (fixture / "release.manifest.sig").write_bytes(b"signature")
+            (fixture / "RELEASE").write_text("0.2.0\n", encoding="utf-8")
+            upgrade = fixture / "upgrade.sh"
+            upgrade.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            os.chmod(upgrade, 0o755)
+
+            inspector = shared / "jooan-ironman-inspect"
+            inspector.write_text(
+                "#!/bin/sh\n"
+                "size=$(wc -c < \"$1\")\n"
+                "sha=$(sha256sum \"$1\" | awk '{print $1}')\n"
+                "echo payload_offset=96\n"
+                "echo payload_length=$((size-192))\n"
+                "echo package_length=$size\n"
+                "echo model_token=A12\n"
+                "echo package_sha256=$sha\n",
+                encoding="utf-8",
+            )
+            authenticator = shared / "jooan-auth-verify"
+            authenticator.write_text("#!/bin/sh\nexit ${FAKE_AUTH_RC:-0}\n", encoding="utf-8")
+            os.chmod(inspector, 0o755)
+            os.chmod(authenticator, 0o755)
+
+            log = root / "mount.log"
+            (fake_bin / "mount").write_text(
+                "#!/bin/sh\n"
+                "echo mount >> \"$FAKE_MOUNT_LOG\"\n"
+                "cp -R \"$FAKE_MOUNT_SOURCE/.\" \"$6/\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "umount").write_text(
+                "#!/bin/sh\n"
+                "echo umount >> \"$FAKE_MOUNT_LOG\"\n"
+                "rm -rf \"$1\"/*\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "reboot").write_text(
+                "#!/bin/sh\necho reboot >> \"$FAKE_MOUNT_LOG\"\nexit 0\n",
+                encoding="utf-8",
+            )
+            for command in ("mount", "umount", "reboot"):
+                os.chmod(fake_bin / command, 0o755)
+            (slot / "hooks/onvif-ptz.sh").write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_MOUNT_LOG"\n',
+                encoding="utf-8",
+            )
+            os.chmod(slot / "hooks/onvif-ptz.sh", 0o755)
+
+            helper = REPOSITORY / "runtime/slot/hooks/integration-helper.sh"
+            environment = os.environ | {
+                "JL_ROOT": str(persistent),
+                "JL_RUN": str(run),
+                "JL_CONTROL": str(control),
+                "JL_SLOT_DIR": str(slot),
+                "JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin:/sbin:/usr/sbin",
+                "FAKE_MOUNT_SOURCE": str(fixture),
+                "FAKE_MOUNT_LOG": str(log),
+            }
+            routes = root / "routes.list"
+            routes.write_text("10.42.0.0/24\nfd00::/64\n", encoding="utf-8")
+            routes_set = subprocess.run(
+                [str(helper), "routes-set", str(routes), "route-id"],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(routes_set.returncode, 0, routes_set.stderr)
+            self.assertEqual(
+                json.loads(routes_set.stdout),
+                {"cidrs": ["10.42.0.0/24", "fd00::/64"]},
+            )
+            routes.write_text("0.0.0.0/0\n", encoding="utf-8")
+            self.assertNotEqual(subprocess.run(
+                [str(helper), "routes-set", str(routes), "route-id"],
+                env=environment,
+                capture_output=True,
+            ).returncode, 0)
+            ptz = root / "ptz.json"
+            ptz.write_text(
+                '{"command":"left","duration_ms":250,"speed":3}\n',
+                encoding="utf-8",
+            )
+            jog = subprocess.run(
+                [str(helper), "ptz-jog", str(ptz), "ptz-id"],
+                env=environment,
+                capture_output=True,
+            )
+            self.assertEqual(jog.returncode, 0, jog.stderr)
+            self.assertIn("move left 3 250", log.read_text())
+            ptz.write_text(
+                '{"command":"left;reboot","duration_ms":250,"speed":3}\n',
+                encoding="utf-8",
+            )
+            self.assertNotEqual(subprocess.run(
+                [str(helper), "ptz-jog", str(ptz), "ptz-id"],
+                env=environment,
+                capture_output=True,
+            ).returncode, 0)
+            verify = subprocess.run(
+                [str(helper), "firmware-verify", str(package), package_id],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(verify.returncode, 0, verify.stderr)
+            self.assertTrue((run / f"firmware.{package_id}.verified").is_file())
+            self.assertIn("umount", log.read_text())
+
+            apply = subprocess.run(
+                [str(helper), "firmware-apply", "-", package_id],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(apply.returncode, 0, apply.stderr)
+            for _ in range(30):
+                status = run / f"firmware.{package_id}.status"
+                if status.is_file() and "state=complete" in status.read_text():
+                    break
+                import time
+                time.sleep(0.05)
+            else:
+                self.fail("direct apply did not record completion")
+            self.assertIn("reboot", log.read_text())
+
+            replay_state = persistent / "state/release-sequence"
+            replay_state.write_text("2\n", encoding="utf-8")
+            replay = subprocess.run(
+                [str(helper), "firmware-verify", str(package), package_id],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(replay.returncode, 0)
+
+            failed_environment = environment | {"FAKE_AUTH_RC": "1"}
+            failed = subprocess.run(
+                [str(helper), "firmware-verify", str(package), package_id],
+                env=failed_environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertGreaterEqual(log.read_text().count("umount"), 2)
+
 
 class HostBuilderTests(unittest.TestCase):
     def test_target_manifest_is_exact_ja_a12(self) -> None:
@@ -142,6 +419,256 @@ class HostBuilderTests(unittest.TestCase):
             ["cv2005", "cv2005s1"],
         )
         self.assertEqual(target["device"]["radio"]["driver_family"], "skw6316")
+        self.assertEqual(
+            target["persistent_contract"]["logical_regular_file_cap_bytes"],
+            176 * 1024,
+        )
+        self.assertEqual(
+            target["persistent_contract"]["final_free_reserve_bytes"],
+            80 * 1024,
+        )
+        self.assertEqual(
+            target["persistent_contract"]["transient_regular_file_cap_bytes"],
+            256 * 1024,
+        )
+        for soname in ("libmbedcrypto.so.6", "libmbedtls.so.13", "libmbedx509.so.1"):
+            self.assertIn(f"/lib/{soname}", target["compatibility_hashes"])
+
+    def test_stage_web_filter_includes_pwa_and_excludes_tests(self) -> None:
+        assembly = (REPOSITORY / "packaging/assemble-stages.sh").read_text()
+        for pattern in ("*.html", "*.css", "*.js", "*.svg", "*.webmanifest"):
+            self.assertIn(pattern, assembly)
+        self.assertIn("! -name '*.test.js'", assembly)
+        deployable = {
+            path.name for path in (REPOSITORY / "web").iterdir()
+            if path.is_file()
+            and path.suffix in (".html", ".css", ".js", ".svg", ".webmanifest")
+            and not path.name.endswith(".test.js")
+        }
+        self.assertIn("manifest.webmanifest", deployable)
+        self.assertIn("icon.svg", deployable)
+        self.assertNotIn("audio-codec.test.js", deployable)
+
+    def test_expanded_product_migration_orders_durable_replacement_first(self) -> None:
+        installer = (REPOSITORY / "packaging/payload/install-upgrade.sh").read_text()
+        publish = installer.index('mv -f "$root/controller.tar.gz.new"')
+        activate = installer.index('mv -f "$activate.new" "$activate"')
+        retire = installer.index('rm -rf "$root/boot"', activate)
+        runtime = installer.index("stage_trial_runtime ||", retire)
+        self.assertLess(publish, activate)
+        self.assertLess(activate, retire)
+        self.assertLess(retire, runtime)
+        self.assertIn("JOOAN_FAIL_AFTER_STATE", installer)
+        target = json.loads(
+            (REPOSITORY / "packaging/targets/ja-a12.json").read_text()
+        )
+        self.assertIn(
+            "expanded-product-0.1-validated",
+            target["migration_contract"]["states"],
+        )
+
+    def test_controller_owned_ssh_survives_no_runtime_fallback(self) -> None:
+        boot = (REPOSITORY / "runtime/boot/boot.sh").read_text()
+        ssh = (REPOSITORY / "runtime/admin/ssh-start.sh").read_text()
+        installer = (REPOSITORY / "packaging/payload/install-upgrade.sh").read_text()
+        assembly = (REPOSITORY / "packaging/assemble-stages.sh").read_text()
+        self.assertIn('"$JL_CONTROL/admin/ssh-start.sh" "$jl_running"', boot)
+        self.assertNotIn('"$jl_running" != - ] && [ -x "$JL_CONTROL/admin/ssh-start.sh"', boot)
+        self.assertIn("case \"$1\" in A|B|-)", ssh)
+        self.assertIn("$JL_CONTROL/shared/entropy-ready.sh", ssh)
+        self.assertIn("admin:$1$joorec01$", installer)
+        self.assertIn("entropy-ready.sh", assembly)
+
+    def test_uninstall_does_not_delete_its_direct_apply_mount(self) -> None:
+        uninstall = (REPOSITORY / "packaging/payload/uninstall-upgrade.sh").read_text()
+        self.assertIn("Do not delete $run here", uninstall)
+        self.assertNotIn('rm -rf "$root" /opt/etc/jooan-ssh "$run"', uninstall)
+
+    def test_expanded_product_migration_resumes_after_fault(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            sandbox = Path(temporary_dir)
+            stage = sandbox / "stage"
+            persistent = sandbox / "persistent"
+            run = sandbox / "run"
+            compatible = sandbox / "compatible"
+            fake_bin = sandbox / "bin"
+            controller = sandbox / "controller"
+            for directory in (
+                stage,
+                persistent / "boot",
+                persistent / "admin",
+                persistent / "shared",
+                persistent / "slots/A",
+                persistent / "slots/B",
+                persistent / "state",
+                persistent / "config/ssh",
+                compatible,
+                fake_bin,
+                controller / "boot",
+            ):
+                directory.mkdir(parents=True, exist_ok=True)
+            (controller / "boot/common.sh").write_text(
+                "jl_check_storage() { return 0; }\n"
+                "jl_check_transient_storage() { return 0; }\n"
+                "jl_check_current_storage() { return 0; }\n",
+                encoding="utf-8",
+            )
+            controller_archive = stage / "controller.tar.gz"
+            subprocess.run(
+                [
+                    "tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0",
+                    "--numeric-owner", "-C", str(controller), "-czf",
+                    str(controller_archive), ".",
+                ],
+                check=True,
+            )
+            new_runtime = stage / "runtime.tar.gz"
+            new_runtime.write_bytes(b"new-runtime")
+            (stage / "runtime.md5").write_text(
+                legacy_md5(new_runtime.read_bytes()).decode() + "\n"
+            )
+            (stage / "local.rc").write_text(
+                "#!/bin/sh\nJL_ROOT=/opt/custom/jooan-local\n", encoding="utf-8"
+            )
+            (stage / "RELEASE").write_text("0.2.0\n", encoding="utf-8")
+            (stage / "release.manifest").write_text(
+                "\n".join((
+                    "JOOAN-SIGNED-RELEASE-V1",
+                    "target_id=jooan-ja-a12-t23n-dual-cv2005-skw6316",
+                    "device_model=JA-A12",
+                    "model_token=A12",
+                    "release_version=0.2.0",
+                    "release_sequence=2",
+                    "minimum_sequence=1",
+                    "artifact_kind=install",
+                    "files-begin",
+                    "0" * 64 + "  RELEASE",
+                    "files-end",
+                    "",
+                )),
+                encoding="utf-8",
+            )
+            (stage / "release.manifest.sig").write_bytes(b"signature")
+            (stage / "persistent.contract").write_text(
+                "JOOAN-PERSISTENT-CONTRACT-V1\n"
+                "logical_regular_file_cap_bytes=180224\n"
+                "final_free_reserve_bytes=81920\n"
+                "state_config_regular_file_reserve_bytes=16384\n"
+                "external_regular_file_reserve_bytes=4096\n"
+                "transient_regular_file_cap_bytes=262144\n"
+                "transient_final_free_reserve_bytes=32768\n",
+                encoding="utf-8",
+            )
+            (stage / "migration.contract").write_text(
+                "JOOAN-MIGRATION-CONTRACT-V1\nstate=legacy-retired\n",
+                encoding="utf-8",
+            )
+            component = compatible / "component"
+            component.write_bytes(b"compatible")
+            (stage / "compatibility.sha256").write_text(
+                hashlib.sha256(component.read_bytes()).hexdigest() + "  /component\n"
+            )
+            sha = stage / "jooan-sha256"
+            sha.write_text("#!/bin/sh\nexec sha256sum \"$@\"\n", encoding="utf-8")
+            auth = stage / "jooan-auth-verify"
+            auth.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            upgrade = stage / "upgrade.sh"
+            upgrade.write_bytes(
+                (REPOSITORY / "packaging/payload/install-upgrade.sh").read_bytes()
+            )
+            for executable in (sha, auth, upgrade, stage / "local.rc"):
+                os.chmod(executable, 0o755)
+
+            old_runtime = persistent / "slots/A/runtime.tar.gz"
+            old_runtime.write_bytes(b"old-stable-runtime")
+            (persistent / "slots/A/runtime.sha256").write_text(
+                hashlib.sha256(old_runtime.read_bytes()).hexdigest() + "\n"
+            )
+            (persistent / "slots/B/runtime.tar.gz").write_bytes(b"old-inactive")
+            (persistent / "state/selection").write_text("A - 0\n")
+            (persistent / "state/controller.ready").write_text("1\n")
+            (persistent / "state/prelocal-hook.disabled").write_text("unsafe\n")
+            (persistent / "config/auth.db").write_text(
+                "v1:120000:00112233445566778899aabbccddeeff:"
+                + "11" * 32
+                + ":0\n",
+                encoding="utf-8",
+            )
+            (persistent / "config/ssh/authorized_keys").write_text(
+                "ssh-ed25519 AAAATEST recovery\n", encoding="utf-8"
+            )
+            for relative in (
+                "boot/common.sh", "boot/boot.sh", "boot/local.rc",
+                "admin/install-controller.sh", "admin/install-runtime.sh",
+            ):
+                path = persistent / relative
+                path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            for name, content in (
+                ("libjooan_guard.so", b"guard"),
+                ("dropbear.tar.gz", b"dropbear"),
+            ):
+                path = persistent / "shared" / name
+                path.write_bytes(content)
+                side = "guard" if name.startswith("lib") else "dropbear"
+                (persistent / "shared" / f"{side}.sha256").write_text(
+                    hashlib.sha256(content).hexdigest() + "\n"
+                )
+            model = sandbox / "deviceModel"
+            model.write_text("JA-A12\n")
+            activate = sandbox / "local.rc"
+            activate.write_text("#!/bin/sh\nold\n")
+            legacy = sandbox / "legacy-open"
+            (fake_bin / "killall").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "id").write_text("#!/bin/sh\necho 0\n")
+            os.chmod(fake_bin / "killall", 0o755)
+            os.chmod(fake_bin / "id", 0o755)
+            environment = os.environ | {
+                "JOOAN_ROOT": str(persistent),
+                "JOOAN_RUN": str(run),
+                "JOOAN_ACTIVATE": str(activate),
+                "JOOAN_LEGACY_ROOT": str(legacy),
+                "JOOAN_DEVICE_MODEL_PATH": str(model),
+                "JOOAN_COMPAT_ROOT": str(compatible),
+                "JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin:/sbin:/usr/sbin",
+            }
+            fault_points = (
+                ("JOOAN_FAIL_AFTER_STATE", "expanded-product-0.1-validated"),
+                ("JOOAN_FAIL_AFTER_STATE", "keys-preserved"),
+                ("JOOAN_FAIL_AT", "after-controller-copy"),
+                ("JOOAN_FAIL_AT", "after-controller-rename"),
+                ("JOOAN_FAIL_AFTER_STATE", "controller-published"),
+                ("JOOAN_FAIL_AT", "after-hook-rename"),
+                ("JOOAN_FAIL_AFTER_STATE", "failclosed-hook-published"),
+                ("JOOAN_FAIL_AFTER_STATE", "activated"),
+                ("JOOAN_FAIL_AT", "after-retire-boot"),
+                ("JOOAN_FAIL_AT", "after-retire-admin"),
+                ("JOOAN_FAIL_AT", "after-retire-shared"),
+                ("JOOAN_FAIL_AFTER_STATE", "expanded-controller-retired"),
+                ("JOOAN_FAIL_AT", "after-runtime-copy"),
+                ("JOOAN_FAIL_AFTER_STATE", "runtime-staged"),
+                ("JOOAN_FAIL_AFTER_STATE", "legacy-retired"),
+                ("JOOAN_FAIL_AFTER_STATE", "release-sequence-published"),
+            )
+            for variable, point in fault_points:
+                fault = subprocess.run(
+                    [str(upgrade)],
+                    env=environment | {variable: point},
+                    capture_output=True,
+                )
+                self.assertNotEqual(fault.returncode, 0, point)
+            resumed = subprocess.run(
+                [str(upgrade)], env=environment, text=True, capture_output=True
+            )
+            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+            self.assertFalse((persistent / "boot").exists())
+            self.assertTrue((persistent / "controller.tar.gz").is_file())
+            self.assertTrue((persistent / "slots/A/runtime.md5").is_file())
+            self.assertTrue((persistent / "slots/B/runtime.tar.gz").is_file())
+            self.assertIn("/opt/custom/jooan-local", activate.read_text())
+            self.assertEqual((persistent / "state/release-sequence").read_text(), "2\n")
+            self.assertEqual(
+                (persistent / "config/ssh/passwd").read_text(), "admin:!\n"
+            )
 
     def test_stage_requires_executable_upgrade_script(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -207,6 +734,9 @@ class HostBuilderTests(unittest.TestCase):
     def test_release_entrypoint_builds_install_and_uninstall(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
+            key, public = temporary_release_key(root)
+            target = temporary_target(root, public)
+            signer = load_stage_signer()
             stages = []
             for name in ("install", "uninstall"):
                 stage = root / name
@@ -214,6 +744,20 @@ class HostBuilderTests(unittest.TestCase):
                 upgrade = stage / "upgrade.sh"
                 upgrade.write_text(f"#!/bin/sh\n# {name}\nexit 0\n", encoding="utf-8")
                 os.chmod(upgrade, 0o755)
+                (stage / "RELEASE").write_text("test-1\n", encoding="utf-8")
+                if name == "install":
+                    (stage / "build-provenance.json").write_text(
+                        '{"schema_version":1,"source_commit":"test"}\n',
+                        encoding="utf-8",
+                    )
+                signer.sign_stage(
+                    stage,
+                    target,
+                    kind=name,
+                    release_version="test-1",
+                    release_sequence=1,
+                    signing_key=key,
+                )
                 stages.append(stage)
             output = root / "dist"
             subprocess.run(
@@ -227,6 +771,10 @@ class HostBuilderTests(unittest.TestCase):
                     str(stages[1]),
                     "--out-dir",
                     str(output),
+                    "--target",
+                    str(target),
+                    "--signing-key",
+                    str(key),
                 ],
                 cwd=REPOSITORY,
                 check=True,
@@ -236,12 +784,18 @@ class HostBuilderTests(unittest.TestCase):
             )
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(manifest["release_version"], "test-1")
+            self.assertTrue(manifest["release_ready"])
             self.assertEqual(set(manifest["packages"]), {"install", "uninstall"})
             self.assertEqual(manifest["target"]["device"]["model"], "JA-A12")
             for filename in ("JOOAN_FW_PKG", "JOOAN_UNINSTALL"):
                 package = output / filename
                 self.assertTrue(package.is_file())
                 inspect_package(package.read_bytes(), expected_model="A12")
+            verify_bytes(
+                (output / "manifest.json").read_bytes(),
+                (output / "manifest.json.sig").read_bytes(),
+                public,
+            )
 
 
 if __name__ == "__main__":

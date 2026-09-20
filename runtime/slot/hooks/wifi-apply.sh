@@ -2,12 +2,20 @@
 set -eu
 [ "$#" = 1 ] && [ -f "$1" ] || exit 2
 candidate=$1
-json_tool=/mnt/mtd/run/json_debug
+json_tool=${JOAN_JSON_TOOL:-/mnt/mtd/run/json_debug}
 [ -x "$json_tool" ] || exit 1
-ssid=$("$json_tool" -c r -k /ssid "$candidate" 2>/dev/null | awk '{print $3}')
-password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null | awk '{print $3}')
+ssid=$("$json_tool" -c r -k /ssid "$candidate" 2>/dev/null |
+    sed 's/^[^ ]* [^ ]* //')
+password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null |
+    sed 's/^[^ ]* [^ ]* //')
 [ -n "$ssid" ] && [ -n "$password" ] || exit 1
-case "$ssid$password" in *[!A-Za-z0-9_.@+-]*) exit 1 ;; esac
+# Values are passed as one argv element to wpa_cli; they are never evaluated as
+# shell.  Accept ordinary printable passphrases and SSIDs (including spaces),
+# but reject the two characters that would alter wpa_supplicant's quoted-string
+# grammar and reject control/non-ASCII bytes.
+LC_ALL=C
+export LC_ALL
+case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 1 ;; esac
 [ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 1
 id=$(wpa_cli -iwlan0 add_network | awk '/^[0-9]+$/{print;exit}')
 case "$id" in ''|*[!0-9]*) exit 1 ;; esac

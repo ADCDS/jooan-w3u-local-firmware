@@ -10,12 +10,8 @@ mkdir -p "$JL_RUN"
 chmod 700 "$JL_RUN"
 "$JL_SLOT_DIR/hooks/entropy-ready.sh" || exit 1
 
-# Remove the externally reachable OEM updater. A restricted loopback copy is
-# retained only for the measured JPEG snapshot handler.
+# The independent boot watcher also suppresses later OEM absolute-path starts.
 killall goahead 2>/dev/null || :
-/bin/goahead --background --home /etc/webs --auth /etc/webs/auth.txt \
-    --route /etc/webs/route.txt /etc/webs 127.0.0.1:8081 \
-    >"$JL_RUN/goahead.log" 2>&1 || :
 
 if [ -x "$JL_SLOT_DIR/bin/audio-router" ]; then
     "$JL_SLOT_DIR/bin/audio-router" \
@@ -33,6 +29,7 @@ if [ -f "$JL_ROOT/config/wifi.json" ] &&
 fi
 
 JOAN_STATE_DIR="$JL_ROOT/config" \
+JOAN_RELEASE_SEQUENCE_PATH="$JL_ROOT/state/release-sequence" \
 JOAN_STAGING_DIR="$JL_RUN/staging" \
 JOAN_WEB_DIR="$JL_SLOT_DIR/web" \
 JOAN_INTEGRATION_HELPER="$JL_SLOT_DIR/hooks/integration-helper.sh" \

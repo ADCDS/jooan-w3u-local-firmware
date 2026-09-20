@@ -4,15 +4,18 @@
 # wifi-commit.sh <candidate-file>, wifi-rollback.sh <backup-dir>.
 # Hooks must confine mutations to network settings and return promptly. Candidate
 # contents are private and are never sourced as shell code or logged here.
-. "${JL_ROOT:-/opt/custom/jooan-local}/boot/common.sh" || exit 1
+. "${JL_CONTROL:-/run/jooan-local/controller}/boot/common.sh" || exit 1
 jl_init_run || exit 1
 [ "$#" -ge 1 ] || exit 2
 jl_action=$1
 jl_tx=$JL_STATE/wifi-trial
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 jl_wifi_hooks() {
     jl_slot_valid "$jl_wifi_slot" || return 1
-    jl_verify_archive "$JL_ROOT/slots/$jl_wifi_slot/runtime.tar.gz" "$JL_ROOT/slots/$jl_wifi_slot/runtime.sha256" || return 1
+    jl_verify_archive "$JL_ROOT/slots/$jl_wifi_slot/runtime.tar.gz" "$JL_ROOT/slots/$jl_wifi_slot/runtime.md5" || return 1
     if [ ! -d "$JL_RUN/slot-$jl_wifi_slot" ]; then
         jl_unpack_archive "$JL_ROOT/slots/$jl_wifi_slot/runtime.tar.gz" "$JL_RUN/slot-$jl_wifi_slot" || return 1
     fi
@@ -28,6 +31,12 @@ jl_wifi_rollback() {
     # The saved configuration remains available for audit/manual recovery.
     mv "$jl_tx" "$JL_STATE/wifi-rolled-back" || return 1
     sync
+    # Reboot only after restored settings and terminal journal are durable.
+    # Even during recovery, restored settings may need one reboot to take effect;
+    # the terminal journal above prevents a repeated recovery/reboot loop.
+    jl_unlock
+    trap - EXIT
+    reboot
 }
 
 case "$jl_action" in
