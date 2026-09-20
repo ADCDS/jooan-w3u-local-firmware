@@ -41,10 +41,12 @@ the reviewed uninstall manifest explicitly says otherwise. If the camera cannot
 authenticate, cannot validate the package, or repeatedly reboots, stop trying
 network updates and use external recovery.
 
-Automatic A/B fallback is narrower than uninstall: it returns from a failed
-candidate runtime to the prior healthy slot. Signed uninstall is destructive
+Automatic A/B fallback is transient: the stable runtime remains while one
+candidate is tried, failure durably restores the stable selection, and the
+failed candidate is pruned. Successful promotion likewise prunes the superseded
+slot, leaving exactly one stable runtime. Signed uninstall is destructive
 removal, not restoration of predecessor state. It removes HTTPS, route pruning,
-the process guard, project SSH, and the compressed controller/slots; the next
+the process guard, project SSH, and the compressed controller/runtime; the next
 boot returns to OEM/GoAhead behavior. It does not restore the old
 unauthenticated telnet hook or an archived predecessor `/opt/etc/local.rc`.
 Keep router isolation active before, during, and after uninstall.

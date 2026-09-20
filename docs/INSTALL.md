@@ -32,9 +32,13 @@ the pinned ECDSA P-256/SHA-256 release key, checks exact component hashes, and
 rejects downgrade/replay by sequence. OEM MD5 fields are carrier metadata, not
 the authenticity boundary.
 
-The persistent contract stores a compressed controller and maximum two
-compressed A/B slots, caps regular-file content at 180224 bytes (176 KiB), and
-requires at least 81920 bytes (80 KiB) free on `/opt`.
+The steady contract stores the compressed controller/SSH material plus exactly
+one stable compressed runtime, caps regular-file content at 180224 bytes
+(176 KiB), and requires at least 81920 bytes (80 KiB) free on `/opt`. During an
+update, the stable slot and one candidate may coexist under a 262144-byte
+(256 KiB) cap while preserving at least 57344 bytes (56 KiB) free. That floor
+is above the OEM startapp cleanup threshold of 50 KiB. Promotion or rollback
+then prunes the superseded or failed slot and restores the one-slot steady state.
 
 ## Upload
 
