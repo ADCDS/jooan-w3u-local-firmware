@@ -245,6 +245,7 @@ grep -qx 'maintenance_final_free_reserve_bytes=57344' "$self/persistent.contract
 grep -qx 'JOOAN-MIGRATION-CONTRACT-V1' "$self/migration.contract" || die 'migration contract missing'
 grep -qx 'state=legacy-retired' "$self/migration.contract" || die 'migration states incomplete'
 
+installed_prior=0
 if [ -f "$root/state/release-sequence" ]; then
     current=$(cat "$root/state/release-sequence") || die 'cannot read installed sequence'
     case "$current" in ''|*[!0-9]*) die 'installed sequence is invalid' ;; esac
@@ -256,6 +257,7 @@ if [ -f "$root/state/release-sequence" ]; then
         fi
         die 'downgrade or replay rejected'
     fi
+    installed_prior=1
 fi
 if [ "${JOOAN_PREFLIGHT_ONLY:-0}" = 1 ]; then
     echo 'jooan-local signed preflight passed'
@@ -341,7 +343,8 @@ if [ "$expanded" = 0 ] &&
     expanded=1
     [ "$reclaim_resume" = 0 ] || expanded=6
 fi
-if [ "$expanded" = 0 ] && [ -f "$root/state/migration-state" ] &&
+if [ "$installed_prior" = 0 ] && [ "$expanded" = 0 ] &&
+   [ -f "$root/state/migration-state" ] &&
    [ -f "$root/controller.tar.gz" ] &&
    [ -f "$root/local.rc" ]; then
     case "$migration_hint" in
