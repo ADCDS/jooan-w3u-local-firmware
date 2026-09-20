@@ -28,6 +28,8 @@ globalThis.window={MediaSource:MediaSourceMock,fetch:async url=>{
   queueMicrotask(()=>player.close());
   return{ok:true,arrayBuffer:async()=>new ArrayBuffer(8),headers:{get:()=>"1"}};
 }};
+globalThis.CustomEvent=class{constructor(type){this.type=type;}};
+globalThis.window.dispatchEvent=()=>{};
 let settlePlay;
 const video={src:'',currentTime:0,removeAttribute(){this.src='';},load(){},play:()=>new Promise(resolve=>{settlePlay=resolve;})};
 const {Fmp4Player}=await import('./video-player.js');

@@ -7,6 +7,7 @@ let videoPlayers=[];
 const $=s=>document.querySelector(s);
 const notice=m=>{$('#notice').textContent=m;};
 function requireLogin(){videoPlayers.forEach(x=>x.close());videoPlayers=[];if(audioClient){unbindTalk?.();audioClient.close().catch(()=>{});audioClient=null;}csrf='';$('#connection').textContent='Offline';show('#login');}
+window.addEventListener('joan-auth-required',requireLogin);
 async function api(path,options={}){options.headers=Object.assign({'Accept':'application/json'},options.headers||{});if(csrf&&options.method&&options.method!=='GET')options.headers['X-CSRF-Token']=csrf;const r=await fetch(path,options);const type=r.headers.get('content-type')||'';const data=r.status===204?null:type.includes('json')?await r.json():await r.text();if(!r.ok){if(r.status===401&&!(path==='/api/v1/session'&&options.method==='POST'))requireLogin();throw new Error(data?.error?.message||data?.error||data||`HTTP ${r.status}`);}return data;}
 function show(id){['#login','#setup','#dashboard'].forEach(x=>$(x).classList.add('hidden'));$(id).classList.remove('hidden');}
 async function status(){const s=await api('/api/v1/status');$('#status').textContent=JSON.stringify(s,null,2);$('#connection').textContent='Connected';$('#default-password-warning').classList.toggle('hidden',!s.default_password_warning&&s.ssh_password_sync);if(!s.ssh_password_sync)$('#default-password-warning').textContent='SSH password is not synchronized after upgrade. Change the administrator password once to enable it.';show('#dashboard');return s;}
