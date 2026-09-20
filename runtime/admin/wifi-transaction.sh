@@ -58,7 +58,7 @@ case "$jl_action" in
         # A complete rollback snapshot and deadline are durable BEFORE mutation.
         mv "$jl_tx.new" "$jl_tx" || exit 1
         sync
-        if ! jl_bounded_hook 15 "$jl_hooks/wifi-apply.sh" "$2"; then
+        if ! jl_bounded_hook 50 "$jl_hooks/wifi-apply.sh" "$2"; then
             jl_wifi_rollback || :
             exit 1
         fi
