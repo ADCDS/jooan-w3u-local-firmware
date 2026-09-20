@@ -49,6 +49,8 @@ struct guard_mmsghdr {
 
 static int (*next_connect)(int, const struct sockaddr *, socklen_t);
 static int (*next_bind)(int, const struct sockaddr *, socklen_t);
+static int (*next_accept)(int, struct sockaddr *, socklen_t *);
+static int (*next_accept4)(int, struct sockaddr *, socklen_t *, int);
 static ssize_t (*next_sendto)(int, const void *, size_t, int,
                               const struct sockaddr *, socklen_t);
 static ssize_t (*next_send)(int, const void *, size_t, int);
@@ -236,6 +238,8 @@ static void resolve_symbols(void)
 #define RESOLVE(name) *(void **)(&next_##name) = dlsym(RTLD_NEXT, #name)
     RESOLVE(connect);
     RESOLVE(bind);
+    RESOLVE(accept);
+    RESOLVE(accept4);
     RESOLVE(sendto);
     RESOLVE(send);
     RESOLVE(sendmsg);
@@ -348,6 +352,42 @@ static uint16_t configured_local_mqtt_port(void)
     }
 #endif
     return JOOAN_GUARD_LOCAL_MQTT_PORT;
+}
+
+static const char *configured_rtsp_password_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_RTSP_PASSWORD_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_RTSP_PASSWORD_PATH;
+}
+
+static const char *configured_rtsp_sync_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_RTSP_SYNC_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_RTSP_SYNC_PATH;
+}
+
+static uint16_t configured_rtsp_port(void)
+{
+#ifdef GUARD_TESTING
+    const char *value = getenv("JOOAN_GUARD_TEST_RTSP_PORT");
+    char *end = NULL;
+    unsigned long port;
+
+    if (value != NULL && value[0] != '\0') {
+        port = strtoul(value, &end, 10);
+        if (end != value && *end == '\0' && port > 0 && port <= 65535UL)
+            return (uint16_t)port;
+    }
+#endif
+    return 554U;
 }
 
 static void disable_dsp_if_current(int descriptor)
@@ -794,7 +834,7 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
         if (next_getsockopt != NULL &&
             next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
                             &option_length) == 0 &&
-            jooan_guard_listener_bind_external_allowed(port, socket_type))
+            port == configured_rtsp_port() && socket_type == SOCK_STREAM)
             return next_bind(descriptor, address, length);
         address4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         return next_bind(descriptor, (const struct sockaddr *)&address4,
@@ -812,7 +852,7 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
         if (next_getsockopt != NULL &&
             next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
                             &option_length) == 0 &&
-            jooan_guard_listener_bind_external_allowed(port, socket_type))
+            port == configured_rtsp_port() && socket_type == SOCK_STREAM)
             return next_bind(descriptor, address, length);
         address6.sin6_addr = in6addr_loopback;
         return next_bind(descriptor, (const struct sockaddr *)&address6,
@@ -831,6 +871,128 @@ int bind(int descriptor, const struct sockaddr *address, socklen_t length)
        )
         return deny_network();
     return next_bind(descriptor, address, length);
+}
+
+static int rtsp_credentials_synchronized(void)
+{
+    char digest[65];
+    char marker[66];
+    ssize_t length;
+    int descriptor;
+
+    if (jooan_guard_sha256_file_hex(configured_rtsp_password_path(), digest))
+        return 0;
+    if (next_open == NULL || next_read == NULL || next_close == NULL)
+        return 0;
+    descriptor = next_open(configured_rtsp_sync_path(), O_RDONLY);
+    if (descriptor < 0)
+        return 0;
+    length = next_read(descriptor, marker, sizeof(marker));
+    (void)next_close(descriptor);
+    if (length != 64 && length != 65)
+        return 0;
+    if (length == 65 && marker[64] != '\n')
+        return 0;
+    return memcmp(marker, digest, 64) == 0;
+}
+
+static int accepted_rtsp_must_close(int listener,
+                                    const struct sockaddr *peer,
+                                    socklen_t peer_length)
+{
+    struct sockaddr_storage local;
+    socklen_t local_length = sizeof(local);
+    uint16_t port;
+
+    if (!guard_applies() || next_getsockname == NULL ||
+        next_getsockname(listener, (struct sockaddr *)&local,
+                         &local_length) != 0)
+        return 0;
+    if (local.ss_family == AF_INET &&
+        local_length >= (socklen_t)sizeof(struct sockaddr_in)) {
+        port = (uint16_t)((uint16_t)((const unsigned char *)&
+            ((const struct sockaddr_in *)&local)->sin_port)[0] << 8);
+        port = (uint16_t)(port | ((const unsigned char *)&
+            ((const struct sockaddr_in *)&local)->sin_port)[1]);
+    } else if (local.ss_family == AF_INET6 &&
+               local_length >= (socklen_t)sizeof(struct sockaddr_in6)) {
+        port = (uint16_t)((uint16_t)((const unsigned char *)&
+            ((const struct sockaddr_in6 *)&local)->sin6_port)[0] << 8);
+        port = (uint16_t)(port | ((const unsigned char *)&
+            ((const struct sockaddr_in6 *)&local)->sin6_port)[1]);
+    } else {
+        return 0;
+    }
+    if (port != configured_rtsp_port())
+        return 0;
+#ifdef GUARD_TESTING
+    if (getenv("JOOAN_GUARD_TEST_RTSP_GATE_ALL") == NULL &&
+        jooan_guard_sockaddr_is_loopback(peer, peer_length))
+        return 0;
+#else
+    if (jooan_guard_sockaddr_is_loopback(peer, peer_length))
+        return 0;
+#endif
+    return !rtsp_credentials_synchronized();
+}
+
+int accept(int descriptor, struct sockaddr *address, socklen_t *address_length)
+{
+    struct sockaddr_storage peer;
+    struct sockaddr *target;
+    socklen_t peer_length;
+    socklen_t *target_length;
+    int accepted;
+
+    if (next_accept == NULL)
+        resolve_symbols();
+    if (next_accept == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    for (;;) {
+        peer_length = sizeof(peer);
+        target = address != NULL && address_length != NULL ?
+                 address : (struct sockaddr *)&peer;
+        target_length = address != NULL && address_length != NULL ?
+                        address_length : &peer_length;
+        accepted = next_accept(descriptor, target, target_length);
+        if (accepted < 0 || !accepted_rtsp_must_close(
+                descriptor, target, *target_length))
+            return accepted;
+        if (next_close != NULL)
+            (void)next_close(accepted);
+    }
+}
+
+int accept4(int descriptor, struct sockaddr *address,
+            socklen_t *address_length, int flags)
+{
+    struct sockaddr_storage peer;
+    struct sockaddr *target;
+    socklen_t peer_length;
+    socklen_t *target_length;
+    int accepted;
+
+    if (next_accept4 == NULL)
+        resolve_symbols();
+    if (next_accept4 == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    for (;;) {
+        peer_length = sizeof(peer);
+        target = address != NULL && address_length != NULL ?
+                 address : (struct sockaddr *)&peer;
+        target_length = address != NULL && address_length != NULL ?
+                        address_length : &peer_length;
+        accepted = next_accept4(descriptor, target, target_length, flags);
+        if (accepted < 0 || !accepted_rtsp_must_close(
+                descriptor, target, *target_length))
+            return accepted;
+        if (next_close != NULL)
+            (void)next_close(accepted);
+    }
 }
 
 static int connected_socket_is_allowed(int descriptor);
@@ -1420,15 +1582,35 @@ ssize_t write(int descriptor, const void *buffer, size_t length)
 
 ssize_t writev(int descriptor, const struct iovec *vectors, int vector_count)
 {
+    ssize_t result;
+
     if (next_writev == NULL)
         resolve_symbols();
     if (next_writev == NULL) {
         errno = ENOSYS;
         return -1;
     }
-    if (guard_applies() && descriptor_has_disallowed_peer(descriptor))
+    if (!guard_applies())
+        return next_writev(descriptor, vectors, vector_count);
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) == 0 &&
+        descriptor_has_disallowed_peer(descriptor))
         return (ssize_t)deny_network();
-    return next_writev(descriptor, vectors, vector_count);
+
+    pthread_mutex_lock(&dsp_lock);
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0) {
+#ifdef GUARD_TESTING
+        if (getenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE") != NULL)
+            usleep(100000);
+#endif
+        result = next_writev(descriptor, vectors, vector_count);
+        if (result < 0)
+            disable_dsp_if_current(descriptor);
+    } else {
+        pthread_mutex_unlock(&dsp_lock);
+        return next_writev(descriptor, vectors, vector_count);
+    }
+    pthread_mutex_unlock(&dsp_lock);
+    return result;
 }
 
 ssize_t guard_export_sendfile64(int output, int input, off64_t *offset,

@@ -30,10 +30,10 @@ $(BUILD)/test_guard: test_guard.c $(COMMON) guard.h guard_sha256.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c99 \
 		-o $@ test_guard.c $(COMMON)
 
-$(BUILD)/guard_probe: guard_probe.c guard_policy.c $(AUDIO_GUARD) guard.h \
+$(BUILD)/guard_probe: guard_probe.c guard_policy.c guard_sha256.c $(AUDIO_GUARD) guard.h \
 	$(AUDIO_HEADERS) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c99 \
-		-o $@ guard_probe.c guard_policy.c $(AUDIO_GUARD) -pthread
+		-o $@ guard_probe.c guard_policy.c guard_sha256.c $(AUDIO_GUARD) -pthread
 
 $(BUILD)/guard_child_probe: guard_child_probe.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c99 -o $@ guard_child_probe.c
@@ -44,12 +44,15 @@ test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	@set -eu; \
 	case "$(CURDIR)" in *:*) echo "test path cannot contain ':'" >&2; exit 1;; esac; \
 	test_tmp=$$(mktemp -d /tmp/jooan-guard-test.XXXXXX); \
-	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/jooanipc"; rmdir "$$test_tmp"' EXIT; \
+	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
 	export JOOAN_GUARD_TEST_EXE="$(CURDIR)/$(BUILD)/guard_probe"; \
 	export JOOAN_GUARD_TEST_DSP_PATH="$$test_tmp/dsp"; \
 	export JOOAN_GUARD_TEST_TALKBACK_PATH="$$test_tmp/talkback.sock"; \
 	export JOOAN_GUARD_TEST_MIC_SOCKET_PATH="$$test_tmp/mic.sock"; \
 	export JOOAN_GUARD_TEST_FAKE_MIC_IOCTL=1; \
+	export JOOAN_GUARD_TEST_RTSP_PASSWORD_PATH="$$test_tmp/rtsp.password"; \
+	export JOOAN_GUARD_TEST_RTSP_SYNC_PATH="$$test_tmp/rtsp.synced"; \
+	export JOOAN_GUARD_TEST_RTSP_GATE_ALL=1; \
 	export LD_PRELOAD="$(CURDIR)/$(BUILD)/libjooan_guard_test.so"; \
 	$(BUILD)/guard_probe policy; \
 	$(BUILD)/guard_probe talkback; \
@@ -69,4 +72,4 @@ clean:
 		$(BUILD)/libjooan_guard.mips-glibc.so $(BUILD)/test_guard \
 		$(BUILD)/guard_probe $(BUILD)/guard_child_probe \
 		$(BUILD)/guard_child_probe.mips
-	-rmdir $(BUILD)
+	@rmdir $(BUILD) 2>/dev/null || :
