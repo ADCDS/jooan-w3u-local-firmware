@@ -23,6 +23,8 @@
 #define JOOAN_GUARD_SPEAKER_DIRECTION_PATH \
     "/sys/class/gpio/gpio63/direction"
 #define JOOAN_GUARD_SPEAKER_VALUE_PATH "/sys/class/gpio/gpio63/value"
+#define JOOAN_GUARD_SPEAKER_ENABLED_LEVEL '0'
+#define JOOAN_GUARD_SPEAKER_MUTED_LEVEL '1'
 #define JOOAN_GUARD_SPEAKER_READY_PATH \
     "/run/jooan-local/speaker-guard-ready"
 #define JOOAN_GUARD_SPEAKER_RELEASED_PATH \

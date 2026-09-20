@@ -21,6 +21,7 @@ int main(int argc,char**argv)
     copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
     copy_env(c.audio_socket,sizeof(c.audio_socket),"JOAN_AUDIO_WS_SOCKET","/run/joan/audio-ws.sock");
+    copy_env(c.audio_mic_socket,sizeof(c.audio_mic_socket),"JOAN_AUDIO_MIC_SOCKET","/run/joan/mic.sock");
     c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.mdns_enabled=1;c.mdns_port=5353;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);

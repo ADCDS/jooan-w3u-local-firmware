@@ -24,6 +24,7 @@ typedef struct {
     char public_host[128];
     char integration_helper[256];
     char audio_socket[256];
+    char audio_mic_socket[256];
     unsigned mqtt_port;
     unsigned rtsp_port;
     unsigned rtsp_proxy_port;

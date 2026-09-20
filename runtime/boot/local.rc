@@ -29,14 +29,16 @@ if mkdir "$JL_SPEAKER_RUN/speaker-hook.lock" 2>/dev/null; then
     fi
     if [ -d "$JL_SPEAKER_PATH" ]; then
         echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
-        echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+        # This JA-A12 board declares SpeakLevelEx=0: low enables the amplifier
+        # and high is the OEM mute level.
+        echo 1 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
     fi
     (
         jl_speaker_tick=0
         while [ -d "$JL_SPEAKER_PATH" ] &&
               [ "$jl_speaker_tick" -lt 3000 ]; do
             echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
-            echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+            echo 1 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
             # Once the pinned containment guard has taken ownership, its
             # interposer enforces mute and can grant authenticated PTT without
             # racing this early-boot hold.
@@ -45,14 +47,30 @@ if mkdir "$JL_SPEAKER_RUN/speaker-hook.lock" 2>/dev/null; then
             jl_speaker_tick=$((jl_speaker_tick + 1))
         done
         # Keep the OEM muted after the startup race.  The guard temporarily
-        # raises this pin only while it owns an authenticated talkback lease.
+        # drives this active-low pin low only while it owns an authenticated
+        # talkback lease.
         echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
-        echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+        echo 1 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
         printf '%s\n' released > "$JL_SPEAKER_HOOK_RELEASED.new" &&
             chmod 600 "$JL_SPEAKER_HOOK_RELEASED.new" &&
             mv -f "$JL_SPEAKER_HOOK_RELEASED.new" \
                 "$JL_SPEAKER_HOOK_RELEASED"
     ) </dev/null >/tmp/jooan-speaker-mute.log 2>&1 &
+fi
+
+# The OEM RTSP server advertises the microphone track even when AudioEnable is
+# zero, but then emits no RTP audio. Enable the retained local microphone path
+# before jooanipc initializes media. Avoid rewriting flash when already set.
+if [ -x /mnt/mtd/run/json_debug ]; then
+    for jl_audio_config in /opt/conf/config.json /opt/conf/config.org; do
+        [ -f "$jl_audio_config" ] || continue
+        jl_audio_enabled=$(/mnt/mtd/run/json_debug -c r \
+            -k /IPCamInfo/AudioEnable "$jl_audio_config" 2>/dev/null |
+            awk '{print $3}')
+        [ "$jl_audio_enabled" = 1 ] ||
+            /mnt/mtd/run/json_debug -i -c w \
+                -k /IPCamInfo/AudioEnable -v 1 "$jl_audio_config" || :
+    done
 fi
 
 killall telnetd goahead 2>/dev/null || :
