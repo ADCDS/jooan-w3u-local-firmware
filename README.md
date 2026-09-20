@@ -95,6 +95,13 @@ microphone/push-to-talk plumbing. Host, native, MIPS/uClibc and QEMU TLS/MQTT
 tests pass. The current `0.1.0` artifact remains a pre-release until install,
 Wi-Fi, snapshot, PTZ and audio are qualified on the physical unit.
 
+The verified SKW6316 firmware connects to Realtek-based WPA bench access
+points, but could not authenticate to the tested OpenWrt/ath11k AP even though
+the BSS was visible and credentials matched. Channel, HE/HT mode, legacy rates,
+WPA mode, UTF-8 SSID, virtual BSSID, nl80211/wext, and OEM network-manager
+interference were ruled out. Keep Ethernet recovery available and qualify the
+intended access point before committing a Wi-Fi transaction.
+
 This is a hardware-specific retrofit for experienced users. Keeping
 `jooanipc` preserves proven dual-sensor video operation, but also retains a
 large, proprietary, unaudited process. Confinement reduces its network reach;
