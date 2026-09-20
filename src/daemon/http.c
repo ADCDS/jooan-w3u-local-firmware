@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,21 +44,24 @@ static pthread_cond_t worker_available=PTHREAD_COND_INITIALIZER;
 static unsigned worker_count;
 static int server_fd=-1;
 static int server_stopping;
-#define MAX_WORKERS 4u
+#define MAX_WORKERS 8u
 #ifndef JOAN_NO_TLS
 static int locked_rng(void*ctx,unsigned char*out,size_t len){int rc;pthread_mutex_lock(&tls_rng_lock);rc=mbedtls_ctr_drbg_random(ctx,out,len);pthread_mutex_unlock(&tls_rng_lock);return rc;}
 #endif
 static char ptz_lease[65]; static time_t ptz_expires;
 
+#ifndef JOAN_NO_TLS
+static int tls_wait(int fd,short events){struct pollfd p;int r;p.fd=fd;p.events=events;p.revents=0;do r=poll(&p,1,10000);while(r<0&&errno==EINTR);return r>0&&(p.revents&events)?0:-1;}
+#endif
 static ssize_t cread(Conn*c,void*b,size_t n){
 #ifndef JOAN_NO_TLS
-    if(c->ssl){int r=mbedtls_ssl_read(c->ssl,b,n);return r>0?r:-1;}
+    if(c->ssl){int r;for(;;){r=mbedtls_ssl_read(c->ssl,b,n);if(r>0)return r;if(r==MBEDTLS_ERR_SSL_WANT_READ){if(tls_wait(c->fd,POLLIN))return-1;continue;}if(r==MBEDTLS_ERR_SSL_WANT_WRITE){if(tls_wait(c->fd,POLLOUT))return-1;continue;}return-1;}}
 #endif
     return recv(c->fd,b,n,0);
 }
 static ssize_t cwrite(Conn*c,const void*b,size_t n){
 #ifndef JOAN_NO_TLS
-    if(c->ssl){int r=mbedtls_ssl_write(c->ssl,b,n);return r>0?r:-1;}
+    if(c->ssl){int r;for(;;){r=mbedtls_ssl_write(c->ssl,b,n);if(r>0)return r;if(r==MBEDTLS_ERR_SSL_WANT_READ){if(tls_wait(c->fd,POLLIN))return-1;continue;}if(r==MBEDTLS_ERR_SSL_WANT_WRITE){if(tls_wait(c->fd,POLLOUT))return-1;continue;}return-1;}}
 #endif
     return send(c->fd,b,n,MSG_NOSIGNAL);
 }
@@ -72,7 +76,7 @@ static int json_field(const unsigned char*body,size_t len,const char*key,char*ou
 static int json_uint(const unsigned char*body,size_t len,const char*key,unsigned*out){char needle[96],*ep;const char*p;unsigned long v;if(!body||!out||snprintf(needle,sizeof(needle),"\"%s\"",key)>=(int)sizeof(needle))return-1;p=strstr((const char*)body,needle);if(!p||(size_t)(p-(const char*)body)>=len)return-1;p+=strlen(needle);while(*p==' '||*p=='\t')p++;if(*p++!=':')return-1;while(*p==' '||*p=='\t')p++;v=strtoul(p,&ep,10);if(ep==p||v>0xffffffffUL)return-1;while(*ep==' '||*ep=='\t')ep++;if(*ep!=','&&*ep!='}')return-1;*out=(unsigned)v;return 0;}
 static int header_copy(const char*headers,const char*name,char*out,size_t cap){size_t nl=strlen(name);const char*p=headers;while(p&&*p){const char*e=strstr(p,"\r\n");size_t line=e?(size_t)(e-p):strlen(p);if(line>nl&&p[nl]==':'&&!strncasecmp(p,name,nl)){const char*v=p+nl+1;size_t n;while(v<p+line&&(*v==' '||*v=='\t'))v++;n=(size_t)((p+line)-v);if(n>=cap)n=cap-1;memcpy(out,v,n);out[n]=0;return 0;}if(!e)break;p=e+2;}return-1;}
 
-static int parse_request(Conn*c,JoanRequest*r){unsigned char*h=malloc(JOAN_MAX_HEADERS+1),*end;size_t used=0,head,body_limit;char*line_end,*headers,*q;ssize_t n;int result=-1;if(!h)return-1;memset(r,0,sizeof(*r));r->fd=c->fd;while(used<JOAN_MAX_HEADERS){n=cread(c,h+used,JOAN_MAX_HEADERS-used);if(n<=0)goto fail;used+=(size_t)n;h[used]=0;end=(unsigned char*)strstr((char*)h,"\r\n\r\n");if(end)break;}if(!end)goto fail;head=(size_t)(end-h)+4;line_end=strstr((char*)h,"\r\n");if(!line_end)goto fail;*line_end=0;headers=line_end+2;if(sscanf((char*)h,"%11s %511s",r->method,r->path)!=2)goto fail;q=strchr(r->path,'?');if(q){*q++=0;snprintf(r->query,sizeof(r->query),"%s",q);}*end=0;header_copy(headers,"Host",r->host,sizeof(r->host));header_copy(headers,"Cookie",r->cookie,sizeof(r->cookie));header_copy(headers,"X-CSRF-Token",r->csrf,sizeof(r->csrf));header_copy(headers,"Content-Type",r->content_type,sizeof(r->content_type));header_copy(headers,"Upgrade",r->upgrade,sizeof(r->upgrade));header_copy(headers,"Sec-WebSocket-Key",r->ws_key,sizeof(r->ws_key));header_copy(headers,"Sec-WebSocket-Protocol",r->ws_protocol,sizeof(r->ws_protocol));header_copy(headers,"Origin",r->origin,sizeof(r->origin));header_copy(headers,"Transfer-Encoding",r->transfer_encoding,sizeof(r->transfer_encoding));if(!r->host[0]||r->transfer_encoding[0])goto fail;{char cl[32]={0};if(!header_copy(headers,"Content-Length",cl,sizeof(cl))){char*ep=NULL;unsigned long z=strtoul(cl,&ep,10);if(!ep||*ep)goto fail;r->content_length=(size_t)z;}}body_limit=!strcmp(r->method,"POST")&&!strcmp(r->path,"/api/v1/update")?JOAN_MAX_UPDATE_BODY:JOAN_MAX_BODY;if(r->content_length>body_limit){result=-2;goto fail;}if(r->content_length){size_t have=used-head,off=0;r->body=malloc(r->content_length+1);if(!r->body)goto fail;if(have>r->content_length)have=r->content_length;memcpy(r->body,end+4,have);off=have;while(off<r->content_length){n=cread(c,r->body+off,r->content_length-off);if(n<=0)goto fail;off+=(size_t)n;}r->body[r->content_length]=0;}free(h);return 0;fail:free(r->body);free(h);return result;}
+static int parse_request(Conn*c,JoanRequest*r){unsigned char*h=malloc(JOAN_MAX_HEADERS+1),*end=NULL;size_t used=0,head,body_limit;char*line_end,*headers,*q;ssize_t n;int result=-1;if(!h)return-1;memset(r,0,sizeof(*r));r->fd=c->fd;while(used<JOAN_MAX_HEADERS){n=cread(c,h+used,JOAN_MAX_HEADERS-used);if(n<=0)goto fail;used+=(size_t)n;h[used]=0;end=(unsigned char*)strstr((char*)h,"\r\n\r\n");if(end)break;}if(!end)goto fail;head=(size_t)(end-h)+4;line_end=strstr((char*)h,"\r\n");if(!line_end)goto fail;*line_end=0;headers=line_end+2;if(sscanf((char*)h,"%11s %511s",r->method,r->path)!=2)goto fail;q=strchr(r->path,'?');if(q){*q++=0;snprintf(r->query,sizeof(r->query),"%s",q);}*end=0;header_copy(headers,"Host",r->host,sizeof(r->host));header_copy(headers,"Cookie",r->cookie,sizeof(r->cookie));header_copy(headers,"X-CSRF-Token",r->csrf,sizeof(r->csrf));header_copy(headers,"Content-Type",r->content_type,sizeof(r->content_type));header_copy(headers,"Upgrade",r->upgrade,sizeof(r->upgrade));header_copy(headers,"Sec-WebSocket-Key",r->ws_key,sizeof(r->ws_key));header_copy(headers,"Sec-WebSocket-Protocol",r->ws_protocol,sizeof(r->ws_protocol));header_copy(headers,"Origin",r->origin,sizeof(r->origin));header_copy(headers,"Transfer-Encoding",r->transfer_encoding,sizeof(r->transfer_encoding));if(!r->host[0]||r->transfer_encoding[0])goto fail;{char cl[32]={0};if(!header_copy(headers,"Content-Length",cl,sizeof(cl))){char*ep=NULL;unsigned long z=strtoul(cl,&ep,10);if(!ep||*ep)goto fail;r->content_length=(size_t)z;}}body_limit=!strcmp(r->method,"POST")&&!strcmp(r->path,"/api/v1/update")?JOAN_MAX_UPDATE_BODY:JOAN_MAX_BODY;if(r->content_length>body_limit){result=-2;goto fail;}if(r->content_length){size_t have=used-head,off=0;r->body=malloc(r->content_length+1);if(!r->body)goto fail;if(have>r->content_length)have=r->content_length;memcpy(r->body,end+4,have);off=have;while(off<r->content_length){n=cread(c,r->body+off,r->content_length-off);if(n<=0)goto fail;off+=(size_t)n;}r->body[r->content_length]=0;}free(h);return 0;fail:free(r->body);free(h);return result;}
 
 static int host_ok(const char*host){char name[256],label[64],*colon;struct in_addr a4;size_t n;if(!host||(n=strlen(host))==0||n>=sizeof(name)||strpbrk(host,"/\\@\r\n"))return 0;snprintf(name,sizeof(name),"%s",host);if(name[0]=='['){char*end=strchr(name,']');struct in6_addr a6;if(!end)return 0;*end=0;if(inet_pton(AF_INET6,name+1,&a6)!=1)return 0;return IN6_IS_ADDR_LOOPBACK(&a6)||(a6.s6_addr[0]&0xfe)==0xfc;}colon=strrchr(name,':');if(colon)*colon=0;if(inet_pton(AF_INET,name,&a4)==1){uint32_t a=ntohl(a4.s_addr);return(a>>24)==127||(a>>24)==10||(a>>20)==0xac1||(a>>16)==0xc0a8;}joan_mdns_get_hostname(&G,label);{char wanted[80];snprintf(wanted,sizeof(wanted),"%s.local",label);return!strcasecmp(name,wanted);}}
 static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r->origin[0])return required?0:1;if(!host_ok(r->host))return 0;snprintf(expected,sizeof(expected),"%s://%s",G.plain_http?"http":"https",r->host);return !strcmp(r->origin,expected);}
