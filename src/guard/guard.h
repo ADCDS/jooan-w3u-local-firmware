@@ -16,6 +16,14 @@
 #define JOOAN_GUARD_LOCAL_MQTT_PORT 1883
 #define JOOAN_GUARD_DSP_PATH "/dev/dsp"
 #define JOOAN_GUARD_TALKBACK_PATH "/tmp/jooan-guard-talkback.sock"
+#define JOOAN_GUARD_SPEAKER_DIRECTION_PATH \
+    "/sys/class/gpio/gpio63/direction"
+#define JOOAN_GUARD_SPEAKER_VALUE_PATH "/sys/class/gpio/gpio63/value"
+#define JOOAN_GUARD_SPEAKER_READY_PATH \
+    "/run/jooan-local/speaker-guard-ready"
+#define JOOAN_GUARD_SPEAKER_RELEASED_PATH \
+    "/run/jooan-local/speaker-hook-released"
+#define JOOAN_GUARD_AO_PLAY_IOCTL 0x40085063UL
 #define JOOAN_GUARD_RTSP_PASSWORD_PATH \
     "/opt/custom/jooan-local/config/rtsp.password"
 #define JOOAN_GUARD_RTSP_SYNC_PATH \
@@ -32,9 +40,16 @@ struct jooan_guard_mic_stream_request {
     uint32_t reference_samples;
     uint32_t timeout;
 };
+struct jooan_guard_ao_play_request {
+    uintptr_t pcm;
+    uint32_t byte_length;
+    uint32_t reserved[3];
+};
 #if UINTPTR_MAX == UINT32_MAX
 typedef char jooan_guard_mic_stream_request_must_be_20_bytes[
     sizeof(struct jooan_guard_mic_stream_request) == 20 ? 1 : -1];
+typedef char jooan_guard_ao_play_request_must_be_20_bytes[
+    sizeof(struct jooan_guard_ao_play_request) == 20 ? 1 : -1];
 #endif
 
 int jooan_guard_hostname_is_approved(const char *name);

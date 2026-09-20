@@ -16,6 +16,20 @@ def executable(path: Path, contents: str) -> None:
 
 
 class RuntimeHookTests(unittest.TestCase):
+    def test_speaker_is_muted_before_oem_media_can_start(self) -> None:
+        hook = (REPOSITORY / "runtime/boot/local.rc").read_text(encoding="utf-8")
+        mute = hook.index("JL_SPEAKER_GPIO=63")
+        media_wrapper = hook.index("jooanipc()")
+        self.assertLess(mute, media_wrapper)
+        self.assertIn('echo 0 > "$JL_SPEAKER_PATH/value"', hook[mute:media_wrapper])
+        self.assertIn('[ "$jl_speaker_tick" -lt 3000 ]; do', hook)
+        self.assertIn("sleep 0.02", hook)
+        self.assertIn('JL_SPEAKER_RUN=/run/jooan-local', hook)
+        self.assertIn('JL_SPEAKER_HOOK_RELEASED=$JL_SPEAKER_RUN/speaker-hook-released', hook)
+        self.assertIn('[ ! -f "$JL_SPEAKER_GUARD_READY" ] || break', hook)
+        self.assertIn('printf \'%s\\n\' released > "$JL_SPEAKER_HOOK_RELEASED.new"', hook)
+        self.assertNotIn('echo 1 > "$JL_SPEAKER_PATH/value"', hook)
+
     def test_onvif_50ms_is_not_encoded_as_500ms(self) -> None:
         hook = REPOSITORY / "runtime/slot/hooks/onvif-ptz.sh"
         with tempfile.TemporaryDirectory() as temporary:

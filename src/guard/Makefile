@@ -44,12 +44,20 @@ test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	@set -eu; \
 	case "$(CURDIR)" in *:*) echo "test path cannot contain ':'" >&2; exit 1;; esac; \
 	test_tmp=$$(mktemp -d /tmp/jooan-guard-test.XXXXXX); \
-	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
+	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/speaker-direction" "$$test_tmp/speaker-value" "$$test_tmp/speaker-ready" "$$test_tmp/speaker-released" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
+	printf out > "$$test_tmp/speaker-direction"; \
+	printf 0 > "$$test_tmp/speaker-value"; \
+	printf released > "$$test_tmp/speaker-released"; \
 	export JOOAN_GUARD_TEST_EXE="$(CURDIR)/$(BUILD)/guard_probe"; \
 	export JOOAN_GUARD_TEST_DSP_PATH="$$test_tmp/dsp"; \
 	export JOOAN_GUARD_TEST_TALKBACK_PATH="$$test_tmp/talkback.sock"; \
 	export JOOAN_GUARD_TEST_MIC_SOCKET_PATH="$$test_tmp/mic.sock"; \
+	export JOOAN_GUARD_TEST_SPEAKER_DIRECTION_PATH="$$test_tmp/speaker-direction"; \
+	export JOOAN_GUARD_TEST_SPEAKER_VALUE_PATH="$$test_tmp/speaker-value"; \
+	export JOOAN_GUARD_TEST_SPEAKER_READY_PATH="$$test_tmp/speaker-ready"; \
+	export JOOAN_GUARD_TEST_SPEAKER_RELEASED_PATH="$$test_tmp/speaker-released"; \
 	export JOOAN_GUARD_TEST_FAKE_MIC_IOCTL=1; \
+	export JOOAN_GUARD_TEST_FAKE_AO_IOCTL=1; \
 	export JOOAN_GUARD_TEST_RTSP_PASSWORD_PATH="$$test_tmp/rtsp.password"; \
 	export JOOAN_GUARD_TEST_RTSP_SYNC_PATH="$$test_tmp/rtsp.synced"; \
 	export JOOAN_GUARD_TEST_RTSP_GATE_ALL=1; \

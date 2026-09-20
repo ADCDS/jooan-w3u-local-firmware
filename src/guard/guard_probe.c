@@ -300,6 +300,44 @@ struct dsp_writev_race {
     ssize_t result;
 };
 
+static int wait_file_contents(const char *path, const char *expected,
+                              size_t expected_length)
+{
+    char value[16];
+    ssize_t amount;
+    int descriptor;
+    int attempt;
+
+    if (expected_length > sizeof(value))
+        return -1;
+    for (attempt = 0; attempt < 100; ++attempt) {
+        descriptor = open(path, O_RDONLY);
+        if (descriptor >= 0) {
+            amount = read(descriptor, value, sizeof(value));
+            (void)close(descriptor);
+            if (amount == (ssize_t)expected_length &&
+                memcmp(value, expected, expected_length) == 0)
+                return 0;
+        }
+        usleep(10000);
+    }
+    return -1;
+}
+
+static int write_file_contents(const char *path, const char *value,
+                               size_t length)
+{
+    int descriptor = open(path, O_WRONLY);
+    ssize_t amount;
+
+    if (descriptor < 0)
+        return -1;
+    amount = write(descriptor, value, length);
+    if (close(descriptor) != 0)
+        return -1;
+    return amount == (ssize_t)length ? 0 : -1;
+}
+
 static void *dsp_writev_thread(void *opaque)
 {
     static const unsigned char first = 0xa5;
@@ -327,6 +365,9 @@ static int talkback_probe(void)
     size_t datagram_length;
     const char *dsp_path = getenv("JOOAN_GUARD_TEST_DSP_PATH");
     const char *socket_path = getenv("JOOAN_GUARD_TEST_TALKBACK_PATH");
+    const char *speaker_direction =
+        getenv("JOOAN_GUARD_TEST_SPEAKER_DIRECTION_PATH");
+    const char *speaker_value = getenv("JOOAN_GUARD_TEST_SPEAKER_VALUE_PATH");
     struct sockaddr_un address;
     struct stat status;
     unsigned char actual[sizeof(expected)];
@@ -339,7 +380,15 @@ static int talkback_probe(void)
     struct dsp_writev_race vector_race;
     pthread_t vector_thread;
 
-    if (dsp_path == NULL || socket_path == NULL)
+    if (dsp_path == NULL || socket_path == NULL || speaker_direction == NULL ||
+        speaker_value == NULL)
+        return 1;
+    if (wait_file_contents(speaker_direction, "out", 3) != 0 ||
+        wait_file_contents(speaker_value, "0", 1) != 0 ||
+        write_file_contents(speaker_direction, "in", 2) != 0 ||
+        wait_file_contents(speaker_direction, "out", 3) != 0 ||
+        write_file_contents(speaker_value, "1", 1) != 0 ||
+        wait_file_contents(speaker_value, "0", 1) != 0)
         return 1;
     dsp = open(dsp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     sender = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -362,7 +411,7 @@ static int talkback_probe(void)
     if (vfork_close_probe(dsp) != 0)
         goto done;
     errno = 0;
-    if (ioctl(dsp, 0x40085063UL, NULL) != -1 || errno != ENOTTY)
+    if (ioctl(dsp, JOOAN_GUARD_AO_PLAY_IOCTL, NULL) != 0)
         goto done;
     errno = 0;
     if (ioctl(dsp, 0x40045060UL) != -1 || errno != ENOTTY)
@@ -375,8 +424,9 @@ static int talkback_probe(void)
     memset(encoded, 0xd5, sizeof(encoded));
     memcpy(encoded, encoded_prefix, sizeof(encoded_prefix));
 
-    /* Keep a vector write in the DSP critical section while talkback arrives.
-     * The file must contain the complete vector marker before decoded PCM. */
+    /* Keep an OEM vector write in the DSP critical section while talkback
+     * arrives. The OEM write reports success but only decoded PTT PCM reaches
+     * the output file. */
     memset(&vector_race, 0, sizeof(vector_race));
     vector_race.descriptor = dsp;
     if (setenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE", "1", 1) != 0 ||
@@ -401,29 +451,32 @@ static int talkback_probe(void)
         (void)pthread_join(vector_thread, NULL);
         goto done;
     }
+    if (wait_file_contents(speaker_value, "1", 1) != 0 ||
+        write_file_contents(speaker_value, "0", 1) != 0 ||
+        wait_file_contents(speaker_value, "1", 1) != 0) {
+        (void)pthread_join(vector_thread, NULL);
+        goto done;
+    }
     if (pthread_join(vector_thread, NULL) != 0 || vector_race.result != 2 ||
         unsetenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE") != 0)
         goto done;
     for (attempt = 0; attempt < 100; ++attempt) {
         if (stat(dsp_path, &status) == 0 &&
-            status.st_size == (off_t)(sizeof(encoded) * 2U + 2U))
+            status.st_size == (off_t)(sizeof(encoded) * 2U))
             break;
         usleep(10000);
     }
     if (attempt == 100)
         goto done;
-    reader = open(dsp_path, O_RDONLY);
-    if (reader < 0 || read(reader, actual, 2) != 2 ||
-        actual[0] != 0xa5 || actual[1] != 0x5a || close(reader) != 0)
-        goto done;
-    reader = -1;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_RELEASE,
             UINT64_C(0x2122232425262728), 3, NULL, 0,
             &datagram_length) != 0 ||
         sendto(sender, datagram, datagram_length, 0,
                (struct sockaddr *)&address, sizeof(address)) !=
-        (ssize_t)datagram_length || ftruncate(dsp, 0) != 0 ||
+        (ssize_t)datagram_length ||
+        wait_file_contents(speaker_value, "0", 1) != 0 ||
+        ftruncate(dsp, 0) != 0 ||
         lseek(dsp, 0, SEEK_SET) != 0)
         goto done;
 
@@ -437,6 +490,8 @@ static int talkback_probe(void)
         (ssize_t)datagram_length)
         goto done;
     usleep(650000);
+    if (wait_file_contents(speaker_value, "0", 1) != 0)
+        goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
             UINT64_C(0x1112131415161718), 2, encoded, sizeof(encoded),
@@ -444,6 +499,8 @@ static int talkback_probe(void)
         sendto(sender, datagram, datagram_length, 0,
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
+        goto done;
+    if (wait_file_contents(speaker_value, "0", 1) != 0)
         goto done;
     usleep(100000);
     if (stat(dsp_path, &status) != 0 || status.st_size != 0)
@@ -457,6 +514,8 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
+    if (wait_file_contents(speaker_value, "0", 1) != 0)
+        goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
             UINT64_C(0x0102030405060708), 2, encoded, sizeof(encoded),
@@ -464,6 +523,8 @@ static int talkback_probe(void)
         sendto(sender, datagram, datagram_length, 0,
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
+        goto done;
+    if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     for (attempt = 0; attempt < 100; ++attempt) {
         if (stat(dsp_path, &status) == 0 &&
@@ -480,6 +541,8 @@ static int talkback_probe(void)
         sendto(sender, datagram, datagram_length, 0,
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
+        goto done;
+    if (wait_file_contents(speaker_value, "0", 1) != 0)
         goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
@@ -619,7 +682,7 @@ static int microphone_probe(void)
         goto done;
 
     writer = open(dsp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (writer < 0 || write(writer, pcm_bytes, sizeof(pcm_bytes)) !=
+    if (writer < 0 || pwrite(writer, pcm_bytes, sizeof(pcm_bytes), 0) !=
                       (ssize_t)sizeof(pcm_bytes))
         goto done;
     close(writer);
