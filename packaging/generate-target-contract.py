@@ -89,6 +89,15 @@ def migration(target: dict[str, object]) -> str:
         f"journal={contract['journal']}",
         f"legacy_root={contract['legacy_root']}",
     ]
+    hashes = contract.get("expanded_0_1_sha256")
+    if not isinstance(hashes, dict) or not hashes:
+        raise ValueError("migration contract has no pinned expanded-product hashes")
+    for path in sorted(hashes):
+        digest = hashes[path]
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"invalid expanded migration hash for {path}")
+        int(digest, 16)
+        lines.append(f"expanded_sha256={digest}  {path}")
     lines.extend(f"state={state}" for state in states)
     return "\n".join(lines) + "\n"
 

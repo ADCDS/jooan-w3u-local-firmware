@@ -77,6 +77,12 @@
     }
   },
   "migration_contract": {
+    "expanded_0_1_sha256": {
+      "shared/dropbear.tar.gz": "210aff38918add584058ebebf69ce0aec74597c8063cbf9a1195d96202719395",
+      "shared/jooan-sha256": "b832090d9ffc78de0e3604bf4ccca1dab83d4fb0012843fce13f2a5287dda199",
+      "shared/libjooan_guard.so": "3f8b4692570d967d7d9c9b7ebd8e5e6d6f6a01765451727f93e7d3083ff4ebd0",
+      "slots/runtime.tar.gz": "984758be5f0867af5c7c477eb4679543eb938954140c24bc5423886cfafdec3b"
+    },
     "journal": "state/migration-state",
     "legacy_root": "/opt/open",
     "states": [
