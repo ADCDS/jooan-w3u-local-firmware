@@ -104,11 +104,17 @@ else
     rm -f "$jl_authorized_dir/authorized_keys" "$jl_authorized_dir/authorized_keys.new"
 fi
 if [ ! -d "$JL_RUN/shared" ]; then
-    jl_verify_archive "$JL_CONTROL/shared/dropbear.tar.gz" "$JL_CONTROL/shared/dropbear.md5" || exit 1
+    jl_recovery=$JL_ROOT/recovery
+    jl_verify_archive "$jl_recovery/dropbear.tar.gz" \
+        "$jl_recovery/dropbear.md5" || {
+            jl_recovery=$JL_ROOT/recovery.old
+            jl_verify_archive "$jl_recovery/dropbear.tar.gz" \
+                "$jl_recovery/dropbear.md5" || exit 1
+        }
     # The pinned build artifact intentionally has one internal multicall hardlink.
     [ ! -e "$JL_RUN/shared.new" ] || exit 1
     mkdir "$JL_RUN/shared.new" || exit 1
-    if ! tar -xzf "$JL_CONTROL/shared/dropbear.tar.gz" -C "$JL_RUN/shared.new"; then
+    if ! tar -xzf "$jl_recovery/dropbear.tar.gz" -C "$JL_RUN/shared.new"; then
         rm -rf "$JL_RUN/shared.new"
         exit 1
     fi

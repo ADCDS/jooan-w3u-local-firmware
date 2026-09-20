@@ -428,11 +428,11 @@ class HostBuilderTests(unittest.TestCase):
             80 * 1024,
         )
         self.assertEqual(
-            target["persistent_contract"]["transient_regular_file_cap_bytes"],
-            256 * 1024,
+            target["persistent_contract"]["maintenance_regular_file_cap_bytes"],
+            176 * 1024,
         )
         self.assertGreaterEqual(
-            target["persistent_contract"]["transient_final_free_reserve_bytes"],
+            target["persistent_contract"]["maintenance_final_free_reserve_bytes"],
             56 * 1024,
         )
         for soname in ("libmbedcrypto.so.6", "libmbedtls.so.13", "libmbedx509.so.1"):
@@ -559,20 +559,23 @@ class HostBuilderTests(unittest.TestCase):
                 directory.mkdir(parents=True, exist_ok=True)
             (controller / "boot/common.sh").write_text(
                 "jl_check_storage() { return 0; }\n"
-                "jl_check_transient_storage() { return 0; }\n"
+                "jl_check_maintenance_storage() { return 0; }\n"
                 "jl_check_current_storage() { return 0; }\n"
                 "jl_wait_free_kb() {\n"
                 "  free=${FAKE_FREE_KB:-124}\n"
                 "  [ -f \"$JL_ROOT/shared/dropbear.tar.gz\" ] || "
                 "free=$((free + ${FAKE_DROPBEAR_KB:-59}))\n"
+                "  if [ -f \"$JL_ROOT/controller.tar.gz\" ] && "
+                "[ \"$(wc -c < \"$JL_ROOT/controller.tar.gz\")\" -lt 50000 ]; then "
+                "free=$((free + ${FAKE_OLD_CORE_KB:-0})); fi\n"
                 "  [ \"$free\" -ge \"$2\" ]\n"
                 "}\n",
                 encoding="utf-8",
             )
             pseudo_random = b"".join(
                 hashlib.sha256(f"controller-pad-{counter}".encode()).digest()
-                for counter in range(3000)
-            )[:90000]
+                for counter in range(1000)
+            )[:30000]
             (controller / "padding.bin").write_bytes(pseudo_random)
             controller_archive = stage / "controller.tar.gz"
             subprocess.run(
@@ -583,8 +586,28 @@ class HostBuilderTests(unittest.TestCase):
                 ],
                 check=True,
             )
-            self.assertGreater(controller_archive.stat().st_size, 85 * 1024)
-            self.assertLess(controller_archive.stat().st_size, 95 * 1024)
+            self.assertGreater(controller_archive.stat().st_size, 25 * 1024)
+            self.assertLess(controller_archive.stat().st_size, 35 * 1024)
+            recovery_tree = sandbox / "recovery-tree"
+            (recovery_tree / "bin").mkdir(parents=True)
+            recovery_random = b"".join(
+                hashlib.sha256(f"recovery-pad-{counter}".encode()).digest()
+                for counter in range(2000)
+            )[:59000]
+            (recovery_tree / "bin/dropbear").write_bytes(recovery_random)
+            subprocess.run(
+                [
+                    "tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0",
+                    "--numeric-owner", "-C", str(recovery_tree), "-czf",
+                    str(stage / "recovery.tar.gz"), ".",
+                ],
+                check=True,
+            )
+            (stage / "recovery.md5").write_text(
+                legacy_md5((stage / "recovery.tar.gz").read_bytes()).decode() + "\n"
+            )
+            self.assertGreater((stage / "recovery.tar.gz").stat().st_size, 55 * 1024)
+            self.assertLess((stage / "recovery.tar.gz").stat().st_size, 65 * 1024)
             new_runtime = stage / "runtime.tar.gz"
             new_runtime.write_bytes(b"new-runtime")
             (stage / "runtime.md5").write_text(
@@ -618,8 +641,8 @@ class HostBuilderTests(unittest.TestCase):
                 "final_free_reserve_bytes=81920\n"
                 "state_config_regular_file_reserve_bytes=16384\n"
                 "external_regular_file_reserve_bytes=4096\n"
-                "transient_regular_file_cap_bytes=262144\n"
-                "transient_final_free_reserve_bytes=57344\n",
+                "maintenance_regular_file_cap_bytes=180224\n"
+                "maintenance_final_free_reserve_bytes=57344\n",
                 encoding="utf-8",
             )
             (stage / "migration.contract").write_text(
@@ -702,6 +725,8 @@ class HostBuilderTests(unittest.TestCase):
                 "FAKE_FREE_KB": "124",
                 "FAKE_DROPBEAR_KB": "59",
             }
+            run.mkdir(parents=True, exist_ok=True)
+            (run / "running").write_text("A\n", encoding="utf-8")
             fault_points = (
                 ("JOOAN_FAIL_AFTER_STATE", "expanded-product-0.1-validated"),
                 ("JOOAN_FAIL_AFTER_STATE", "keys-preserved"),
@@ -717,6 +742,9 @@ class HostBuilderTests(unittest.TestCase):
                 ("JOOAN_FAIL_AT", "after-controller-copy"),
                 ("JOOAN_FAIL_AT", "after-controller-rename"),
                 ("JOOAN_FAIL_AFTER_STATE", "controller-published"),
+                ("JOOAN_FAIL_AT", "after-recovery-copy"),
+                ("JOOAN_FAIL_AT", "after-recovery-old-rename"),
+                ("JOOAN_FAIL_AT", "after-recovery-rename"),
                 ("JOOAN_FAIL_AT", "after-hook-rename"),
                 ("JOOAN_FAIL_AFTER_STATE", "failclosed-hook-published"),
                 ("JOOAN_FAIL_AFTER_STATE", "activated"),
@@ -724,7 +752,11 @@ class HostBuilderTests(unittest.TestCase):
                 ("JOOAN_FAIL_AT", "after-retire-admin"),
                 ("JOOAN_FAIL_AT", "after-retire-shared"),
                 ("JOOAN_FAIL_AFTER_STATE", "expanded-controller-retired"),
+                ("JOOAN_FAIL_AT", "after-recovery-selection"),
+                ("JOOAN_FAIL_AT", "after-runtime-delete"),
                 ("JOOAN_FAIL_AT", "after-runtime-copy"),
+                ("JOOAN_FAIL_AT", "after-runtime-dir-rename"),
+                ("JOOAN_FAIL_AT", "after-pending-selection-rename"),
                 ("JOOAN_FAIL_AFTER_STATE", "runtime-staged"),
                 ("JOOAN_FAIL_AFTER_STATE", "legacy-retired"),
                 ("JOOAN_FAIL_AFTER_STATE", "release-sequence-published"),
@@ -733,7 +765,7 @@ class HostBuilderTests(unittest.TestCase):
                 if variable == "LOW_FREE":
                     fault = subprocess.run(
                         [str(upgrade)],
-                        env=environment | {"FAKE_FREE_KB": "56"},
+                        env=environment | {"FAKE_FREE_KB": "20"},
                         capture_output=True,
                     )
                     self.assertNotEqual(fault.returncode, 0, point)
@@ -754,16 +786,107 @@ class HostBuilderTests(unittest.TestCase):
             resumed = subprocess.run(
                 [str(upgrade)], env=environment, text=True, capture_output=True
             )
-            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+            self.assertEqual(
+                resumed.returncode,
+                0,
+                resumed.stderr
+                + f" state={(persistent / 'state/migration-state').read_text()!r}"
+                + f" selection={(persistent / 'state/selection').read_text()!r}",
+            )
             self.assertFalse((persistent / "boot").exists())
             self.assertTrue((persistent / "controller.tar.gz").is_file())
-            self.assertTrue((persistent / "slots/A/runtime.md5").is_file())
+            self.assertFalse((persistent / "slots/A").exists())
             self.assertTrue((persistent / "slots/B/runtime.tar.gz").is_file())
+            self.assertFalse((persistent / "recovery.old").exists())
+            self.assertFalse((persistent / "recovery.new").exists())
+            self.assertEqual((persistent / "state/selection").read_text(), "- B 0\n")
             self.assertIn("/opt/custom/jooan-local", activate.read_text())
             self.assertEqual((persistent / "state/release-sequence").read_text(), "2\n")
             self.assertEqual(
                 (persistent / "config/ssh/passwd").read_text(), "admin:!\n"
             )
+
+            # Exact observed partial state: expanded files already retired,
+            # old 90 KiB controller + old A runtime, 108 KiB free, no recovery.
+            partial = sandbox / "partial-root"
+            partial_run = sandbox / "partial-run"
+            partial_activate = sandbox / "partial-local.rc"
+            for directory in (
+                partial / "state", partial / "config/ssh", partial / "slots/A"
+            ):
+                directory.mkdir(parents=True, exist_ok=True)
+            old_controller_tree = sandbox / "old-controller-tree"
+            old_controller_tree.mkdir()
+            old_controller_random = b"".join(
+                hashlib.sha256(f"old-controller-{counter}".encode()).digest()
+                for counter in range(3000)
+            )[:90000]
+            (old_controller_tree / "old.bin").write_bytes(old_controller_random)
+            subprocess.run(
+                [
+                    "tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0",
+                    "--numeric-owner", "-C", str(old_controller_tree), "-czf",
+                    str(partial / "controller.tar.gz"), ".",
+                ],
+                check=True,
+            )
+            self.assertGreater((partial / "controller.tar.gz").stat().st_size, 85 * 1024)
+            (partial / "local.rc").write_text(
+                "#!/bin/sh\nJL_ROOT=/opt/custom/jooan-local\n", encoding="utf-8"
+            )
+            partial_activate.write_text(
+                "#!/bin/sh\nJL_ROOT=/opt/custom/jooan-local\n", encoding="utf-8"
+            )
+            (partial / "state/migration-state").write_text(
+                "expanded-controller-retired\n", encoding="utf-8"
+            )
+            (partial / "state/selection").write_text("A - 0\n", encoding="utf-8")
+            (partial / "state/controller.ready").write_text("1\n", encoding="utf-8")
+            (partial / "config/auth.db").write_text("customized\n", encoding="utf-8")
+            (partial / "config/ssh/authorized_keys").write_text(
+                "ssh-ed25519 AAAATEST recovery\n", encoding="utf-8"
+            )
+            (partial / "config/ssh/passwd").write_text("admin:!\n", encoding="utf-8")
+            (partial / "slots/A/runtime.tar.gz").write_bytes(b"old-stable-runtime")
+            (partial / "slots/A/runtime.md5").write_text(
+                legacy_md5(b"old-stable-runtime").decode() + "\n", encoding="utf-8"
+            )
+            partial_environment = environment | {
+                "JOOAN_ROOT": str(partial),
+                "JOOAN_RUN": str(partial_run),
+                "JOOAN_ACTIVATE": str(partial_activate),
+                "FAKE_FREE_KB": "108",
+                "FAKE_DROPBEAR_KB": "0",
+                "FAKE_OLD_CORE_KB": "60",
+            }
+            partial_run.mkdir(parents=True, exist_ok=True)
+            (partial_run / "running").write_text("A\n", encoding="utf-8")
+            partial_result = subprocess.run(
+                [str(upgrade)], env=partial_environment, text=True, capture_output=True
+            )
+            self.assertEqual(partial_result.returncode, 0, partial_result.stderr)
+            self.assertLess((partial / "controller.tar.gz").stat().st_size, 35 * 1024)
+            self.assertTrue((partial / "recovery/dropbear.tar.gz").is_file())
+            self.assertFalse((partial / "recovery.old").exists())
+            self.assertFalse((partial / "recovery.new").exists())
+            self.assertFalse((partial / "slots/A").exists())
+            self.assertTrue((partial / "slots/B/runtime.tar.gz").is_file())
+            self.assertEqual((partial / "state/selection").read_text(), "- B 0\n")
+
+    def test_runtime_installer_resumes_matching_pending_archive(self) -> None:
+        source = (REPOSITORY / "runtime/admin/install-runtime.sh").read_text()
+        pending = source.index('if [ "$JL_PENDING" != - ]')
+        destructive = source.index('jl_write_selection - - 0')
+        self.assertLess(pending, destructive)
+        self.assertIn("pending runtime $JL_PENDING already matches authenticated stage", source)
+        self.assertIn('"$JOOAN_SHA256" "$jl_existing/runtime.tar.gz"', source)
+        for point in (
+            "after-recovery-selection",
+            "after-runtime-delete",
+            "after-runtime-dir-rename",
+            "after-pending-selection-rename",
+        ):
+            self.assertIn(point, source)
 
     def test_stage_requires_executable_upgrade_script(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

@@ -69,7 +69,7 @@
   "artifact_contracts": {
     "install": {
       "rollback_artifact": "JOOAN_UNINSTALL",
-      "semantics": "transactional-install-with-transient-trial-rollback"
+      "semantics": "signed-single-runtime-maintenance-with-ssh-recovery"
     },
     "uninstall": {
       "rollback_artifact": "none",
@@ -111,6 +111,8 @@
     "layout": [
       "local.rc",
       "controller.tar.gz",
+      "recovery/dropbear.tar.gz",
+      "recovery/dropbear.md5",
       "slots/stable/runtime.tar.gz",
       "slots/stable/runtime.md5",
       "state/",
@@ -119,8 +121,8 @@
     "logical_regular_file_cap_bytes": 180224,
     "root": "/opt/custom/jooan-local",
     "state_config_regular_file_reserve_bytes": 16384,
-    "transient_final_free_reserve_bytes": 57344,
-    "transient_regular_file_cap_bytes": 262144
+    "maintenance_final_free_reserve_bytes": 57344,
+    "maintenance_regular_file_cap_bytes": 180224
   },
   "release_authenticity": {
     "algorithm": "ecdsa-p256-sha256-rfc6979",

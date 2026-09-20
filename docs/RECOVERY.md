@@ -41,10 +41,12 @@ the reviewed uninstall manifest explicitly says otherwise. If the camera cannot
 authenticate, cannot validate the package, or repeatedly reboots, stop trying
 network updates and use external recovery.
 
-Automatic A/B fallback is transient: the stable runtime remains while one
-candidate is tried, failure durably restores the stable selection, and the
-failed candidate is pruned. Successful promotion likewise prunes the superseded
-slot, leaving exactly one stable runtime. Signed uninstall is destructive
+Runtime replacement is a maintenance transaction: the signed controller and SSH
+recovery bundle remain available while the sole persistent runtime is replaced.
+If the candidate cannot boot or pass health, it is removed and selection returns
+to no runtime; recover through controller-owned SSH and retry or uninstall. The
+old runtime may continue from tmpfs until the update reboot, but it is not an
+on-flash rollback slot. Signed uninstall is destructive
 removal, not restoration of predecessor state. It removes HTTPS, route pruning,
 the process guard, project SSH, and the compressed controller/runtime; the next
 boot returns to OEM/GoAhead behavior. It does not restore the old

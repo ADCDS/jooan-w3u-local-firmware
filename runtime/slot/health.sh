@@ -6,7 +6,7 @@ case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
 [ -d "/proc/$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = joan-daemon ] || exit 1
 netstat -lnt 2>/dev/null | grep -q ':443[[:space:]]' || exit 1
 # Audio is a release feature, not an optional best-effort sidecar. Qualify the
-# router and both local IPC directions before an A/B trial can be promoted.
+# router and both local IPC directions before a maintenance candidate is promoted.
 audio_pid=$(cat "$JL_RUN/audio-router.pid")
 case "$audio_pid" in ''|*[!0-9]*) exit 1 ;; esac
 [ -d "/proc/$audio_pid" ] &&

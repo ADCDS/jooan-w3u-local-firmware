@@ -57,8 +57,8 @@ def persistent(target: dict[str, object]) -> str:
         f"final_free_reserve_bytes={int(contract['final_free_reserve_bytes'])}",
         f"state_config_regular_file_reserve_bytes={int(contract['state_config_regular_file_reserve_bytes'])}",
         f"external_regular_file_reserve_bytes={int(contract['external_regular_file_reserve_bytes'])}",
-        f"transient_regular_file_cap_bytes={int(contract['transient_regular_file_cap_bytes'])}",
-        f"transient_final_free_reserve_bytes={int(contract['transient_final_free_reserve_bytes'])}",
+        f"maintenance_regular_file_cap_bytes={int(contract['maintenance_regular_file_cap_bytes'])}",
+        f"maintenance_final_free_reserve_bytes={int(contract['maintenance_final_free_reserve_bytes'])}",
     ]
     lines.extend(f"layout={item}" for item in layout)
     return "\n".join(lines) + "\n"

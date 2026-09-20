@@ -78,10 +78,10 @@ jl_check_storage
 jl_tree_bytes() { printf '%s\n' 180225; }
 if jl_check_storage 2>/dev/null; then exit 1; fi
 jl_wait_free_kb() { [ "$2" = 56 ]; }
-jl_tree_bytes() { printf '%s\n' 262144; }
-jl_check_transient_storage
-jl_tree_bytes() { printf '%s\n' 262145; }
-if jl_check_transient_storage 2>/dev/null; then exit 1; fi
+jl_tree_bytes() { printf '%s\n' 180224; }
+jl_check_maintenance_storage
+jl_tree_bytes() { printf '%s\n' 180225; }
+if jl_check_maintenance_storage 2>/dev/null; then exit 1; fi
 
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
 mkdir -p "$JL_ROOT/slots/A" "$JL_ROOT/slots/B"
@@ -97,4 +97,4 @@ for script in "$repo"/runtime/boot/*.sh "$repo"/runtime/boot/local.rc \
     "$repo"/runtime/admin/*.sh "$repo"/runtime/slot/*.sh "$repo"/runtime/slot/hooks/*.sh; do
     sh -n "$script"
 done
-printf '%s\n' 'PASS: DNS filtering, routes, locked recovery account, transient trial state/pruning, MD5 corruption checks, storage boundaries, shell syntax'
+printf '%s\n' 'PASS: DNS filtering, routes, locked recovery account, single-runtime maintenance/pruning, MD5 corruption checks, storage boundaries, shell syntax'
