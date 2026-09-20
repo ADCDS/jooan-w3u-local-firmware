@@ -45,6 +45,10 @@ export class Fmp4Player {
 
   async fetch(url) {
     const response = await window.fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent('joan-auth-required'));
+      throw new Error('authentication required');
+    }
     if (!response.ok) throw new Error(`video HTTP ${response.status}`);
     return {
       bytes: await response.arrayBuffer(),
