@@ -8,6 +8,46 @@
       "expected": {"decision": "allow", "reason": "loopback"}
     },
     {
+      "id": "confine-oem-bind-to-loopback",
+      "input": {"direction": "bind", "family": "ipv4", "protocol": "tcp", "source": "0.0.0.0", "port": 80},
+      "expected": {"decision": "rewrite", "reason": "listener-confinement", "source": "127.0.0.1", "port": 80}
+    },
+    {
+      "id": "allow-external-rtsp-bind",
+      "input": {"direction": "bind", "family": "ipv4", "protocol": "tcp", "source": "0.0.0.0", "port": 554},
+      "expected": {"decision": "allow", "reason": "product-rtsp-contract", "source": "0.0.0.0", "port": 554}
+    },
+    {
+      "id": "confine-oem-p2p-bind",
+      "input": {"direction": "bind", "family": "ipv4", "protocol": "tcp", "source": "0.0.0.0", "port": 8899},
+      "expected": {"decision": "rewrite", "reason": "listener-confinement", "source": "127.0.0.1", "port": 8899}
+    },
+    {
+      "id": "redirect-approved-mqtt",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "hostname": "use1mqtt01.jooaniot.com", "destination": "127.0.0.2", "port": 443, "state": "new"},
+      "expected": {"decision": "rewrite", "reason": "approved-local-bridge", "destination": "127.0.0.1", "port": 1883}
+    },
+    {
+      "id": "redirect-approved-api",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "hostname": "use1api.jooaniot.com", "destination": "127.0.0.3", "port": 443, "state": "new"},
+      "expected": {"decision": "rewrite", "reason": "approved-local-bridge", "destination": "127.0.0.1", "port": 443}
+    },
+    {
+      "id": "allow-established-rtsp-reply",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "source": "127.0.0.1", "source_port": 554, "destination": "10.42.0.1", "port": 49152, "state": "established"},
+      "expected": {"decision": "allow", "reason": "approved-listener-reply"}
+    },
+    {
+      "id": "deny-connected-write-external",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "source": "127.0.0.1", "source_port": 40000, "destination": "192.0.2.1", "port": 443, "state": "established", "api": "writev"},
+      "expected": {"decision": "deny", "reason": "nonlocal-egress"}
+    },
+    {
+      "id": "deny-direct-syscall-sendmmsg",
+      "input": {"direction": "out", "family": "ipv4", "protocol": "udp", "interface": "wlan0", "destination": "198.51.100.1", "port": 443, "api": "raw-sendmmsg-syscall"},
+      "expected": {"decision": "deny", "reason": "kernel-no-default-route", "enforcement": "kernel-or-router"}
+    },
+    {
       "id": "allow-wired-bench-ssh-reply",
       "input": {"direction": "out", "family": "ipv4", "protocol": "tcp", "interface": "eth0", "source": "172.16.1.18", "destination": "172.16.1.1", "port": 49152, "state": "established"},
       "expected": {"decision": "allow", "reason": "established-local"}

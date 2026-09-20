@@ -77,6 +77,14 @@ int jooan_guard_sockaddr_is_loopback(const struct sockaddr *address,
     if (address->sa_family == AF_NETLINK)
         return 1;
 #endif
+#ifdef AF_ALG
+    if (address->sa_family == AF_ALG)
+        return 1;
+#endif
+#ifdef AF_BLUETOOTH
+    if (address->sa_family == AF_BLUETOOTH)
+        return 1;
+#endif
     if (address->sa_family == AF_INET) {
         if (address_length < (socklen_t)sizeof(*address4))
             return 0;
@@ -90,6 +98,17 @@ int jooan_guard_sockaddr_is_loopback(const struct sockaddr *address,
         return IN6_IS_ADDR_LOOPBACK(&address6->sin6_addr);
     }
     return 0;
+}
+
+int jooan_guard_listener_reply_port_allowed(uint16_t port)
+{
+    return port == 554U || port == 8899U || port == 9898U || port == 24569U;
+}
+
+int jooan_guard_listener_bind_external_allowed(uint16_t port,
+                                                int socket_type)
+{
+    return port == 554U && socket_type == SOCK_STREAM;
 }
 
 int16_t jooan_guard_alaw_to_pcm16(uint8_t value)

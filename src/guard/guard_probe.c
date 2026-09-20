@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,9 +32,16 @@ static int policy_probe(void)
     int listener = -1;
     int client = -1;
     int datagram = -1;
+    int mqtt_listener = -1;
+    int mqtt_client = -1;
+    int mqtt_accepted = -1;
+    int api_listener = -1;
+    int api_client = -1;
+    int api_accepted = -1;
     int local_pair[2] = { -1, -1 };
     struct iovec vector;
     struct msghdr message;
+    char mqtt_port[16];
     int rc = 1;
 
     if (getaddrinfo(JOOAN_GUARD_API_HOST, "443", NULL, &result) != 0 ||
@@ -51,11 +59,57 @@ static int policy_probe(void)
         goto done;
     memset(&local, 0, sizeof(local));
     local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(listener, (struct sockaddr *)&local, sizeof(local)) != 0 ||
         listen(listener, 1) != 0 ||
         getsockname(listener, (struct sockaddr *)&local, &local_length) != 0 ||
+        local.sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
         connect(client, (struct sockaddr *)&local, sizeof(local)) != 0)
+        goto done;
+
+    mqtt_listener = socket(AF_INET, SOCK_STREAM, 0);
+    mqtt_client = socket(AF_INET, SOCK_STREAM, 0);
+    if (mqtt_listener < 0 || mqtt_client < 0)
+        goto done;
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_port = 0;
+    local_length = sizeof(local);
+    if (bind(mqtt_listener, (struct sockaddr *)&local, sizeof(local)) != 0 ||
+        listen(mqtt_listener, 1) != 0 ||
+        getsockname(mqtt_listener, (struct sockaddr *)&local,
+                    &local_length) != 0 ||
+        snprintf(mqtt_port, sizeof(mqtt_port), "%u",
+                 (unsigned)ntohs(local.sin_port)) <= 0 ||
+        setenv("JOOAN_GUARD_TEST_MQTT_PORT", mqtt_port, 1) != 0)
+        goto done;
+    local.sin_addr.s_addr = htonl(0x7f000002UL);
+    local.sin_port = htons(443);
+    if (connect(mqtt_client, (struct sockaddr *)&local, sizeof(local)) != 0)
+        goto done;
+    mqtt_accepted = accept(mqtt_listener, NULL, NULL);
+    if (mqtt_accepted < 0)
+        goto done;
+
+    api_listener = socket(AF_INET, SOCK_STREAM, 0);
+    api_client = socket(AF_INET, SOCK_STREAM, 0);
+    if (api_listener < 0 || api_client < 0)
+        goto done;
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_port = 0;
+    local_length = sizeof(local);
+    if (bind(api_listener, (struct sockaddr *)&local, sizeof(local)) != 0 ||
+        listen(api_listener, 1) != 0 ||
+        getsockname(api_listener, (struct sockaddr *)&local, &local_length) != 0)
+        goto done;
+    local.sin_addr.s_addr = htonl(0x7f000003UL);
+    if (connect(api_client, (struct sockaddr *)&local, sizeof(local)) != 0)
+        goto done;
+    api_accepted = accept(api_listener, NULL, NULL);
+    if (api_accepted < 0)
         goto done;
 
     memset(&blocked, 0, sizeof(blocked));
@@ -84,6 +138,17 @@ static int policy_probe(void)
     if (sendmsg(datagram, &message, 0) != -1 || errno != EACCES)
         goto done;
 
+#ifndef __UCLIBC__
+    {
+        struct mmsghdr batch;
+        memset(&batch, 0, sizeof(batch));
+        batch.msg_hdr = message;
+        errno = 0;
+        if (sendmmsg(datagram, &batch, 1, 0) != -1 || errno != EACCES)
+            goto done;
+    }
+#endif
+
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, local_pair) != 0 ||
         send(local_pair[0], "x", 1, 0) != 1)
         goto done;
@@ -102,6 +167,18 @@ done:
         close(local_pair[0]);
     if (local_pair[1] >= 0)
         close(local_pair[1]);
+    if (mqtt_accepted >= 0)
+        close(mqtt_accepted);
+    if (mqtt_client >= 0)
+        close(mqtt_client);
+    if (mqtt_listener >= 0)
+        close(mqtt_listener);
+    if (api_accepted >= 0)
+        close(api_accepted);
+    if (api_client >= 0)
+        close(api_client);
+    if (api_listener >= 0)
+        close(api_listener);
     return rc;
 }
 
@@ -142,6 +219,7 @@ static int talkback_probe(void)
     int reader = -1;
     int attempt;
     int rc = 1;
+    int alias;
 
     if (dsp_path == NULL || socket_path == NULL)
         return 1;
@@ -149,10 +227,27 @@ static int talkback_probe(void)
     sender = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (dsp < 0 || sender < 0)
         goto done;
+    alias = dup(dsp);
+    if (alias < 0 || close(dsp) != 0)
+        goto done;
+    dsp = alias;
+    alias = fcntl(dsp, F_DUPFD, 100);
+    if (alias < 0 || close(dsp) != 0)
+        goto done;
+    dsp = alias;
+    alias = dup2(dsp, 500);
+    if (alias != 500 || close(dsp) != 0)
+        goto done;
+    dsp = alias;
+    if (fcntl(dsp, F_GETFD) < 0)
+        goto done;
     if (vfork_close_probe(dsp) != 0)
         goto done;
     errno = 0;
     if (ioctl(dsp, 0x40085063UL, NULL) != -1 || errno != ENOTTY)
+        goto done;
+    errno = 0;
+    if (ioctl(dsp, 0x40045060UL) != -1 || errno != ENOTTY)
         goto done;
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
@@ -289,6 +384,20 @@ static int receive_mic_frame(int socket_descriptor, uint32_t sequence,
     return 0;
 }
 
+struct microphone_race {
+    int descriptor;
+    unsigned char buffer[JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U];
+    ssize_t result;
+};
+
+static void *microphone_race_read(void *opaque)
+{
+    struct microphone_race *race = opaque;
+
+    race->result = read(race->descriptor, race->buffer, sizeof(race->buffer));
+    return NULL;
+}
+
 static int microphone_probe(void)
 {
     const char *dsp_path = getenv("JOOAN_GUARD_TEST_DSP_PATH");
@@ -303,6 +412,9 @@ static int microphone_probe(void)
     struct sockaddr_un address;
     struct iovec vectors[2];
     struct jooan_guard_mic_stream_request stream_request;
+    struct microphone_race race;
+    struct pollfd no_frame;
+    pthread_t race_thread;
     size_t index;
     size_t path_length;
     ssize_t amount;
@@ -310,6 +422,7 @@ static int microphone_probe(void)
     int writer = -1;
     int reader = -1;
     int rc = 1;
+    int alias;
 
     if (dsp_path == NULL || socket_path == NULL)
         return 1;
@@ -345,6 +458,10 @@ static int microphone_probe(void)
     reader = open(dsp_path, O_RDONLY);
     if (reader < 0 || vfork_close_probe(reader) != 0)
         goto done;
+    alias = dup2(reader, 501);
+    if (alias != 501 || close(reader) != 0)
+        goto done;
+    reader = alias;
     if (read(reader, first, sizeof(first)) != (ssize_t)sizeof(first) ||
         read(reader, second, sizeof(second)) != (ssize_t)sizeof(second) ||
         receive_mic_frame(listener, 1, samples) != 0)
@@ -367,13 +484,50 @@ static int microphone_probe(void)
         receive_mic_frame(listener, 3, samples) != 0)
         goto done;
 
+    /* Force close/reopen after the OEM read returns but before the tap phase.
+     * Generation validation must discard the stale buffer even when the new
+     * open reuses the same integer descriptor. */
+    if (lseek(reader, 0, SEEK_SET) != 0 ||
+        setenv("JOOAN_GUARD_TEST_MIC_PAUSE", "1", 1) != 0)
+        goto done;
+    memset(&race, 0, sizeof(race));
+    race.descriptor = reader;
+    if (pthread_create(&race_thread, NULL, microphone_race_read, &race) != 0)
+        goto done;
+    usleep(20000);
+    if (close(reader) != 0) {
+        (void)pthread_join(race_thread, NULL);
+        reader = -1;
+        goto done;
+    }
+    reader = open(dsp_path, O_RDONLY);
+    if (pthread_join(race_thread, NULL) != 0 ||
+        race.result != (ssize_t)sizeof(race.buffer) || reader < 0 ||
+        unsetenv("JOOAN_GUARD_TEST_MIC_PAUSE") != 0)
+        goto done;
+    no_frame.fd = listener;
+    no_frame.events = POLLIN;
+    no_frame.revents = 0;
+    if (poll(&no_frame, 1, 150) != 0)
+        goto done;
+
+    /* Saturate the Unix datagram queue. Every OEM read must still complete;
+     * the guard drops excess frames through MSG_DONTWAIT/EAGAIN. */
+    for (index = 0; index < 128; ++index) {
+        if (lseek(reader, 0, SEEK_SET) != 0 ||
+            read(reader, pcm_bytes, JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U) !=
+                (ssize_t)(JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U))
+            goto done;
+    }
+
     /* With the listener gone, capture remains successful and the datagram is
      * simply dropped by the nonblocking sender. */
     close(listener);
     listener = -1;
+    errno = EDOM;
     if (unlink(socket_path) != 0 || lseek(reader, 0, SEEK_SET) != 0 ||
         read(reader, pcm_bytes, JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U) !=
-            (ssize_t)(JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U))
+            (ssize_t)(JOOAN_AUDIO_MIC_PAYLOAD_SIZE * 2U) || errno != EDOM)
         goto done;
     if (ioctl(reader, JOOAN_GUARD_MIC_STREAM_IOCTL, &stream_request) != 0)
         goto done;
