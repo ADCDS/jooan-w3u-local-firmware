@@ -19,8 +19,9 @@ killall goahead 2>/dev/null || :
 
 if [ -x "$JL_SLOT_DIR/bin/audio-router" ]; then
     "$JL_SLOT_DIR/bin/audio-router" \
-        "$JL_RUN/audio-ws.sock" "$JL_RUN/mic.sock" \
-        /tmp/jooan-guard-talkback.sock \
+        --ws-socket "$JL_RUN/audio-ws.sock" \
+        --mic-socket "$JL_RUN/mic.sock" \
+        --guard-socket /tmp/jooan-guard-talkback.sock \
         >"$JL_RUN/audio-router.log" 2>&1 &
     echo $! > "$JL_RUN/audio-router.pid"
 fi

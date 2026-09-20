@@ -6,6 +6,9 @@ for name in daemon audio-router; do
     [ -f "$file" ] || continue
     pid=$(cat "$file" 2>/dev/null || :)
     case "$pid" in ''|*[!0-9]*) continue ;; esac
+    expected=$name
+    [ "$name" != daemon ] || expected=joan-daemon
+    [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$expected" ] || continue
     kill -TERM "$pid" 2>/dev/null || :
 done
 sleep 1
@@ -14,6 +17,9 @@ for name in daemon audio-router; do
     [ -f "$file" ] || continue
     pid=$(cat "$file" 2>/dev/null || :)
     case "$pid" in ''|*[!0-9]*) continue ;; esac
+    expected=$name
+    [ "$name" != daemon ] || expected=joan-daemon
+    [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$expected" ] || continue
     kill -KILL "$pid" 2>/dev/null || :
 done
 exit 0
