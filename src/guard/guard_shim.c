@@ -23,6 +23,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <sys/sendfile.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -33,15 +34,26 @@
 #define TALKBACK_PACKET_MAX (JOOAN_AUDIO_GUARD_HEADER_SIZE + 1024U)
 #define TALKBACK_POLL_MS 250
 #define TALKBACK_LEASE_MS 500U
+#define GUARD_TRACKED_FDS 1024
+#define FD_ROLE_DSP_WRITE 0x01U
+#define FD_ROLE_DSP_READ  0x02U
+
+#ifdef __UCLIBC__
+struct guard_mmsghdr {
+    struct msghdr msg_hdr;
+    unsigned int msg_len;
+};
+#else
+#define guard_mmsghdr mmsghdr
+#endif
 
 static int (*next_connect)(int, const struct sockaddr *, socklen_t);
+static int (*next_bind)(int, const struct sockaddr *, socklen_t);
 static ssize_t (*next_sendto)(int, const void *, size_t, int,
                               const struct sockaddr *, socklen_t);
 static ssize_t (*next_send)(int, const void *, size_t, int);
 static ssize_t (*next_sendmsg)(int, const struct msghdr *, int);
-#ifndef __UCLIBC__
-static int (*next_sendmmsg)(int, struct mmsghdr *, unsigned int, int);
-#endif
+static int (*next_sendmmsg)(int, struct guard_mmsghdr *, unsigned int, int);
 static int (*next_getaddrinfo)(const char *, const char *,
                               const struct addrinfo *, struct addrinfo **);
 static struct hostent *(*next_gethostbyname)(const char *);
@@ -54,11 +66,19 @@ static int (*next_open)(const char *, int, ...);
 static int (*next_open64)(const char *, int, ...);
 static int (*next_close)(int);
 static ssize_t (*next_write)(int, const void *, size_t);
+static ssize_t (*next_writev)(int, const struct iovec *, int);
+static ssize_t (*next_sendfile64)(int, int, off64_t *, size_t);
 static ssize_t (*next_read)(int, void *, size_t);
 static ssize_t (*next_readv)(int, const struct iovec *, int);
 static int (*next_ioctl)(int, unsigned long, ...);
 static int (*next_getpeername)(int, struct sockaddr *, socklen_t *);
 static int (*next_getsockname)(int, struct sockaddr *, socklen_t *);
+static int (*next_getsockopt)(int, int, int, void *, socklen_t *);
+static int (*next_dup)(int);
+static int (*next_dup2)(int, int);
+static int (*next_dup3)(int, int, int);
+static int (*next_fcntl)(int, int, ...);
+static long (*next_syscall)(long, long, long, long, long, long, long);
 
 static int guard_active;
 static pid_t guard_owner_pid = -1;
@@ -82,6 +102,7 @@ static int mic_has_low_byte;
 static int mic_gap;
 static uint32_t mic_sequence;
 static uint32_t mic_generation;
+static unsigned char fd_roles[GUARD_TRACKED_FDS];
 
 static pid_t current_process_id(void)
 {
@@ -93,16 +114,132 @@ static int guard_applies(void)
     return guard_active && current_process_id() == guard_owner_pid;
 }
 
+static unsigned int fd_role_load(int descriptor)
+{
+    if (descriptor < 0 || descriptor >= GUARD_TRACKED_FDS)
+        return 0;
+    return __atomic_load_n(&fd_roles[descriptor], __ATOMIC_ACQUIRE);
+}
+
+static int find_role_fd(unsigned int role, int excluded)
+{
+    int descriptor;
+
+    for (descriptor = 0; descriptor < GUARD_TRACKED_FDS; ++descriptor) {
+        if (descriptor != excluded && (fd_role_load(descriptor) & role) != 0)
+            return descriptor;
+    }
+    return -1;
+}
+
+static void reset_microphone_state_locked(void)
+{
+    mic_payload_length = 0;
+    mic_has_low_byte = 0;
+    __atomic_store_n(&mic_gap, 0, __ATOMIC_RELEASE);
+}
+
+static void track_fresh_dsp_fd(int descriptor, unsigned int role)
+{
+    unsigned int previous;
+
+    if (descriptor < 0 || descriptor >= GUARD_TRACKED_FDS)
+        return;
+    previous = __atomic_exchange_n(&fd_roles[descriptor], (unsigned char)role,
+                                   __ATOMIC_ACQ_REL);
+    pthread_mutex_lock(&dsp_lock);
+    if ((role & FD_ROLE_DSP_WRITE) != 0)
+        dsp_descriptor = descriptor;
+    else if ((previous & FD_ROLE_DSP_WRITE) != 0 && dsp_descriptor == descriptor)
+        dsp_descriptor = find_role_fd(FD_ROLE_DSP_WRITE, descriptor);
+    pthread_mutex_unlock(&dsp_lock);
+
+    pthread_mutex_lock(&mic_lock);
+    if ((role & FD_ROLE_DSP_READ) != 0) {
+        __atomic_store_n(&mic_descriptor, descriptor, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
+        reset_microphone_state_locked();
+    } else if ((previous & FD_ROLE_DSP_READ) != 0 &&
+               __atomic_load_n(&mic_descriptor, __ATOMIC_RELAXED) == descriptor) {
+        __atomic_store_n(&mic_descriptor,
+                         find_role_fd(FD_ROLE_DSP_READ, descriptor),
+                         __ATOMIC_RELEASE);
+        if (__atomic_load_n(&mic_descriptor, __ATOMIC_RELAXED) < 0) {
+            __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
+            reset_microphone_state_locked();
+        }
+    }
+    pthread_mutex_unlock(&mic_lock);
+}
+
+static unsigned int untrack_fd(int descriptor)
+{
+    unsigned int roles;
+    int replacement;
+
+    if (descriptor < 0 || descriptor >= GUARD_TRACKED_FDS)
+        return 0;
+    roles = __atomic_exchange_n(&fd_roles[descriptor], 0, __ATOMIC_ACQ_REL);
+    if ((roles & FD_ROLE_DSP_WRITE) != 0) {
+        pthread_mutex_lock(&dsp_lock);
+        if (dsp_descriptor == descriptor)
+            dsp_descriptor = find_role_fd(FD_ROLE_DSP_WRITE, descriptor);
+        pthread_mutex_unlock(&dsp_lock);
+    }
+    if ((roles & FD_ROLE_DSP_READ) != 0) {
+        pthread_mutex_lock(&mic_lock);
+        if (__atomic_load_n(&mic_descriptor, __ATOMIC_RELAXED) == descriptor) {
+            replacement = find_role_fd(FD_ROLE_DSP_READ, descriptor);
+            __atomic_store_n(&mic_descriptor, replacement, __ATOMIC_RELEASE);
+            if (replacement < 0) {
+                __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
+                reset_microphone_state_locked();
+            }
+        }
+        pthread_mutex_unlock(&mic_lock);
+    }
+    return roles;
+}
+
+/* Caller holds mic_read_lock, dsp_lock and mic_lock in that order. */
+static void assign_duplicated_fd_locked(int destination, unsigned int roles,
+                                        unsigned int previous_roles)
+{
+    int replacement;
+
+    if (destination < 0 || destination >= GUARD_TRACKED_FDS)
+        return;
+    __atomic_store_n(&fd_roles[destination], (unsigned char)roles,
+                     __ATOMIC_RELEASE);
+    if ((roles & FD_ROLE_DSP_WRITE) != 0)
+        dsp_descriptor = destination;
+    else if ((previous_roles & FD_ROLE_DSP_WRITE) != 0 &&
+             dsp_descriptor == destination)
+        dsp_descriptor = find_role_fd(FD_ROLE_DSP_WRITE, destination);
+
+    if ((roles & FD_ROLE_DSP_READ) != 0) {
+        __atomic_store_n(&mic_descriptor, destination, __ATOMIC_RELEASE);
+    } else if ((previous_roles & FD_ROLE_DSP_READ) != 0 &&
+               __atomic_load_n(&mic_descriptor,
+                               __ATOMIC_RELAXED) == destination) {
+        replacement = find_role_fd(FD_ROLE_DSP_READ, destination);
+        __atomic_store_n(&mic_descriptor, replacement, __ATOMIC_RELEASE);
+        if (replacement < 0) {
+            __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
+            reset_microphone_state_locked();
+        }
+    }
+}
+
 static void resolve_symbols(void)
 {
 #define RESOLVE(name) *(void **)(&next_##name) = dlsym(RTLD_NEXT, #name)
     RESOLVE(connect);
+    RESOLVE(bind);
     RESOLVE(sendto);
     RESOLVE(send);
     RESOLVE(sendmsg);
-#ifndef __UCLIBC__
     RESOLVE(sendmmsg);
-#endif
     RESOLVE(getaddrinfo);
     RESOLVE(gethostbyname);
     RESOLVE(gethostbyname2);
@@ -112,11 +249,19 @@ static void resolve_symbols(void)
     RESOLVE(open64);
     RESOLVE(close);
     RESOLVE(write);
+    RESOLVE(writev);
+    RESOLVE(sendfile64);
     RESOLVE(read);
     RESOLVE(readv);
     RESOLVE(ioctl);
     RESOLVE(getpeername);
     RESOLVE(getsockname);
+    RESOLVE(getsockopt);
+    RESOLVE(dup);
+    RESOLVE(dup2);
+    RESOLVE(dup3);
+    RESOLVE(fcntl);
+    RESOLVE(syscall);
 #undef RESOLVE
 }
 
@@ -145,6 +290,18 @@ static int executable_is_supported(void)
 #endif
     return jooan_guard_sha256_file_hex(path, digest) == 0 &&
            strcmp(digest, JOOAN_GUARD_SUPPORTED_JOOANIPC_SHA256) == 0;
+}
+
+static int executable_is_named_jooanipc(void)
+{
+    char path[PATH_MAX];
+    const char *name;
+
+    if (executable_path(path) != 0)
+        return 0;
+    name = strrchr(path, '/');
+    name = name == NULL ? path : name + 1;
+    return strcmp(name, "jooanipc") == 0;
 }
 
 static const char *configured_dsp_path(void)
@@ -177,10 +334,30 @@ static const char *configured_mic_socket_path(void)
     return JOOAN_AUDIO_MIC_SOCKET_PATH;
 }
 
+static uint16_t configured_local_mqtt_port(void)
+{
+#ifdef GUARD_TESTING
+    const char *value = getenv("JOOAN_GUARD_TEST_MQTT_PORT");
+    char *end = NULL;
+    unsigned long port;
+
+    if (value != NULL && value[0] != '\0') {
+        port = strtoul(value, &end, 10);
+        if (end != value && *end == '\0' && port > 0 && port <= 65535UL)
+            return (uint16_t)port;
+    }
+#endif
+    return JOOAN_GUARD_LOCAL_MQTT_PORT;
+}
+
 static void disable_dsp_if_current(int descriptor)
 {
+    if (descriptor >= 0 && descriptor < GUARD_TRACKED_FDS)
+        (void)__atomic_fetch_and(&fd_roles[descriptor],
+                                 (unsigned char)~FD_ROLE_DSP_WRITE,
+                                 __ATOMIC_ACQ_REL);
     if (dsp_descriptor == descriptor)
-        dsp_descriptor = -1;
+        dsp_descriptor = find_role_fd(FD_ROLE_DSP_WRITE, descriptor);
 }
 
 static uint64_t monotonic_milliseconds(void)
@@ -308,15 +485,14 @@ static void microphone_feed_locked(const uint8_t *input, size_t length)
 
 static int microphone_try_begin(int descriptor, uint32_t generation)
 {
-    if (!guard_applies() ||
-        descriptor != __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE) ||
+    if (!guard_applies() || (fd_role_load(descriptor) & FD_ROLE_DSP_READ) == 0 ||
         generation != __atomic_load_n(&mic_generation, __ATOMIC_ACQUIRE))
         return 0;
     if (pthread_mutex_trylock(&mic_lock) != 0) {
         __atomic_store_n(&mic_gap, 1, __ATOMIC_RELEASE);
         return 0;
     }
-    if (descriptor != __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE) ||
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_READ) == 0 ||
         generation != __atomic_load_n(&mic_generation, __ATOMIC_ACQUIRE)) {
         pthread_mutex_unlock(&mic_lock);
         return 0;
@@ -329,14 +505,14 @@ static int microphone_capture_try_begin(int descriptor, uint32_t *generation)
     uint32_t observed;
 
     if (!guard_applies() || generation == NULL ||
-        descriptor != __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE))
+        (fd_role_load(descriptor) & FD_ROLE_DSP_READ) == 0)
         return 0;
     observed = __atomic_load_n(&mic_generation, __ATOMIC_ACQUIRE);
     if (pthread_mutex_trylock(&mic_read_lock) != 0) {
         __atomic_store_n(&mic_gap, 1, __ATOMIC_RELEASE);
         return 0;
     }
-    if (descriptor != __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE) ||
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_READ) == 0 ||
         observed != __atomic_load_n(&mic_generation, __ATOMIC_ACQUIRE)) {
         pthread_mutex_unlock(&mic_read_lock);
         return 0;
@@ -555,6 +731,8 @@ __attribute__((constructor)) static void guard_initialize(void)
 {
     resolve_symbols();
     guard_active = executable_is_supported();
+    if (!guard_active && executable_is_named_jooanipc())
+        _exit(126);
     if (guard_active && next_close != NULL && next_write != NULL) {
         guard_owner_pid = current_process_id();
         start_talkback();
@@ -586,6 +764,75 @@ static int deny_network(void)
     return -1;
 }
 
+int bind(int descriptor, const struct sockaddr *address, socklen_t length)
+{
+    struct sockaddr_in address4;
+    struct sockaddr_in6 address6;
+    socklen_t option_length;
+    int socket_type;
+    uint16_t port;
+
+    if (next_bind == NULL)
+        resolve_symbols();
+    if (next_bind == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (!guard_applies() || address == NULL)
+        return next_bind(descriptor, address, length);
+    if (length < (socklen_t)sizeof(address->sa_family))
+        return deny_network();
+    if (address->sa_family == AF_INET) {
+        if (length < (socklen_t)sizeof(address4))
+            return deny_network();
+        memcpy(&address4, address, sizeof(address4));
+        port = (uint16_t)((uint16_t)
+            ((const unsigned char *)&address4.sin_port)[0] << 8);
+        port = (uint16_t)(port |
+            ((const unsigned char *)&address4.sin_port)[1]);
+        option_length = sizeof(socket_type);
+        if (next_getsockopt != NULL &&
+            next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
+                            &option_length) == 0 &&
+            jooan_guard_listener_bind_external_allowed(port, socket_type))
+            return next_bind(descriptor, address, length);
+        address4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        return next_bind(descriptor, (const struct sockaddr *)&address4,
+                         sizeof(address4));
+    }
+    if (address->sa_family == AF_INET6) {
+        if (length < (socklen_t)sizeof(address6))
+            return deny_network();
+        memcpy(&address6, address, sizeof(address6));
+        port = (uint16_t)((uint16_t)
+            ((const unsigned char *)&address6.sin6_port)[0] << 8);
+        port = (uint16_t)(port |
+            ((const unsigned char *)&address6.sin6_port)[1]);
+        option_length = sizeof(socket_type);
+        if (next_getsockopt != NULL &&
+            next_getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type,
+                            &option_length) == 0 &&
+            jooan_guard_listener_bind_external_allowed(port, socket_type))
+            return next_bind(descriptor, address, length);
+        address6.sin6_addr = in6addr_loopback;
+        return next_bind(descriptor, (const struct sockaddr *)&address6,
+                         sizeof(address6));
+    }
+    if (address->sa_family != AF_UNIX
+#ifdef AF_NETLINK
+        && address->sa_family != AF_NETLINK
+#endif
+#ifdef AF_ALG
+        && address->sa_family != AF_ALG
+#endif
+#ifdef AF_BLUETOOTH
+        && address->sa_family != AF_BLUETOOTH
+#endif
+       )
+        return deny_network();
+    return next_bind(descriptor, address, length);
+}
+
 static int connected_socket_is_allowed(int descriptor);
 
 int connect(int descriptor, const struct sockaddr *address, socklen_t length)
@@ -605,11 +852,12 @@ int connect(int descriptor, const struct sockaddr *address, socklen_t length)
         address->sa_family == AF_INET) {
         memcpy(&redirected, address, sizeof(redirected));
         if (ntohl(redirected.sin_addr.s_addr) == 0x7f000002UL) {
+            uint16_t mqtt_port = configured_local_mqtt_port();
             redirected.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             ((unsigned char *)&redirected.sin_port)[0] =
-                (unsigned char)(JOOAN_GUARD_LOCAL_MQTT_PORT >> 8);
+                (unsigned char)(mqtt_port >> 8);
             ((unsigned char *)&redirected.sin_port)[1] =
-                (unsigned char)(JOOAN_GUARD_LOCAL_MQTT_PORT & 0xff);
+                (unsigned char)(mqtt_port & 0xff);
             return next_connect(descriptor, (const struct sockaddr *)&redirected,
                                 sizeof(redirected));
         }
@@ -663,7 +911,19 @@ static int connected_socket_is_allowed(int descriptor)
         ((struct sockaddr_in *)&local)->sin_port)[0] << 8);
     port=(uint16_t)(port | ((const unsigned char *)&
         ((struct sockaddr_in *)&local)->sin_port)[1]);
-    return port==554U || port==8899U || port==9898U || port==24569U;
+    return jooan_guard_listener_reply_port_allowed(port);
+}
+
+static int descriptor_has_disallowed_peer(int descriptor)
+{
+    struct sockaddr_storage peer;
+    socklen_t peer_length = sizeof(peer);
+
+    if (next_getpeername == NULL ||
+        next_getpeername(descriptor, (struct sockaddr *)&peer,
+                         &peer_length) != 0)
+        return 0;
+    return !connected_socket_is_allowed(descriptor);
 }
 
 ssize_t send(int descriptor, const void *buffer, size_t length, int flags)
@@ -704,9 +964,11 @@ ssize_t sendmsg(int descriptor, const struct msghdr *message, int flags)
     return next_sendmsg(descriptor, message, flags);
 }
 
-#ifndef __UCLIBC__
-int sendmmsg(int descriptor, struct mmsghdr *messages, unsigned int count,
-             int flags)
+int guard_export_sendmmsg(int descriptor, struct guard_mmsghdr *messages,
+                          unsigned int count, int flags) __asm__("sendmmsg");
+
+int guard_export_sendmmsg(int descriptor, struct guard_mmsghdr *messages,
+                          unsigned int count, int flags)
 {
     unsigned int index;
 
@@ -721,13 +983,48 @@ int sendmmsg(int descriptor, struct mmsghdr *messages, unsigned int count,
                 return deny_network();
         }
     }
-    if (next_sendmmsg == NULL) {
+    if (next_sendmmsg != NULL)
+        return next_sendmmsg(descriptor, messages, count, flags);
+#ifdef SYS_sendmmsg
+    return (int)syscall(SYS_sendmmsg, descriptor, messages, count, flags);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+long guard_export_syscall(long number, long argument1, long argument2,
+                          long argument3, long argument4, long argument5,
+                          long argument6) __asm__("syscall");
+
+long guard_export_syscall(long number, long argument1, long argument2,
+                          long argument3, long argument4, long argument5,
+                          long argument6)
+{
+    unsigned int index;
+    struct guard_mmsghdr *messages;
+
+    if (next_syscall == NULL)
+        resolve_symbols();
+    if (next_syscall == NULL) {
         errno = ENOSYS;
         return -1;
     }
-    return next_sendmmsg(descriptor, messages, count, flags);
-}
+#ifdef SYS_sendmmsg
+    if (number == SYS_sendmmsg && guard_applies()) {
+        messages = (struct guard_mmsghdr *)(uintptr_t)argument2;
+        if (messages == NULL || argument3 < 0 || argument3 > 1024)
+            return deny_network();
+        for (index = 0; index < (unsigned long)argument3; ++index) {
+            if (!message_destination_is_loopback((int)argument1,
+                                                 &messages[index].msg_hdr))
+                return deny_network();
+        }
+    }
 #endif
+    return next_syscall(number, argument1, argument2, argument3, argument4,
+                        argument5, argument6);
+}
 
 int getaddrinfo(const char *node, const char *service,
                 const struct addrinfo *hints, struct addrinfo **result)
@@ -878,19 +1175,10 @@ static int guarded_open(const char *path, int flags, mode_t mode, int use_mode,
     }
     if (guard_applies() && descriptor >= 0 &&
         strcmp(path, configured_dsp_path()) == 0) {
-        if ((flags & O_ACCMODE) == O_WRONLY) {
-            pthread_mutex_lock(&dsp_lock);
-            dsp_descriptor = descriptor;
-            pthread_mutex_unlock(&dsp_lock);
-        } else if ((flags & O_ACCMODE) == O_RDONLY) {
-            pthread_mutex_lock(&mic_lock);
-            __atomic_store_n(&mic_descriptor, descriptor, __ATOMIC_RELEASE);
-            __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
-            mic_payload_length = 0;
-            mic_has_low_byte = 0;
-            __atomic_store_n(&mic_gap, 0, __ATOMIC_RELEASE);
-            pthread_mutex_unlock(&mic_lock);
-        }
+        if ((flags & O_ACCMODE) == O_WRONLY)
+            track_fresh_dsp_fd(descriptor, FD_ROLE_DSP_WRITE);
+        else if ((flags & O_ACCMODE) == O_RDONLY)
+            track_fresh_dsp_fd(descriptor, FD_ROLE_DSP_READ);
     }
     return descriptor;
 }
@@ -930,6 +1218,176 @@ int guard_export_open64(const char *path, int flags, ...)
     return guarded_open(path, flags, mode, use_mode, 1);
 }
 
+int dup(int descriptor)
+{
+    unsigned int roles;
+    int result;
+
+    if (next_dup == NULL)
+        resolve_symbols();
+    if (next_dup == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (!guard_applies())
+        return next_dup(descriptor);
+    pthread_mutex_lock(&mic_read_lock);
+    pthread_mutex_lock(&dsp_lock);
+    pthread_mutex_lock(&mic_lock);
+    roles = fd_role_load(descriptor);
+    result = next_dup(descriptor);
+    if (result >= 0)
+        assign_duplicated_fd_locked(result, roles, fd_role_load(result));
+    pthread_mutex_unlock(&mic_lock);
+    pthread_mutex_unlock(&dsp_lock);
+    pthread_mutex_unlock(&mic_read_lock);
+    return result;
+}
+
+static int duplicate_to_tracked_fd(int descriptor, int destination,
+                                   int flags, int use_dup3)
+{
+    unsigned int source_roles;
+    unsigned int previous_roles;
+    int result;
+
+    if (descriptor == destination && !use_dup3)
+        return next_dup2(descriptor, destination);
+    pthread_mutex_lock(&mic_read_lock);
+    pthread_mutex_lock(&dsp_lock);
+    pthread_mutex_lock(&mic_lock);
+    source_roles = fd_role_load(descriptor);
+    previous_roles = fd_role_load(destination);
+    if (use_dup3) {
+        if (next_dup3 != NULL)
+            result = next_dup3(descriptor, destination, flags);
+#ifdef SYS_dup3
+        else if (next_syscall != NULL)
+            result = (int)next_syscall(SYS_dup3, descriptor, destination,
+                                       flags, 0, 0, 0);
+#endif
+        else {
+            errno = ENOSYS;
+            result = -1;
+        }
+    } else {
+        result = next_dup2(descriptor, destination);
+    }
+    if (result >= 0)
+        assign_duplicated_fd_locked(destination, source_roles, previous_roles);
+    pthread_mutex_unlock(&mic_lock);
+    pthread_mutex_unlock(&dsp_lock);
+    pthread_mutex_unlock(&mic_read_lock);
+    return result;
+}
+
+int dup2(int descriptor, int destination)
+{
+    int result;
+
+    if (next_dup2 == NULL)
+        resolve_symbols();
+    if (next_dup2 == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (guard_applies())
+        return duplicate_to_tracked_fd(descriptor, destination, 0, 0);
+    result = next_dup2(descriptor, destination);
+    return result;
+}
+
+int guard_export_dup3(int descriptor, int destination, int flags)
+    __asm__("dup3");
+
+int guard_export_dup3(int descriptor, int destination, int flags)
+{
+    int result;
+
+    if (next_dup3 == NULL)
+        resolve_symbols();
+    if (guard_applies())
+        return duplicate_to_tracked_fd(descriptor, destination, flags, 1);
+    if (next_dup3 != NULL)
+        result = next_dup3(descriptor, destination, flags);
+#ifdef SYS_dup3
+    else if (next_syscall != NULL)
+        result = (int)next_syscall(SYS_dup3, descriptor, destination,
+                                   flags, 0, 0, 0);
+#endif
+    else {
+        errno = ENOSYS;
+        result = -1;
+    }
+    return result;
+}
+
+static int fcntl_command_has_argument(int command)
+{
+    switch (command) {
+    case F_GETFD:
+    case F_GETFL:
+#ifdef F_GETOWN
+    case F_GETOWN:
+#endif
+#ifdef F_GETSIG
+    case F_GETSIG:
+#endif
+#ifdef F_GETLEASE
+    case F_GETLEASE:
+#endif
+#ifdef F_GETPIPE_SZ
+    case F_GETPIPE_SZ:
+#endif
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+int fcntl(int descriptor, int command, ...)
+{
+    va_list arguments;
+    long argument = 0;
+    unsigned int roles;
+    int duplicate_command;
+    int result;
+
+    if (next_fcntl == NULL)
+        resolve_symbols();
+    if (next_fcntl == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    duplicate_command = command == F_DUPFD;
+#ifdef F_DUPFD_CLOEXEC
+    duplicate_command = duplicate_command || command == F_DUPFD_CLOEXEC;
+#endif
+    if (fcntl_command_has_argument(command)) {
+        va_start(arguments, command);
+        argument = va_arg(arguments, long);
+        va_end(arguments);
+    }
+    if (guard_applies() && duplicate_command) {
+        pthread_mutex_lock(&mic_read_lock);
+        pthread_mutex_lock(&dsp_lock);
+        pthread_mutex_lock(&mic_lock);
+        roles = fd_role_load(descriptor);
+        result = next_fcntl(descriptor, command, argument);
+        if (result >= 0)
+            assign_duplicated_fd_locked(result, roles, fd_role_load(result));
+        pthread_mutex_unlock(&mic_lock);
+        pthread_mutex_unlock(&dsp_lock);
+        pthread_mutex_unlock(&mic_read_lock);
+        return result;
+    }
+    if (fcntl_command_has_argument(command))
+        result = next_fcntl(descriptor, command, argument);
+    else
+        result = next_fcntl(descriptor, command);
+    return result;
+}
+
 ssize_t write(int descriptor, const void *buffer, size_t length)
 {
     ssize_t result;
@@ -943,8 +1401,12 @@ ssize_t write(int descriptor, const void *buffer, size_t length)
     if (!guard_applies())
         return next_write(descriptor, buffer, length);
 
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) == 0 &&
+        descriptor_has_disallowed_peer(descriptor))
+        return (ssize_t)deny_network();
+
     pthread_mutex_lock(&dsp_lock);
-    if (descriptor == dsp_descriptor) {
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0) {
         result = next_write(descriptor, buffer, length);
         if (result < 0)
             disable_dsp_if_current(descriptor);
@@ -954,6 +1416,36 @@ ssize_t write(int descriptor, const void *buffer, size_t length)
     }
     pthread_mutex_unlock(&dsp_lock);
     return result;
+}
+
+ssize_t writev(int descriptor, const struct iovec *vectors, int vector_count)
+{
+    if (next_writev == NULL)
+        resolve_symbols();
+    if (next_writev == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (guard_applies() && descriptor_has_disallowed_peer(descriptor))
+        return (ssize_t)deny_network();
+    return next_writev(descriptor, vectors, vector_count);
+}
+
+ssize_t guard_export_sendfile64(int output, int input, off64_t *offset,
+                                size_t count) __asm__("sendfile64");
+
+ssize_t guard_export_sendfile64(int output, int input, off64_t *offset,
+                                size_t count)
+{
+    if (next_sendfile64 == NULL)
+        resolve_symbols();
+    if (next_sendfile64 == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (guard_applies() && descriptor_has_disallowed_peer(output))
+        return (ssize_t)deny_network();
+    return next_sendfile64(output, input, offset, count);
 }
 
 ssize_t read(int descriptor, void *buffer, size_t length)
@@ -973,6 +1465,10 @@ ssize_t read(int descriptor, void *buffer, size_t length)
     result = next_read(descriptor, buffer, length);
     saved_errno = errno;
     if (capture) {
+#ifdef GUARD_TESTING
+        if (getenv("JOOAN_GUARD_TEST_MIC_PAUSE") != NULL)
+            usleep(100000);
+#endif
         if (result > 0)
             microphone_tap_buffer(descriptor, generation, buffer,
                                   (size_t)result);
@@ -1011,13 +1507,11 @@ ssize_t readv(int descriptor, const struct iovec *vectors, int vector_count)
 /* Modern 32-bit glibc headers may redirect the C identifier to
  * __ioctl_time64. The camera ABI and uClibc binary import the literal `ioctl`
  * symbol, so pin the exported assembler name just as the open wrappers do. */
-int guard_export_ioctl(int descriptor, unsigned long request, ...)
+int guard_export_ioctl(int descriptor, unsigned long request, void *argument)
     __asm__("ioctl");
 
-int guard_export_ioctl(int descriptor, unsigned long request, ...)
+int guard_export_ioctl(int descriptor, unsigned long request, void *argument)
 {
-    va_list arguments;
-    void *argument;
     int result;
     int saved_errno;
     int capture;
@@ -1029,15 +1523,10 @@ int guard_export_ioctl(int descriptor, unsigned long request, ...)
         errno = ENOSYS;
         return -1;
     }
-    va_start(arguments, request);
-    argument = va_arg(arguments, void *);
-    va_end(arguments);
-
     if (!guard_applies())
         return next_ioctl(descriptor, request, argument);
 
-    if (descriptor ==
-            __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE) &&
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_READ) != 0 &&
         request == JOOAN_GUARD_MIC_STREAM_IOCTL) {
         const struct jooan_guard_mic_stream_request *stream = argument;
         capture = microphone_capture_try_begin(descriptor, &generation);
@@ -1059,7 +1548,7 @@ int guard_export_ioctl(int descriptor, unsigned long request, ...)
         return result;
     }
     pthread_mutex_lock(&dsp_lock);
-    if (descriptor == dsp_descriptor)
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0)
         result = next_ioctl(descriptor, request, argument);
     else {
         pthread_mutex_unlock(&dsp_lock);
@@ -1074,23 +1563,7 @@ int close(int descriptor)
     if (next_close == NULL)
         resolve_symbols();
     if (guard_applies()) {
-        pthread_mutex_lock(&dsp_lock);
-        disable_dsp_if_current(descriptor);
-        pthread_mutex_unlock(&dsp_lock);
-
-        if (descriptor ==
-            __atomic_load_n(&mic_descriptor, __ATOMIC_ACQUIRE)) {
-            pthread_mutex_lock(&mic_lock);
-            if (descriptor ==
-                __atomic_load_n(&mic_descriptor, __ATOMIC_RELAXED)) {
-                __atomic_store_n(&mic_descriptor, -1, __ATOMIC_RELEASE);
-                __atomic_add_fetch(&mic_generation, 1U, __ATOMIC_RELEASE);
-                mic_payload_length = 0;
-                mic_has_low_byte = 0;
-                __atomic_store_n(&mic_gap, 0, __ATOMIC_RELEASE);
-            }
-            pthread_mutex_unlock(&mic_lock);
-        }
+        (void)untrack_fd(descriptor);
     }
     if (next_close == NULL) {
         errno = ENOSYS;

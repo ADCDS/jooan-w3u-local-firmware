@@ -22,6 +22,7 @@ static void test_addresses(void)
 {
     struct sockaddr_in address4;
     struct sockaddr_in6 address6;
+    struct sockaddr local_family;
 
     memset(&address4, 0, sizeof(address4));
     address4.sin_family = AF_INET;
@@ -39,6 +40,12 @@ static void test_addresses(void)
     assert(inet_pton(AF_INET6, "::1", &address6.sin6_addr) == 1);
     assert(jooan_guard_sockaddr_is_loopback((struct sockaddr *)&address6,
                                              sizeof(address6)));
+#ifdef AF_ALG
+    memset(&local_family, 0, sizeof(local_family));
+    local_family.sa_family = AF_ALG;
+    assert(jooan_guard_sockaddr_is_loopback(&local_family,
+                                             sizeof(local_family)));
+#endif
 }
 
 static void test_alaw(void)
@@ -47,6 +54,19 @@ static void test_alaw(void)
     assert(jooan_guard_alaw_to_pcm16(0x55) == -8);
     assert(jooan_guard_alaw_to_pcm16(0x80) == 5504);
     assert(jooan_guard_alaw_to_pcm16(0x00) == -5504);
+}
+
+static void test_reply_ports(void)
+{
+    assert(jooan_guard_listener_reply_port_allowed(554));
+    assert(jooan_guard_listener_reply_port_allowed(8899));
+    assert(jooan_guard_listener_reply_port_allowed(9898));
+    assert(jooan_guard_listener_reply_port_allowed(24569));
+    assert(!jooan_guard_listener_reply_port_allowed(443));
+    assert(!jooan_guard_listener_reply_port_allowed(1883));
+    assert(jooan_guard_listener_bind_external_allowed(554, SOCK_STREAM));
+    assert(!jooan_guard_listener_bind_external_allowed(554, SOCK_DGRAM));
+    assert(!jooan_guard_listener_bind_external_allowed(8899, SOCK_STREAM));
 }
 
 static void test_sha256(void)
@@ -63,6 +83,7 @@ int main(void)
     test_hostnames();
     test_addresses();
     test_alaw();
+    test_reply_ports();
     test_sha256();
     puts("guard unit tests: ok");
     return 0;

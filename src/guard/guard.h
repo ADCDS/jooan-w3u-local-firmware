@@ -39,6 +39,9 @@ int jooan_guard_hostname_is_api(const char *name);
 int jooan_guard_hostname_is_loopback(const char *name);
 int jooan_guard_sockaddr_is_loopback(const struct sockaddr *address,
                                      socklen_t address_length);
+int jooan_guard_listener_reply_port_allowed(uint16_t port);
+int jooan_guard_listener_bind_external_allowed(uint16_t port,
+                                                int socket_type);
 int16_t jooan_guard_alaw_to_pcm16(uint8_t value);
 
 #endif
