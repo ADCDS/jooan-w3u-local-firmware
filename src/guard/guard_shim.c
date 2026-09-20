@@ -34,9 +34,12 @@
 #define TALKBACK_PACKET_MAX (JOOAN_AUDIO_GUARD_HEADER_SIZE + 1024U)
 #define TALKBACK_POLL_MS 250
 #define TALKBACK_LEASE_MS 500U
+#define TALKBACK_MAX_MS 60000U
 #define GUARD_TRACKED_FDS 1024
 #define FD_ROLE_DSP_WRITE 0x01U
 #define FD_ROLE_DSP_READ  0x02U
+#define FD_ROLE_SPEAKER_DIRECTION 0x04U
+#define FD_ROLE_SPEAKER_VALUE     0x08U
 
 #ifdef __UCLIBC__
 struct guard_mmsghdr {
@@ -92,6 +95,7 @@ static int talkback_thread_started;
 static int talkback_stop;
 static pthread_t talkback_thread;
 static pthread_mutex_t dsp_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t speaker_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mic_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mic_read_lock = PTHREAD_MUTEX_INITIALIZER;
 static char talkback_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -104,6 +108,7 @@ static int mic_has_low_byte;
 static int mic_gap;
 static uint32_t mic_sequence;
 static uint32_t mic_generation;
+static int speaker_enabled;
 static unsigned char fd_roles[GUARD_TRACKED_FDS];
 
 static pid_t current_process_id(void)
@@ -141,7 +146,7 @@ static void reset_microphone_state_locked(void)
     __atomic_store_n(&mic_gap, 0, __ATOMIC_RELEASE);
 }
 
-static void track_fresh_dsp_fd(int descriptor, unsigned int role)
+static void track_fresh_fd(int descriptor, unsigned int role)
 {
     unsigned int previous;
 
@@ -328,6 +333,155 @@ static const char *configured_talkback_path(void)
     return JOOAN_GUARD_TALKBACK_PATH;
 }
 
+static const char *configured_speaker_direction_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_SPEAKER_DIRECTION_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_SPEAKER_DIRECTION_PATH;
+}
+
+static const char *configured_speaker_value_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_SPEAKER_VALUE_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_SPEAKER_VALUE_PATH;
+}
+
+static const char *configured_speaker_ready_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_SPEAKER_READY_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_SPEAKER_READY_PATH;
+}
+
+static const char *configured_speaker_released_path(void)
+{
+#ifdef GUARD_TESTING
+    const char *path = getenv("JOOAN_GUARD_TEST_SPEAKER_RELEASED_PATH");
+    if (path != NULL && path[0] != '\0')
+        return path;
+#endif
+    return JOOAN_GUARD_SPEAKER_RELEASED_PATH;
+}
+
+static int speaker_write_path(const char *path, const char *value,
+                              size_t length)
+{
+    int descriptor;
+    ssize_t amount;
+    int saved_errno;
+
+    if (next_open == NULL || next_write == NULL || next_close == NULL)
+        return -1;
+    descriptor = next_open(path, O_WRONLY);
+    if (descriptor < 0)
+        return -1;
+    amount = next_write(descriptor, value, length);
+    saved_errno = errno;
+    (void)next_close(descriptor);
+    errno = saved_errno;
+    return amount == (ssize_t)length ? 0 : -1;
+}
+
+static int speaker_set_enabled(int enabled)
+{
+    const char level = enabled ? '1' : '0';
+    int direction_result;
+    int value_result;
+
+    pthread_mutex_lock(&speaker_lock);
+    direction_result = speaker_write_path(
+        configured_speaker_direction_path(), "out", 3);
+    value_result = speaker_write_path(configured_speaker_value_path(),
+                                      &level, 1);
+    if (direction_result != 0 || value_result != 0) {
+        __atomic_store_n(&speaker_enabled, 0, __ATOMIC_RELEASE);
+        if (enabled)
+            (void)speaker_write_path(configured_speaker_value_path(), "0", 1);
+        pthread_mutex_unlock(&speaker_lock);
+        return -1;
+    }
+    __atomic_store_n(&speaker_enabled, enabled != 0, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&speaker_lock);
+    return 0;
+}
+
+static int speaker_publish_ready(void)
+{
+    static const char ready[] = "ready\n";
+    const char *path = configured_speaker_ready_path();
+    int descriptor;
+    int flags = O_WRONLY | O_CREAT | O_TRUNC;
+    ssize_t amount;
+    int saved_errno;
+
+    if (next_open == NULL || next_write == NULL || next_close == NULL)
+        return -1;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    descriptor = next_open(path, flags, 0600);
+    if (descriptor < 0)
+        return -1;
+    amount = next_write(descriptor, ready, sizeof(ready) - 1U);
+    saved_errno = errno;
+    (void)next_close(descriptor);
+    errno = saved_errno;
+    return amount == (ssize_t)(sizeof(ready) - 1U) ? 0 : -1;
+}
+
+static int speaker_wait_hook_release(void)
+{
+    const char *path = configured_speaker_released_path();
+    struct stat status;
+    int attempt;
+
+    for (attempt = 0; attempt < 200; ++attempt) {
+        if (lstat(path, &status) == 0 && S_ISREG(status.st_mode) &&
+            status.st_uid == geteuid())
+            return 0;
+        usleep(10000);
+    }
+    return -1;
+}
+
+static ssize_t speaker_confined_write(int descriptor, unsigned int role,
+                                      size_t reported_length)
+{
+    char level;
+    const char *value;
+    size_t value_length = 1;
+    ssize_t amount;
+
+    if (reported_length > (size_t)SSIZE_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    pthread_mutex_lock(&speaker_lock);
+    level = __atomic_load_n(&speaker_enabled, __ATOMIC_ACQUIRE) ? '1' : '0';
+    value = &level;
+    if ((role & FD_ROLE_SPEAKER_DIRECTION) != 0) {
+        value = "out";
+        value_length = 3;
+    }
+    amount = next_write(descriptor, value, value_length);
+    if (amount != (ssize_t)value_length) {
+        pthread_mutex_unlock(&speaker_lock);
+        return amount < 0 ? amount : (errno = EIO, -1);
+    }
+    pthread_mutex_unlock(&speaker_lock);
+    return (ssize_t)reported_length;
+}
+
 static const char *configured_mic_socket_path(void)
 {
 #ifdef GUARD_TESTING
@@ -420,24 +574,41 @@ static int talkback_should_stop(void)
     return stop;
 }
 
-static int write_pcm_locked(int descriptor, const unsigned char *data,
-                            size_t length)
+static int submit_pcm_locked(int descriptor, const unsigned char *data,
+                             size_t length)
 {
+    struct jooan_guard_ao_play_request request;
     size_t offset = 0;
-    ssize_t amount;
+    size_t chunk;
+    uint32_t consumed;
+    int result;
 
-    if (next_write == NULL)
+    if (next_ioctl == NULL)
         return -1;
     while (offset < length) {
-        amount = next_write(descriptor, data + offset, length - offset);
-        if (amount > 0) {
-            offset += (size_t)amount;
+        chunk = length - offset;
+        if (chunk > UINT32_MAX)
+            chunk = UINT32_MAX;
+        memset(&request, 0, sizeof(request));
+        request.pcm = (uintptr_t)(data + offset);
+        request.byte_length = (uint32_t)chunk;
+#ifdef GUARD_TESTING
+        if (getenv("JOOAN_GUARD_TEST_FAKE_AO_IOCTL") != NULL) {
+            ssize_t amount = next_write(descriptor, data + offset, chunk);
+            result = amount == (ssize_t)chunk ? 0 : -1;
+            request.byte_length = amount > 0 ? (uint32_t)amount : 0;
+        } else
+#endif
+            result = next_ioctl(descriptor, JOOAN_GUARD_AO_PLAY_IOCTL,
+                                &request);
+        if (result < 0 && errno == EINTR)
             continue;
+        consumed = request.byte_length;
+        if (result != 0 || consumed == 0 || consumed > chunk) {
+            disable_dsp_if_current(descriptor);
+            return -1;
         }
-        if (amount < 0 && errno == EINTR)
-            continue;
-        disable_dsp_if_current(descriptor);
-        return -1;
+        offset += consumed;
     }
     return 0;
 }
@@ -629,6 +800,7 @@ static void *talkback_main(void *unused)
     int descriptor;
     int16_t sample;
     uint64_t active_session = 0;
+    uint64_t session_started = 0;
     uint64_t lease_deadline = 0;
     uint64_t now;
     uint64_t remaining;
@@ -640,10 +812,15 @@ static void *talkback_main(void *unused)
     poll_descriptor.events = POLLIN;
     while (!talkback_should_stop()) {
         now = monotonic_milliseconds();
-        if (active_session != 0 && now >= lease_deadline) {
+        if (active_session != 0 &&
+            (now >= lease_deadline ||
+             (now >= session_started &&
+              now - session_started >= TALKBACK_MAX_MS))) {
             active_session = 0;
+            session_started = 0;
             last_sequence = 0;
             lease_deadline = 0;
+            (void)speaker_set_enabled(0);
         }
         poll_timeout = TALKBACK_POLL_MS;
         if (active_session != 0) {
@@ -654,10 +831,15 @@ static void *talkback_main(void *unused)
         poll_descriptor.revents = 0;
         amount = poll(&poll_descriptor, 1, poll_timeout);
         now = monotonic_milliseconds();
-        if (active_session != 0 && now >= lease_deadline) {
+        if (active_session != 0 &&
+            (now >= lease_deadline ||
+             (now >= session_started &&
+              now - session_started >= TALKBACK_MAX_MS))) {
             active_session = 0;
+            session_started = 0;
             last_sequence = 0;
             lease_deadline = 0;
+            (void)speaker_set_enabled(0);
         }
         if (amount == 0)
             continue;
@@ -672,13 +854,16 @@ static void *talkback_main(void *unused)
         if (jooan_audio_guard_datagram_parse(datagram, (size_t)amount,
                                               &frame) != 0) {
             active_session = 0;
+            session_started = 0;
             last_sequence = 0;
             lease_deadline = 0;
+            (void)speaker_set_enabled(0);
             continue;
         }
         if (frame.type == JOOAN_AUDIO_PTT_ACQUIRE) {
             if (active_session == 0 && frame.sequence == 1) {
                 active_session = frame.session_id;
+                session_started = now;
                 last_sequence = frame.sequence;
                 lease_deadline = now + TALKBACK_LEASE_MS;
             }
@@ -687,21 +872,23 @@ static void *talkback_main(void *unused)
         if (active_session == 0 || frame.session_id != active_session ||
             last_sequence == UINT32_MAX || frame.sequence != last_sequence + 1U) {
             active_session = 0;
+            session_started = 0;
             last_sequence = 0;
             lease_deadline = 0;
+            (void)speaker_set_enabled(0);
             continue;
         }
         last_sequence = frame.sequence;
         if (frame.type == JOOAN_AUDIO_PTT_RELEASE) {
             active_session = 0;
+            session_started = 0;
             last_sequence = 0;
             lease_deadline = 0;
+            (void)speaker_set_enabled(0);
             continue;
         }
         if (frame.type != JOOAN_AUDIO_PTT_PCMA)
             continue;
-        lease_deadline = now + TALKBACK_LEASE_MS;
-
         for (index = 0; index < frame.payload_length; ++index) {
             sample = jooan_guard_alaw_to_pcm16(frame.payload[index]);
             pcm[index * 2] = (unsigned char)((uint16_t)sample & 0xffU);
@@ -710,11 +897,18 @@ static void *talkback_main(void *unused)
 
         pthread_mutex_lock(&dsp_lock);
         descriptor = dsp_descriptor;
-        if (descriptor >= 0)
-            (void)write_pcm_locked(descriptor, pcm,
-                                   (size_t)frame.payload_length * 2U);
+        if (descriptor >= 0 &&
+            submit_pcm_locked(descriptor, pcm,
+                              (size_t)frame.payload_length * 2U) == 0 &&
+            (__atomic_load_n(&speaker_enabled, __ATOMIC_ACQUIRE) ||
+             speaker_set_enabled(1) == 0)) {
+            lease_deadline = now + TALKBACK_LEASE_MS;
+        } else {
+            (void)speaker_set_enabled(0);
+        }
         pthread_mutex_unlock(&dsp_lock);
     }
+    (void)speaker_set_enabled(0);
     return NULL;
 }
 
@@ -773,9 +967,12 @@ __attribute__((constructor)) static void guard_initialize(void)
     guard_active = executable_is_supported();
     if (!guard_active && executable_is_named_jooanipc())
         _exit(126);
-    if (guard_active && next_close != NULL && next_write != NULL) {
+    if (guard_active && next_close != NULL && next_write != NULL &&
+        next_ioctl != NULL) {
         guard_owner_pid = current_process_id();
-        start_talkback();
+        if (speaker_set_enabled(0) == 0 && speaker_publish_ready() == 0 &&
+            speaker_wait_hook_release() == 0)
+            start_talkback();
         if (next_read != NULL && next_readv != NULL && next_sendto != NULL)
             start_microphone_tap();
     }
@@ -790,6 +987,8 @@ __attribute__((destructor)) static void guard_shutdown(void)
     pthread_mutex_unlock(&dsp_lock);
     if (talkback_thread_started)
         (void)pthread_join(talkback_thread, NULL);
+    (void)speaker_set_enabled(0);
+    (void)unlink(configured_speaker_ready_path());
     if (talkback_descriptor >= 0 && next_close != NULL)
         next_close(talkback_descriptor);
     if (mic_socket_descriptor >= 0 && next_close != NULL)
@@ -1338,9 +1537,17 @@ static int guarded_open(const char *path, int flags, mode_t mode, int use_mode,
     if (guard_applies() && descriptor >= 0 &&
         strcmp(path, configured_dsp_path()) == 0) {
         if ((flags & O_ACCMODE) == O_WRONLY)
-            track_fresh_dsp_fd(descriptor, FD_ROLE_DSP_WRITE);
+            track_fresh_fd(descriptor, FD_ROLE_DSP_WRITE);
         else if ((flags & O_ACCMODE) == O_RDONLY)
-            track_fresh_dsp_fd(descriptor, FD_ROLE_DSP_READ);
+            track_fresh_fd(descriptor, FD_ROLE_DSP_READ);
+    } else if (guard_applies() && descriptor >= 0 &&
+               (flags & O_ACCMODE) != O_RDONLY &&
+               strcmp(path, configured_speaker_direction_path()) == 0) {
+        track_fresh_fd(descriptor, FD_ROLE_SPEAKER_DIRECTION);
+    } else if (guard_applies() && descriptor >= 0 &&
+               (flags & O_ACCMODE) != O_RDONLY &&
+               strcmp(path, configured_speaker_value_path()) == 0) {
+        track_fresh_fd(descriptor, FD_ROLE_SPEAKER_VALUE);
     }
     return descriptor;
 }
@@ -1552,6 +1759,7 @@ int fcntl(int descriptor, int command, ...)
 
 ssize_t write(int descriptor, const void *buffer, size_t length)
 {
+    unsigned int roles;
     ssize_t result;
 
     if (next_write == NULL)
@@ -1563,15 +1771,25 @@ ssize_t write(int descriptor, const void *buffer, size_t length)
     if (!guard_applies())
         return next_write(descriptor, buffer, length);
 
-    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) == 0 &&
+    roles = fd_role_load(descriptor);
+    if ((roles & (FD_ROLE_SPEAKER_DIRECTION | FD_ROLE_SPEAKER_VALUE)) != 0)
+        return speaker_confined_write(descriptor, roles, length);
+
+    if ((roles & FD_ROLE_DSP_WRITE) == 0 &&
         descriptor_has_disallowed_peer(descriptor))
         return (ssize_t)deny_network();
 
     pthread_mutex_lock(&dsp_lock);
     if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0) {
-        result = next_write(descriptor, buffer, length);
-        if (result < 0)
-            disable_dsp_if_current(descriptor);
+        /* OEM speaker playback includes the motion-detection siren.  Pretend
+         * it was consumed; authenticated talkback uses next_write directly
+         * from talkback_main and is the only allowed playback producer. */
+        if (length > (size_t)SSIZE_MAX) {
+            errno = EINVAL;
+            result = -1;
+        } else {
+            result = (ssize_t)length;
+        }
     } else {
         pthread_mutex_unlock(&dsp_lock);
         return next_write(descriptor, buffer, length);
@@ -1582,6 +1800,9 @@ ssize_t write(int descriptor, const void *buffer, size_t length)
 
 ssize_t writev(int descriptor, const struct iovec *vectors, int vector_count)
 {
+    unsigned int roles;
+    size_t length = 0;
+    int index;
     ssize_t result;
 
     if (next_writev == NULL)
@@ -1592,7 +1813,22 @@ ssize_t writev(int descriptor, const struct iovec *vectors, int vector_count)
     }
     if (!guard_applies())
         return next_writev(descriptor, vectors, vector_count);
-    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) == 0 &&
+    roles = fd_role_load(descriptor);
+    if ((roles & (FD_ROLE_SPEAKER_DIRECTION | FD_ROLE_SPEAKER_VALUE)) != 0) {
+        if (vector_count < 0 || (vector_count != 0 && vectors == NULL)) {
+            errno = EINVAL;
+            return -1;
+        }
+        for (index = 0; index < vector_count; ++index) {
+            if (vectors[index].iov_len > (size_t)SSIZE_MAX - length) {
+                errno = EINVAL;
+                return -1;
+            }
+            length += vectors[index].iov_len;
+        }
+        return speaker_confined_write(descriptor, roles, length);
+    }
+    if ((roles & FD_ROLE_DSP_WRITE) == 0 &&
         descriptor_has_disallowed_peer(descriptor))
         return (ssize_t)deny_network();
 
@@ -1602,9 +1838,22 @@ ssize_t writev(int descriptor, const struct iovec *vectors, int vector_count)
         if (getenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE") != NULL)
             usleep(100000);
 #endif
-        result = next_writev(descriptor, vectors, vector_count);
-        if (result < 0)
-            disable_dsp_if_current(descriptor);
+        if (vector_count < 0 || (vector_count != 0 && vectors == NULL)) {
+            errno = EINVAL;
+            result = -1;
+        } else {
+            length = 0;
+            for (index = 0; index < vector_count; ++index) {
+                if (vectors[index].iov_len > (size_t)SSIZE_MAX - length) {
+                    errno = EINVAL;
+                    result = -1;
+                    break;
+                }
+                length += vectors[index].iov_len;
+            }
+            if (index == vector_count)
+                result = (ssize_t)length;
+        }
     } else {
         pthread_mutex_unlock(&dsp_lock);
         return next_writev(descriptor, vectors, vector_count);
@@ -1730,8 +1979,15 @@ int guard_export_ioctl(int descriptor, unsigned long request, void *argument)
         return result;
     }
     pthread_mutex_lock(&dsp_lock);
-    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0)
-        result = next_ioctl(descriptor, request, argument);
+    if ((fd_role_load(descriptor) & FD_ROLE_DSP_WRITE) != 0) {
+        /* Exact OEM AO payload submission. Dropping it prevents the motion
+         * alarm from being queued while muted and leaking into a later PTT
+         * window. Configuration ioctls still reach the driver. */
+        if (request == JOOAN_GUARD_AO_PLAY_IOCTL)
+            result = 0;
+        else
+            result = next_ioctl(descriptor, request, argument);
+    }
     else {
         pthread_mutex_unlock(&dsp_lock);
         return next_ioctl(descriptor, request, argument);

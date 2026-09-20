@@ -1,6 +1,60 @@
 #!/bin/sh
 # Sourced by OEM startapp. OTA authenticates code; gzip CRC detects corruption.
 # Always define the fail-closed media wrapper before attempting any extraction.
+
+# The OEM application enables the speaker amplifier on GPIO 63 and deliberately
+# plays camera_alarm.amr for motion events; startup/PTZ movement changes most of
+# the frame and is enough to trigger it.
+# One early write is not sufficient because jooanipc reasserts the pin.  Mute
+# it before jooanipc can start and reclaim it every 20 ms across the complete,
+# measured startup-audio window.  Leave it muted afterwards: the containment
+# guard, not the OEM application, grants the amplifier only to authenticated
+# push-to-talk sessions.
+JL_SPEAKER_GPIO=63
+JL_SPEAKER_PATH=/sys/class/gpio/gpio$JL_SPEAKER_GPIO
+JL_SPEAKER_RUN=/run/jooan-local
+JL_SPEAKER_GUARD_READY=$JL_SPEAKER_RUN/speaker-guard-ready
+JL_SPEAKER_HOOK_RELEASED=$JL_SPEAKER_RUN/speaker-hook-released
+mkdir -p "$JL_SPEAKER_RUN" 2>/dev/null || :
+chmod 700 "$JL_SPEAKER_RUN" 2>/dev/null || :
+if mkdir "$JL_SPEAKER_RUN/speaker-hook.lock" 2>/dev/null; then
+    rm -f "$JL_SPEAKER_GUARD_READY" "$JL_SPEAKER_HOOK_RELEASED"
+    if [ ! -d "$JL_SPEAKER_PATH" ]; then
+        echo "$JL_SPEAKER_GPIO" > /sys/class/gpio/export 2>/dev/null || :
+        jl_speaker_wait=0
+        while [ ! -d "$JL_SPEAKER_PATH" ] && [ "$jl_speaker_wait" -lt 20 ]; do
+            sleep 0.05
+            jl_speaker_wait=$((jl_speaker_wait + 1))
+        done
+    fi
+    if [ -d "$JL_SPEAKER_PATH" ]; then
+        echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
+        echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+    fi
+    (
+        jl_speaker_tick=0
+        while [ -d "$JL_SPEAKER_PATH" ] &&
+              [ "$jl_speaker_tick" -lt 3000 ]; do
+            echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
+            echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+            # Once the pinned containment guard has taken ownership, its
+            # interposer enforces mute and can grant authenticated PTT without
+            # racing this early-boot hold.
+            [ ! -f "$JL_SPEAKER_GUARD_READY" ] || break
+            sleep 0.02
+            jl_speaker_tick=$((jl_speaker_tick + 1))
+        done
+        # Keep the OEM muted after the startup race.  The guard temporarily
+        # raises this pin only while it owns an authenticated talkback lease.
+        echo out > "$JL_SPEAKER_PATH/direction" 2>/dev/null || :
+        echo 0 > "$JL_SPEAKER_PATH/value" 2>/dev/null || :
+        printf '%s\n' released > "$JL_SPEAKER_HOOK_RELEASED.new" &&
+            chmod 600 "$JL_SPEAKER_HOOK_RELEASED.new" &&
+            mv -f "$JL_SPEAKER_HOOK_RELEASED.new" \
+                "$JL_SPEAKER_HOOK_RELEASED"
+    ) </dev/null >/tmp/jooan-speaker-mute.log 2>&1 &
+fi
+
 killall telnetd goahead 2>/dev/null || :
 jooanipc() { return 127; }
 jl_load_controller() {

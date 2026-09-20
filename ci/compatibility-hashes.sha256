@@ -7,4 +7,4 @@
 # source descriptions, generated ABI tables, protocol schemas, and toolchain
 # lockfiles instead. The gate deliberately rejects missing files and symlinks.
 0b9a3c5aa1b54f6a1f9d5796823db94779b0132c0041260cac9f4d67d291636c  packaging/targets/ja-a12.json
-5fa1ff1315e4be1835e3acbd6651be23d39992b5a3c4ebee5d370a64d29c36aa  runtime/boot/local.rc
+6c254b79f5ad8134b0fb09e54c014bb9f36ddc51bf9be193c90bc01d72f807ec  runtime/boot/local.rc
