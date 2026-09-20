@@ -555,6 +555,7 @@ class HostBuilderTests(unittest.TestCase):
                 compatible,
                 fake_bin,
                 controller / "boot",
+                controller / "admin",
             ):
                 directory.mkdir(parents=True, exist_ok=True)
             (controller / "boot/common.sh").write_text(
@@ -572,6 +573,24 @@ class HostBuilderTests(unittest.TestCase):
                 "}\n",
                 encoding="utf-8",
             )
+            (controller / "admin/install-runtime.sh").write_text(
+                "#!/bin/sh\n"
+                "stage=$1\n"
+                "mkdir -p \"$JL_ROOT/slots/A\" \"$JL_ROOT/state\"\n"
+                "rm -rf \"$JL_ROOT/slots/B\"\n"
+                "cp \"$stage/runtime.tar.gz\" \"$stage/runtime.md5\" "
+                "\"$JL_ROOT/slots/A/\"\n"
+                "printf '%s\\n' '- A 0' > \"$JL_ROOT/state/selection\"\n",
+                encoding="utf-8",
+            )
+            (controller / "admin/install-controller.sh").write_text(
+                "#!/bin/sh\n"
+                "[ \"$1\" = activate ] || exit 1\n"
+                "cp \"$JL_ROOT/local.rc\" \"$JL_ACTIVATE\"\n",
+                encoding="utf-8",
+            )
+            os.chmod(controller / "admin/install-runtime.sh", 0o755)
+            os.chmod(controller / "admin/install-controller.sh", 0o755)
             pseudo_random = b"".join(
                 hashlib.sha256(f"controller-pad-{counter}".encode()).digest()
                 for counter in range(1000)
@@ -872,6 +891,71 @@ class HostBuilderTests(unittest.TestCase):
             self.assertFalse((partial / "slots/A").exists())
             self.assertTrue((partial / "slots/B/runtime.tar.gz").is_file())
             self.assertEqual((partial / "state/selection").read_text(), "- B 0\n")
+
+            # Completed seq2 must treat legacy-retired as historical, replace
+            # stable B with different seq3 bytes, and publish sequence last.
+            (partial / "state/selection").write_text("B - 0\n", encoding="utf-8")
+            (partial / "state/migration-state").write_text(
+                "legacy-retired\n", encoding="utf-8"
+            )
+            (partial / "state/release-sequence").write_text("2\n", encoding="utf-8")
+            (partial_run / "running").write_text("B\n", encoding="utf-8")
+            seq3_runtime = b"different-sequence-three-runtime"
+            (stage / "runtime.tar.gz").write_bytes(seq3_runtime)
+            (stage / "runtime.md5").write_text(
+                legacy_md5(seq3_runtime).decode() + "\n", encoding="utf-8"
+            )
+            (stage / "RELEASE").write_text("0.3.0\n", encoding="utf-8")
+            (stage / "release.manifest").write_text(
+                "\n".join((
+                    "JOOAN-SIGNED-RELEASE-V1",
+                    "target_id=jooan-ja-a12-t23n-dual-cv2005-skw6316",
+                    "device_model=JA-A12",
+                    "model_token=A12",
+                    "release_version=0.3.0",
+                    "release_sequence=3",
+                    "minimum_sequence=1",
+                    "artifact_kind=install",
+                    "files-begin",
+                    "0" * 64 + "  RELEASE",
+                    "files-end",
+                    "",
+                )),
+                encoding="utf-8",
+            )
+            seq3_result = subprocess.run(
+                [str(upgrade)], env=partial_environment, text=True, capture_output=True
+            )
+            self.assertEqual(seq3_result.returncode, 0, seq3_result.stderr)
+            self.assertFalse((partial / "slots/B").exists())
+            self.assertEqual(
+                (partial / "slots/A/runtime.tar.gz").read_bytes(), seq3_runtime
+            )
+            self.assertEqual((partial / "state/selection").read_text(), "- A 0\n")
+            self.assertEqual((partial / "state/release-sequence").read_text(), "3\n")
+
+            # Boot marks attempted before health; promotion makes A durable and
+            # a later cleanup failure must never restore deleted B.
+            (partial / "state/selection").write_text("- A 1\n", encoding="utf-8")
+            (partial_run / "running").write_text("A\n", encoding="utf-8")
+            health_dir = partial_run / "slot-A"
+            health_dir.mkdir(parents=True, exist_ok=True)
+            health = health_dir / "health.sh"
+            health.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            os.chmod(health, 0o755)
+            promoted = subprocess.run(
+                [str(REPOSITORY / "runtime/admin/mark-healthy.sh"), "A"],
+                env=os.environ | {
+                    "JL_ROOT": str(partial),
+                    "JL_RUN": str(partial_run),
+                    "JL_CONTROL": str(REPOSITORY / "runtime"),
+                },
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(promoted.returncode, 0, promoted.stderr)
+            self.assertEqual((partial / "state/selection").read_text(), "A - 0\n")
+            self.assertTrue((partial / "slots/A/runtime.tar.gz").is_file())
 
     def test_runtime_installer_resumes_matching_pending_archive(self) -> None:
         source = (REPOSITORY / "runtime/admin/install-runtime.sh").read_text()
