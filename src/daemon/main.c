@@ -15,6 +15,7 @@ int main(int argc,char**argv)
     memset(&c,0,sizeof(c));
     copy_env(c.state_dir,sizeof(c.state_dir),"JOAN_STATE_DIR","/var/lib/joan");
     copy_env(c.staging_dir,sizeof(c.staging_dir),"JOAN_STAGING_DIR","/tmp/joan-staging");
+    copy_env(c.release_sequence_path,sizeof(c.release_sequence_path),"JOAN_RELEASE_SEQUENCE_PATH","/opt/custom/jooan-local/state/release-sequence");
     copy_env(c.web_dir,sizeof(c.web_dir),"JOAN_WEB_DIR","/usr/share/joan/web");
     copy_env(c.bind_addr,sizeof(c.bind_addr),"JOAN_BIND","0.0.0.0");
     copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
