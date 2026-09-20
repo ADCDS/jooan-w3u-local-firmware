@@ -1,7 +1,10 @@
 import {
   AUDIO_PACKET_SAMPLES,
+  AUDIO_BACKPRESSURE_BYTES,
+  AUDIO_MAX_TALK_MS,
   AUDIO_WS_AUTH_PREFIX,
   AUDIO_WS_PROTOCOL,
+  AudioState,
   AudioWireType,
   buildAudioFrame,
   parseAudioFrame,
@@ -17,8 +20,8 @@ export class JooanAudioClient extends EventTarget {
     if (parsed.search || parsed.hash) {
       throw new TypeError('do not place audio credentials in the WebSocket URL');
     }
-    if (!/^[A-Za-z0-9_-]{16,512}$/.test(authToken || '')) {
-      throw new TypeError('authToken must be a base64url one-time token');
+    if (!/^[0-9a-f]{64}$/.test(authToken || '')) {
+      throw new TypeError('authToken must be the current 64-character CSRF token');
     }
     this.url = parsed.href;
     this.authProtocol = `${AUDIO_WS_AUTH_PREFIX}${authToken}`;
@@ -32,7 +35,10 @@ export class JooanAudioClient extends EventTarget {
     this.receiveSequence = 0;
     this.talkGeneration = 0;
     this.wantTalk = false;
+    this.acquirePending = false;
     this.talking = false;
+    this.acquireTimer = null;
+    this.leaseTimer = null;
     this.closed = false;
     this.releaseHandlers = [];
   }
@@ -40,7 +46,9 @@ export class JooanAudioClient extends EventTarget {
   async connect() {
     if (this.closed || this.socket) throw new Error('audio client is not reusable');
     this.context = new AudioContext({ latencyHint: 'interactive' });
+    const resume = this.context.resume();
     await this.context.audioWorklet.addModule(this.workletUrl);
+    await resume;
     this.node = new AudioWorkletNode(this.context, 'jooan-audio', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -53,7 +61,10 @@ export class JooanAudioClient extends EventTarget {
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     socket.onmessage = (event) => this.onSocketMessage(event);
-    socket.onclose = () => this.failSafeRelease('disconnect', false);
+    socket.onclose = () => {
+      this.failSafeRelease('disconnect', false);
+      this.dispatchEvent(new Event('close'));
+    };
     socket.onerror = () => this.failSafeRelease('socket-error', false);
     await new Promise((resolve, reject) => {
       socket.onopen = () => {
@@ -76,9 +87,14 @@ export class JooanAudioClient extends EventTarget {
   }
 
   send(type, payload) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false;
-    this.socket.send(buildAudioFrame(type, this.nextSequence(), payload));
-    return true;
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN ||
+        this.socket.bufferedAmount > AUDIO_BACKPRESSURE_BYTES) return false;
+    try {
+      this.socket.send(buildAudioFrame(type, this.nextSequence(), payload));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   async ensureMicrophone(generation) {
@@ -111,9 +127,11 @@ export class JooanAudioClient extends EventTarget {
       await this.context.resume();
       if (!await this.ensureMicrophone(generation) || !this.wantTalk) return;
       if (!this.send(AudioWireType.PTT_ACQUIRE)) throw new Error('audio socket closed');
-      this.talking = true;
-      this.node.port.postMessage({ type: 'ptt', active: true });
-      this.dispatchEvent(new CustomEvent('talkstate', { detail: { active: true } }));
+      this.acquirePending = true;
+      this.acquireTimer = setTimeout(() => {
+        this.failSafeRelease('acquire-timeout', true);
+        this.socket?.close(1011, 'audio acquire timeout');
+      }, 2000);
     } catch (error) {
       this.failSafeRelease('microphone-error', true);
       this.dispatchEvent(new CustomEvent('audioerror', { detail: error }));
@@ -134,11 +152,19 @@ export class JooanAudioClient extends EventTarget {
   }
 
   failSafeRelease(reason, notifyServer) {
-    const wasActive = this.wantTalk || this.talking;
+    const wasActive = this.wantTalk || this.acquirePending || this.talking;
     this.wantTalk = false;
     this.talkGeneration += 1;
+    clearTimeout(this.acquireTimer);
+    clearTimeout(this.leaseTimer);
+    this.acquireTimer = null;
+    this.leaseTimer = null;
     if (this.node) this.node.port.postMessage({ type: 'ptt', active: false });
-    if (this.talking && notifyServer) this.send(AudioWireType.PTT_RELEASE);
+    if ((this.talking || this.acquirePending) && notifyServer &&
+        !this.send(AudioWireType.PTT_RELEASE)) {
+      this.socket?.close(1011, 'audio release backpressure');
+    }
+    this.acquirePending = false;
     this.talking = false;
     this.stopMicrophone();
     if (wasActive) {
@@ -169,7 +195,29 @@ export class JooanAudioClient extends EventTarget {
           const copy = frame.payload.slice().buffer;
           this.node.port.postMessage({ type: 'pcma', data: copy }, [copy]);
         }
-      } else if (frame.type === AudioWireType.STATE || frame.type === AudioWireType.ERROR) {
+      } else if (frame.type === AudioWireType.STATE) {
+        if (frame.payload.byteLength !== 1) throw new TypeError('invalid audio state');
+        const state = frame.payload[0];
+        if (state === AudioState.ACQUIRED) {
+          clearTimeout(this.acquireTimer);
+          this.acquireTimer = null;
+          this.acquirePending = false;
+          if (this.wantTalk) {
+            this.talking = true;
+            this.node.port.postMessage({ type: 'ptt', active: true });
+            this.leaseTimer = setTimeout(
+              () => this.releaseTalk('lease-expired'), AUDIO_MAX_TALK_MS);
+            this.dispatchEvent(new CustomEvent('talkstate', { detail: { active: true } }));
+          }
+        } else if (state === AudioState.RELEASED ||
+                   state === AudioState.LEASE_EXPIRED) {
+          this.failSafeRelease(
+            state === AudioState.LEASE_EXPIRED ? 'lease-expired' : 'released', false);
+        } else {
+          throw new TypeError('unknown audio state');
+        }
+        this.dispatchEvent(new CustomEvent('servermessage', { detail: frame }));
+      } else if (frame.type === AudioWireType.ERROR) {
         this.dispatchEvent(new CustomEvent('servermessage', { detail: frame }));
       } else {
         throw new TypeError('unexpected server audio frame');

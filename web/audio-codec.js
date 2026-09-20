@@ -4,6 +4,8 @@ export const AUDIO_WIRE_HEADER_SIZE = 16;
 export const AUDIO_WIRE_MAX_PAYLOAD = 1024;
 export const AUDIO_WS_PROTOCOL = 'jaud.v1';
 export const AUDIO_WS_AUTH_PREFIX = 'jaud.auth.';
+export const AUDIO_MAX_TALK_MS = 60000;
+export const AUDIO_BACKPRESSURE_BYTES = 64 * 1024;
 
 export const AudioWireType = Object.freeze({
   PTT_ACQUIRE: 0x01,
@@ -12,6 +14,12 @@ export const AudioWireType = Object.freeze({
   MIC_PCMA: 0x81,
   STATE: 0x82,
   ERROR: 0xff,
+});
+
+export const AudioState = Object.freeze({
+  ACQUIRED: 1,
+  RELEASED: 2,
+  LEASE_EXPIRED: 3,
 });
 
 const segmentEnds = [

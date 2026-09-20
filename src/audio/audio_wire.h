@@ -12,6 +12,15 @@
  * keeps credentials out of URLs, logs and binary audio frames. */
 #define JOOAN_AUDIO_WS_PROTOCOL "jaud.v1"
 #define JOOAN_AUDIO_WS_AUTH_PREFIX "jaud.auth."
+#define JOOAN_AUDIO_AUTH_TOKEN_HEX_LENGTH 64u
+#define JOOAN_AUDIO_MAX_TALK_MS 60000u
+#define JOOAN_AUDIO_DISCONNECT_DEADMAN_MS 2000u
+
+enum jooan_audio_state_code {
+    JOOAN_AUDIO_STATE_ACQUIRED = 1,
+    JOOAN_AUDIO_STATE_RELEASED = 2,
+    JOOAN_AUDIO_STATE_LEASE_EXPIRED = 3
+};
 
 enum jooan_audio_wire_type {
     JOOAN_AUDIO_PTT_ACQUIRE = 1,
@@ -40,5 +49,12 @@ int jooan_audio_wire_build(void *output, size_t capacity, uint8_t type,
 /* WebSockets are ordered: gaps, duplicates and a first sequence other than 1
  * indicate a stale or corrupted talk session and must fail closed. */
 int jooan_audio_sequence_accept(uint32_t *last_sequence, uint32_t candidate);
+
+/* Parse the exact two-protocol offer. When expected_token is non-NULL, compare
+ * the 64-character lowercase-hex auth value in constant time. The HTTPS daemon
+ * owns that expected CSRF value; syntax-only validation in a downstream Unix
+ * router is not authentication. */
+int jooan_audio_ws_protocol_validate(const char *offered,
+                                     const char *expected_token);
 
 #endif

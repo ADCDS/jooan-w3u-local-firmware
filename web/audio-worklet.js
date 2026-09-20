@@ -5,6 +5,8 @@ import {
   alawEncodeSample,
 } from './audio-codec.js';
 
+const PLAYBACK_PREROLL_SAMPLES = AUDIO_PACKET_SAMPLES * 3;
+
 class SampleRing {
   constructor(capacity) {
     this.samples = new Float32Array(capacity);
@@ -47,6 +49,7 @@ class JooanAudioProcessor extends AudioWorkletProcessor {
     this.talking = false;
     this.playback = new SampleRing(AUDIO_SAMPLE_RATE * 2);
     this.playbackPhase = 0;
+    this.playbackStarted = false;
     this.capturePacket = new Uint8Array(AUDIO_PACKET_SAMPLES);
     this.captureLength = 0;
     this.captureInputIndex = -1;
@@ -64,6 +67,7 @@ class JooanAudioProcessor extends AudioWorkletProcessor {
       if (this.talking) {
         this.playback.clear();
         this.playbackPhase = 0;
+        this.playbackStarted = false;
       }
       return;
     }
@@ -122,10 +126,18 @@ class JooanAudioProcessor extends AudioWorkletProcessor {
 
   renderPlayback(output) {
     const step = AUDIO_SAMPLE_RATE / sampleRate;
+    if (!this.playbackStarted) {
+      if (this.playback.length < PLAYBACK_PREROLL_SAMPLES) {
+        output.fill(0);
+        return;
+      }
+      this.playbackStarted = true;
+    }
     for (let i = 0; i < output.length; i += 1) {
       if (this.playback.length < 2) {
         output[i] = 0;
         this.playbackPhase = 0;
+        this.playbackStarted = false;
         continue;
       }
       const first = this.playback.peek(0);

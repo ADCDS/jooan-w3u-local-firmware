@@ -62,6 +62,17 @@ static void test_wire(void)
     assert(jooan_audio_sequence_accept(&sequence, 2) == -1 && errno == EPROTO);
     buffer[0] = 'X';
     assert(jooan_audio_wire_parse(buffer, length, &frame) == -1);
+
+    assert(jooan_audio_ws_protocol_validate(
+        "jaud.v1, jaud.auth.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    errno = 0;
+    assert(jooan_audio_ws_protocol_validate(
+        "jaud.v1, jaud.auth.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == -1 &&
+        errno == EACCES);
+    assert(jooan_audio_ws_protocol_validate(
+        "jaud.v1, jaud.auth.short", NULL) == -1);
 }
 
 static void test_guard_wire(void)
