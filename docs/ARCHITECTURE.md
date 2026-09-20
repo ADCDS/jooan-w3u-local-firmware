@@ -59,21 +59,21 @@ changed; warning state, rather than forced setup, records that condition.
 ## Current implementation boundary
 
 The implementation includes deterministic signed packaging, a compressed
-controller plus one stable compressed runtime, transient A/B trial/rollback, telnet
+controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
 keys, the HTTPS daemon and PWA, main/sub fMP4, a local TLS MQTT sink, microphone
 and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
 exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
 names to loopback and denies other `jooanipc` connect/datagram traffic.
 
-In steady state, persistent regular files for the compressed controller/SSH
-material and exactly one stable runtime must total no more than 180224 bytes
-(176 KiB), with at least 81920 bytes (80 KiB) free. During update, the stable
-slot and one candidate may coexist under a 262144-byte (256 KiB) cap while
-preserving at least 57344 bytes (56 KiB) free, above the OEM startapp cleanup
-threshold of 50 KiB. Promotion/rollback durably selects the result, prunes the
-superseded or failed slot, and returns to one stable slot. Archives remain
-compressed on JFFS2 and expand into tmpfs at boot.
+In steady state, the compressed controller core, SSH recovery bundle, and one
+runtime must total no more than 180224 bytes (176 KiB), with at least 81920 bytes
+(80 KiB) free. Updates are maintenance transactions, not A/B coexistence: after
+the controller and recovery path are durable, selection becomes `- - 0`, the old
+persistent runtime is removed, and one signed candidate is staged while at least
+57344 bytes (56 KiB) remain free. This exceeds the OEM 50 KiB cleanup threshold.
+Failure leaves controller-owned SSH recovery; successful health promotion selects
+the candidate and restores the 80 KiB steady reserve.
 
 No kernel-wide firewall is claimed. The supervisor repeatedly removes IPv4 and
 IPv6 default routes and filters public resolvers; explicitly configured
@@ -105,7 +105,7 @@ The carrier is only a delivery mechanism. The inner stage has a complete
 SHA-256 inventory signed with deterministic ECDSA P-256/SHA-256 and verified
 against a pinned public key on the camera. Release sequences reject downgrade
 and replay. The included installer also performs exact model/retained-component
-preflight, compressed slot staging, health validation, and A/B fallback.
+preflight, single-runtime maintenance staging, health validation, and SSH recovery.
 
 The `0.1` migration is journaled. It recognizes the earlier manual-admin or
 developer-launcher `/opt/open` trees, preserves validated SSH identity material

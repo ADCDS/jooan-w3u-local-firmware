@@ -50,11 +50,43 @@ write_state() {
 stage_trial_runtime() {
     IFS=' ' read -r trial_stable trial_pending trial_attempted trial_extra \
         < "$root/state/selection" || return 1
-    [ -z "$trial_extra" ] && [ "$trial_pending" = - ] &&
-        [ "$trial_attempted" = 0 ] || return 1
-    case "$trial_stable" in A) trial_target=B ;; B) trial_target=A ;; *) return 1 ;; esac
+    [ -z "$trial_extra" ] || return 1
+    if [ "$trial_pending" != - ]; then
+        case "$trial_pending:$trial_attempted" in A:0|A:1|B:0|B:1) ;; *) return 1 ;; esac
+        trial_dest=$root/slots/$trial_pending
+        [ -f "$trial_dest/runtime.tar.gz" ] && [ -f "$trial_dest/runtime.md5" ] || return 1
+        expected=$(cat "$trial_dest/runtime.md5") || return 1
+        actual=$(md5sum "$trial_dest/runtime.tar.gz" | awk '{print $1}') || return 1
+        [ "$actual" = "$expected" ] || return 1
+        [ "$(bounded_sha "$trial_dest/runtime.tar.gz")" = \
+          "$(bounded_sha "$self/runtime.tar.gz")" ] || return 1
+        write_state runtime-staged
+        return
+    fi
+    [ "$trial_attempted" = 0 ] || return 1
+    case "$trial_stable" in
+        A) trial_target=B ;;
+        B) trial_target=A ;;
+        -)
+            trial_running=$(cat "$run/running" 2>/dev/null || :)
+            case "$trial_running" in A) trial_target=B ;; B) trial_target=A ;; *) trial_target=A ;; esac
+            ;;
+        *) return 1 ;;
+    esac
     trial_dest=$root/slots/$trial_target
-    rm -rf "$trial_dest.new"
+    # Enter durable controller-owned SSH recovery, then remove the sole
+    # persistent runtime. Its already-expanded processes survive in /run until
+    # reboot, but no power cut can select a deleted archive.
+    printf '%s\n' '- - 0' > "$root/state/selection.new" || return 1
+    chmod 600 "$root/state/selection.new" || return 1
+    sync
+    mv -f "$root/state/selection.new" "$root/state/selection" || return 1
+    fail_at after-recovery-selection
+    rm -rf "$root/slots/A" "$root/slots/B" \
+        "$root/slots/A.new" "$root/slots/B.new" || return 1
+    sync
+    fail_at after-runtime-delete
+    require_boot_reserve || return 1
     trial_bytes=$(wc -c < "$self/runtime.tar.gz") || return 1
     trial_md5_bytes=$(wc -c < "$self/runtime.md5") || return 1
     require_copy_headroom $((trial_bytes + trial_md5_bytes)) || return 1
@@ -66,13 +98,14 @@ stage_trial_runtime() {
     actual=$(md5sum "$trial_dest.new/runtime.tar.gz" | awk '{print $1}') || return 1
     [ "$actual" = "$expected" ] || return 1
     sync
-    rm -rf "$trial_dest"
     mv "$trial_dest.new" "$trial_dest" || return 1
-    printf '%s %s 0\n' "$trial_stable" "$trial_target" > "$root/state/selection.new"
+    fail_at after-runtime-dir-rename
+    printf '%s %s 0\n' - "$trial_target" > "$root/state/selection.new"
     chmod 600 "$root/state/selection.new"
     sync
     mv -f "$root/state/selection.new" "$root/state/selection"
     sync
+    fail_at after-pending-selection-rename
     write_state runtime-staged
 }
 require_boot_reserve() {
@@ -84,6 +117,99 @@ require_copy_headroom() {
     copy_kb=$(( (copy_bytes + 1023) / 1024 ))
     JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control COPY_KB=$copy_kb /bin/sh -c \
         '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" $((COPY_KB + 56)) 20'
+}
+enter_runtime_recovery() {
+    mkdir -p "$root/state" "$root/slots" || return 1
+    printf '%s\n' '- - 0' > "$root/state/selection.new" || return 1
+    chmod 600 "$root/state/selection.new" || return 1
+    sync
+    mv -f "$root/state/selection.new" "$root/state/selection" || return 1
+    rm -rf "$root/slots/A" "$root/slots/B" \
+        "$root/slots/A.new" "$root/slots/B.new" || return 1
+    sync
+    require_boot_reserve
+}
+publish_controller_core() {
+    new_core_hash=$(bounded_sha "$self/controller.tar.gz") || return 1
+    if [ -f "$root/controller.tar.gz" ]; then
+        old_core_hash=$(bounded_sha "$root/controller.tar.gz" 2>/dev/null || :)
+        new_loader_hash=$(bounded_sha "$self/local.rc") || return 1
+        old_loader_hash=$(bounded_sha "$root/local.rc" 2>/dev/null || :)
+        if [ "$old_core_hash" = "$new_core_hash" ] &&
+           [ "$old_loader_hash" = "$new_loader_hash" ]; then return 0; fi
+    fi
+    controller_bytes=$(wc -c < "$self/controller.tar.gz") || return 1
+    loader_bytes=$(wc -c < "$self/local.rc") || return 1
+    if ! require_copy_headroom $((controller_bytes + loader_bytes)); then
+        recovery_valid "$root/recovery" || recovery_valid "$root/recovery.old" || return 1
+        enter_runtime_recovery || return 1
+        require_copy_headroom $((controller_bytes + loader_bytes)) || return 1
+    fi
+    cp "$self/controller.tar.gz" "$root/controller.tar.gz.new" || return 1
+    require_boot_reserve || return 1
+    fail_at after-controller-copy
+    cp "$self/local.rc" "$root/local.rc.new" || return 1
+    require_boot_reserve || return 1
+    chmod 600 "$root/controller.tar.gz.new" || return 1
+    chmod 755 "$root/local.rc.new" || return 1
+    tar -tzf "$root/controller.tar.gz.new" >/dev/null || return 1
+    [ "$(bounded_sha "$root/controller.tar.gz.new")" = "$new_core_hash" ] || return 1
+    sync
+    mv -f "$root/controller.tar.gz.new" "$root/controller.tar.gz" || return 1
+    require_boot_reserve || return 1
+    fail_at after-controller-rename
+    mv -f "$root/local.rc.new" "$root/local.rc" || return 1
+    sync
+    write_state controller-published
+}
+recovery_valid() {
+    recovery_dir=$1
+    [ -f "$recovery_dir/dropbear.tar.gz" ] &&
+        [ -f "$recovery_dir/dropbear.md5" ] || return 1
+    recovery_expected=$(cat "$recovery_dir/dropbear.md5") || return 1
+    [ "${#recovery_expected}" = 32 ] || return 1
+    recovery_actual=$(md5sum "$recovery_dir/dropbear.tar.gz" | awk '{print $1}') || return 1
+    [ "$recovery_actual" = "$recovery_expected" ] &&
+        tar -tzf "$recovery_dir/dropbear.tar.gz" >/dev/null
+}
+publish_recovery() {
+    if ! recovery_valid "$root/recovery" && recovery_valid "$root/recovery.old"; then
+        rm -rf "$root/recovery"
+        mv "$root/recovery.old" "$root/recovery" || return 1
+        sync
+    fi
+    if recovery_valid "$root/recovery"; then
+        old_recovery=$(bounded_sha "$root/recovery/dropbear.tar.gz") || return 1
+        new_recovery=$(bounded_sha "$self/recovery.tar.gz") || return 1
+        if [ "$old_recovery" = "$new_recovery" ]; then
+            rm -rf "$root/recovery.old" "$root/recovery.new"
+            sync
+            require_boot_reserve
+            return
+        fi
+    fi
+    recovery_bytes=$(wc -c < "$self/recovery.tar.gz") || return 1
+    recovery_md5_bytes=$(wc -c < "$self/recovery.md5") || return 1
+    if ! require_copy_headroom $((recovery_bytes + recovery_md5_bytes)); then
+        enter_runtime_recovery || return 1
+        require_copy_headroom $((recovery_bytes + recovery_md5_bytes)) || return 1
+    fi
+    rm -rf "$root/recovery.new"
+    mkdir "$root/recovery.new" || return 1
+    cp "$self/recovery.tar.gz" "$root/recovery.new/dropbear.tar.gz" || return 1
+    cp "$self/recovery.md5" "$root/recovery.new/dropbear.md5" || return 1
+    recovery_valid "$root/recovery.new" || return 1
+    require_boot_reserve || return 1
+    fail_at after-recovery-copy
+    sync
+    rm -rf "$root/recovery.old"
+    [ ! -d "$root/recovery" ] || mv "$root/recovery" "$root/recovery.old" || return 1
+    fail_at after-recovery-old-rename
+    mv "$root/recovery.new" "$root/recovery" || return 1
+    fail_at after-recovery-rename
+    sync
+    rm -rf "$root/recovery.old"
+    require_boot_reserve
 }
 [ "$(id -u)" = 0 ] || die 'not root'
 [ "$(cat "$device_model_path" 2>/dev/null)" = JA-A12 ] || die 'unsupported model'
@@ -114,8 +240,8 @@ grep -qx 'logical_regular_file_cap_bytes=180224' "$self/persistent.contract" || 
 grep -qx 'final_free_reserve_bytes=81920' "$self/persistent.contract" || die 'free-space reserve mismatch'
 grep -qx 'state_config_regular_file_reserve_bytes=16384' "$self/persistent.contract" || die 'state/config reserve mismatch'
 grep -qx 'external_regular_file_reserve_bytes=4096' "$self/persistent.contract" || die 'external reserve mismatch'
-grep -qx 'transient_regular_file_cap_bytes=262144' "$self/persistent.contract" || die 'transient cap mismatch'
-grep -qx 'transient_final_free_reserve_bytes=57344' "$self/persistent.contract" || die 'transient reserve mismatch'
+grep -qx 'maintenance_regular_file_cap_bytes=180224' "$self/persistent.contract" || die 'maintenance cap mismatch'
+grep -qx 'maintenance_final_free_reserve_bytes=57344' "$self/persistent.contract" || die 'maintenance reserve mismatch'
 grep -qx 'JOOAN-MIGRATION-CONTRACT-V1' "$self/migration.contract" || die 'migration contract missing'
 grep -qx 'state=legacy-retired' "$self/migration.contract" || die 'migration states incomplete'
 
@@ -291,6 +417,14 @@ if [ "$legacy" = manual-admin ]; then
     sync
 fi
 
+case "$expanded" in
+    1|6) ;;
+    *)
+        publish_controller_core || die 'cannot publish compressed controller core'
+        publish_recovery || die 'cannot publish persistent SSH recovery bundle'
+        ;;
+esac
+
 if [ "$expanded" = 1 ] || [ "$expanded" = 6 ]; then
     # Reclaim only the inactive runtime and an intentionally disabled unsafe
     # hook backup. The active slot remains the rollback candidate.
@@ -326,28 +460,8 @@ if [ "$expanded" = 1 ] || [ "$expanded" = 6 ]; then
     sync
     mv -f "$old_slot/runtime.md5.new" "$old_slot/runtime.md5"
     require_boot_reserve || die 'runtime sidecar conversion fell below boot reserve'
-    # Persist the authenticated replacement controller as one atomic gzip before
-    # retiring any expanded controller file.
-    controller_bytes=$(wc -c < "$self/controller.tar.gz") ||
-        die 'cannot size replacement controller'
-    loader_bytes=$(wc -c < "$self/local.rc") || die 'cannot size replacement hook'
-    require_copy_headroom $((controller_bytes + loader_bytes)) ||
-        die 'insufficient boot-safe headroom for replacement controller'
-    cp "$self/controller.tar.gz" "$root/controller.tar.gz.new"
-    require_boot_reserve || die 'controller copy fell below boot reserve'
-    fail_at after-controller-copy
-    cp "$self/local.rc" "$root/local.rc.new"
-    require_boot_reserve || die 'hook copy fell below boot reserve'
-    chmod 600 "$root/controller.tar.gz.new"
-    chmod 755 "$root/local.rc.new"
-    tar -tzf "$root/controller.tar.gz.new" >/dev/null || die 'staged compressed controller CRC mismatch'
-    sync
-    mv -f "$root/controller.tar.gz.new" "$root/controller.tar.gz"
-    require_boot_reserve || die 'controller publication fell below boot reserve'
-    fail_at after-controller-rename
-    mv -f "$root/local.rc.new" "$root/local.rc"
-    sync
-    write_state controller-published || die 'cannot journal compressed controller'
+    publish_controller_core || die 'cannot publish compressed controller core'
+    publish_recovery || die 'cannot publish persistent SSH recovery bundle'
     # Normalize the retained known-good runtime as stable before switching the
     # controller hook. The replacement trial is staged only after old expanded
     # files are retired and space is recovered.
@@ -385,10 +499,10 @@ if [ "$expanded" = 1 ] || [ "$expanded" = 6 ]; then
     JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
         '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
         die 'migrated persistent layout violates final storage contract'
-    stage_trial_runtime || die 'cannot stage replacement runtime trial'
+    stage_trial_runtime || die 'cannot stage replacement runtime maintenance'
     JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
         '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
-        die 'replacement trial violates transient storage contract'
+        die 'replacement runtime violates maintenance storage contract'
 elif [ "$expanded" = 3 ]; then
     JL_ACTIVATE=$activate
     export JL_ACTIVATE
@@ -417,13 +531,13 @@ elif [ "$expanded" = 2 ] || [ "$expanded" = 4 ] || [ "$expanded" = 5 ]; then
         stage_trial_runtime || die 'cannot resume replacement runtime trial'
         JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
             '. "$JL_CONTROL/boot/common.sh" && jl_check_current_storage' ||
-            die 'resumed trial violates transient storage contract'
+            die 'resumed runtime violates maintenance storage contract'
     fi
 else
-    action=prepare
-    [ ! -f "$root/state/controller.ready" ] || action=validate
-    "$control/admin/install-controller.sh" "$action" "$self" || die 'controller publication failed'
-    write_state controller-published || die 'cannot journal controller publication'
+    printf '%s\n' 1 > "$root/state/controller.ready.new"
+    chmod 600 "$root/state/controller.ready.new"
+    sync
+    mv -f "$root/state/controller.ready.new" "$root/state/controller.ready"
     "$control/admin/install-runtime.sh" "$self" || die 'runtime staging failed'
     write_state runtime-staged || die 'cannot journal runtime staging'
     JL_ACTIVATE=$activate

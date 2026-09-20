@@ -69,12 +69,13 @@ install/uninstall stages, and emits both packages under `dist/`. It requires
 `TOOLCHAIN_ROOT` and a private compatible `OEM_ROOTFS` extraction for link-time
 ABI libraries; neither is redistributed. The package is model- and hash-gated
 and remains subject to the OEM IronMan limit of `0x200001` bytes. The persistent
-steady layout stores the compressed controller/SSH material and exactly one
-stable compressed runtime, caps regular-file content at 176 KiB (`180224`
-bytes), and preserves at least 80 KiB free on `/opt`. An update may temporarily
-add one candidate under a 256 KiB cap while retaining at least 56 KiB free,
-above the OEM startapp cleanup threshold of 50 KiB. Promotion or rollback then
-prunes the superseded or failed slot and restores the one-slot steady state.
+steady layout stores a compressed controller core, a separate SSH recovery
+bundle, and exactly one compressed runtime. Project regular files remain below
+176 KiB (`180224` bytes), with at least 80 KiB free on `/opt`. A signed update
+first enters controller-owned SSH recovery, deletes the old persistent runtime,
+then stages one replacement while retaining at least 56 KiB free—above the OEM
+startapp cleanup threshold of 50 KiB. The already-expanded old services continue
+until reboot; a failed replacement leaves SSH recovery rather than a second slot.
 
 The repository and its published releases intentionally contain no factory
 secrets, Wi-Fi credentials, device keys, flash dumps, OEM firmware, vendor
@@ -105,8 +106,8 @@ PTZ jog/stop, home, and preset controls; transactional Wi-Fi; password-synchroni
 SSH with optional keys; embedded DNS-SD; signed, sequence-gated updates; and
 exact-binary `jooanipc` containment. Host/native and emulated tests exercise
 these contracts. The current `0.1.0` line also replaces the earlier expanded
-on-flash controller with a compressed controller and stable runtime, and uses a
-journaled transient A/B trial for updates and recognized predecessor migration.
+on-flash controller with a compressed core, persistent SSH recovery bundle, and
+a journaled single-runtime maintenance transaction for updates and migration.
 
 No release is supported or hardware-qualified yet. The software remains a
 pre-release until signed install/uninstall, migration, Wi-Fi, fMP4, snapshot,

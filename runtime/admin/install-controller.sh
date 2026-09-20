@@ -76,6 +76,8 @@ case "$jl_action" in
         [ "$JL_PENDING" = - ] || jl_candidate=$JL_PENDING
         jl_slot_valid "$jl_candidate" || exit 1
         tar -tzf "$JL_ROOT/controller.tar.gz" >/dev/null || exit 1
+        jl_verify_archive "$JL_ROOT/recovery/dropbear.tar.gz" \
+            "$JL_ROOT/recovery/dropbear.md5" || exit 1
         jl_verify_archive "$JL_ROOT/slots/$jl_candidate/runtime.tar.gz" "$JL_ROOT/slots/$jl_candidate/runtime.md5" || exit 1
         [ -f "$JL_ROOT/local.rc" ] && [ ! -L "$JL_ACTIVATE" ] || exit 1
         if [ -f "$JL_ACTIVATE" ] && [ ! -e "$JL_STATE/prelocal-hook.disabled" ]; then

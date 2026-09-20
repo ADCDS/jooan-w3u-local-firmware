@@ -38,10 +38,10 @@ jl_check_storage() {
     jl_wait_free_kb "$JL_ROOT" 80 20
 }
 
-jl_check_transient_storage() {
+jl_check_maintenance_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
-    [ "$jl_storage_bytes" -le 262144 ] || {
-        jl_log "transient trial files total ${jl_storage_bytes} bytes; limit is 262144 bytes"
+    [ "$jl_storage_bytes" -le 180224 ] || {
+        jl_log "maintenance files total ${jl_storage_bytes} bytes; limit is 180224 bytes"
         return 1
     }
     jl_wait_free_kb "$JL_ROOT" 56 20
@@ -52,7 +52,7 @@ jl_check_current_storage() {
     if [ "$JL_PENDING" = - ]; then
         jl_check_storage
     else
-        jl_check_transient_storage
+        jl_check_maintenance_storage
     fi
 }
 

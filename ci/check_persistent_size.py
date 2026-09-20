@@ -41,8 +41,8 @@ def contract_values(path: Path) -> tuple[int, int, int, int, list[str]]:
     reserve = int(contract["final_free_reserve_bytes"])
     state_config = int(contract["state_config_regular_file_reserve_bytes"])
     external = int(contract["external_regular_file_reserve_bytes"])
-    transient_cap = int(contract["transient_regular_file_cap_bytes"])
-    transient_reserve = int(contract["transient_final_free_reserve_bytes"])
+    transient_cap = int(contract["maintenance_regular_file_cap_bytes"])
+    transient_reserve = int(contract["maintenance_final_free_reserve_bytes"])
     layout = list(contract["layout"])
     if cap != DEFAULT_CAP or reserve != DEFAULT_RESERVE:
         raise ValueError(
@@ -50,8 +50,8 @@ def contract_values(path: Path) -> tuple[int, int, int, int, list[str]]:
         )
     if state_config < 12 * 1024 or external < 2 * 1024:
         raise ValueError("persistent dynamic/external reservations are not realistic")
-    if transient_cap != 256 * 1024 or transient_reserve < 56 * 1024:
-        raise ValueError("transient trial contract must remain 256 KiB / at least 56 KiB")
+    if transient_cap != DEFAULT_CAP or transient_reserve < 56 * 1024:
+        raise ValueError("maintenance contract must remain 176 KiB / at least 56 KiB")
     return cap, reserve, state_config, external, layout
 
 

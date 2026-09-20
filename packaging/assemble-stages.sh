@@ -24,8 +24,8 @@ done
 rm -rf "$stage" "$controller" "$runtime" "$budget"
 mkdir -p "$stage/install" "$stage/uninstall" "$controller/boot" \
     "$controller/admin" "$controller/shared" "$runtime/bin" \
-    "$runtime/web" "$runtime/hooks" "$budget/slots/A" "$budget/slots/B" \
-    "$budget/state" "$budget/config"
+    "$runtime/web" "$runtime/hooks" "$budget/slots/stable" \
+    "$budget/recovery" "$budget/state" "$budget/config"
 
 # local.rc is the only persistent executable. Everything else in the controller
 # is authenticated, compressed at rest, and expanded to tmpfs at boot.
@@ -35,11 +35,10 @@ cp "$repo/runtime/admin/install-controller.sh" "$repo/runtime/admin/install-runt
     "$repo/runtime/admin/wifi-transaction.sh" "$controller/admin/"
 cp "$repo/runtime/boot/verify-guard.sh" "$controller/shared/verify-guard.sh"
 cp "$repo/runtime/slot/hooks/entropy-ready.sh" "$controller/shared/entropy-ready.sh"
-cp "$target/shared/libjooan_guard.so" "$target/shared/dropbear.tar.gz" \
+cp "$target/shared/libjooan_guard.so" \
     "$target/shared/jooan-auth-verify" "$target/shared/jooan-ironman-inspect" \
     "$controller/shared/"
 (cd "$controller/shared" && md5sum libjooan_guard.so | awk '{print $1}' > guard.md5)
-(cd "$controller/shared" && md5sum dropbear.tar.gz | awk '{print $1}' > dropbear.md5)
 
 cp "$target/bin/joan-daemon" "$target/bin/audio-router" "$runtime/bin/"
 cp "$repo/runtime/slot/start.sh" "$repo/runtime/slot/stop.sh" \
@@ -63,6 +62,8 @@ tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
     -C "$runtime" -cf - . | gzip -9n > "$stage/install/runtime.tar.gz"
 (cd "$stage/install" && md5sum runtime.tar.gz | awk '{print $1}' > runtime.md5)
+cp "$target/shared/dropbear.tar.gz" "$stage/install/recovery.tar.gz"
+(cd "$stage/install" && md5sum recovery.tar.gz | awk '{print $1}' > recovery.md5)
 
 awk 'NR == 1 { print; next } /^[[:space:]]*#/ { next } NF { print }' \
     "$repo/runtime/boot/local.rc" > "$stage/install/local.rc"
@@ -115,8 +116,9 @@ sign_one uninstall "$stage/uninstall"
 # Exact steady persistent layout: controller plus one promoted stable runtime.
 cp "$stage/install/local.rc" "$budget/local.rc"
 cp "$stage/install/controller.tar.gz" "$budget/"
-mkdir -p "$budget/slots/stable"
 cp "$stage/install/runtime.tar.gz" "$stage/install/runtime.md5" "$budget/slots/stable/"
+cp "$stage/install/recovery.tar.gz" "$budget/recovery/dropbear.tar.gz"
+cp "$stage/install/recovery.md5" "$budget/recovery/dropbear.md5"
 python3 "$repo/ci/check_persistent_size.py" "$budget" --target "$contract" --require
 
 du -h "$stage/install/"* "$stage/uninstall/"*
