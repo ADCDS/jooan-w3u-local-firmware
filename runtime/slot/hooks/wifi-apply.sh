@@ -13,10 +13,21 @@ id=$(wpa_cli -iwlan0 add_network | awk '/^[0-9]+$/{print;exit}')
 case "$id" in ''|*[!0-9]*) exit 1 ;; esac
 wpa_cli -iwlan0 set_network "$id" ssid "\"$ssid\"" | grep -q OK
 wpa_cli -iwlan0 set_network "$id" psk "\"$password\"" | grep -q OK
-wpa_cli -iwlan0 set_network "$id" scan_ssid 1 | grep -q OK
+wpa_cli -iwlan0 set_network "$id" key_mgmt WPA-PSK | grep -q OK
+wpa_cli -iwlan0 set_network "$id" proto RSN | grep -q OK
+wpa_cli -iwlan0 set_network "$id" pairwise CCMP | grep -q OK
+wpa_cli -iwlan0 set_network "$id" group CCMP | grep -q OK
 wpa_cli -iwlan0 select_network "$id" | grep -q OK
 wpa_cli -iwlan0 enable_network "$id" | grep -q OK
+i=0
+while [ "$i" -lt 15 ]; do
+    state=$(wpa_cli -iwlan0 status 2>/dev/null | awk -F= '$1=="wpa_state"{print $2}')
+    [ "$state" = COMPLETED ] && break
+    sleep 2
+    i=$((i + 1))
+done
+[ "${state:-}" = COMPLETED ] || exit 1
 killall udhcpc 2>/dev/null || :
-udhcpc -a -i wlan0 -x hostname:JooanW3U -b \
+udhcpc -a -n -q -t 5 -T 3 -i wlan0 -x hostname:JooanW3U \
     -p /var/run/udhcpc_wlan0_pid.txt -s /mnt/mtd/run/default.script >/dev/null 2>&1
-exit 0
+ifconfig wlan0 2>/dev/null | grep -q 'inet addr:'
