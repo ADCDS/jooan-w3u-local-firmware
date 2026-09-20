@@ -3,6 +3,12 @@
 set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cleanup_source_builds() {
+    make -C "$repo/src/daemon" clean >/dev/null 2>&1 || :
+    make -C "$repo/src/audio" clean >/dev/null 2>&1 || :
+    make -C "$repo/src/guard" clean >/dev/null 2>&1 || :
+}
+trap cleanup_source_builds EXIT HUP INT TERM
 : "${TOOLCHAIN_ROOT:?set TOOLCHAIN_ROOT to the extracted Ingenic GCC 5.4 toolchain}"
 : "${OEM_ROOTFS:?set OEM_ROOTFS to a private extraction of the compatible camera rootfs}"
 cc=$TOOLCHAIN_ROOT/bin/mips-linux-gnu-gcc
@@ -12,10 +18,13 @@ for lib in libmbedtls.so.13 libmbedx509.so.1 libmbedcrypto.so.6; do
     [ -f "$OEM_ROOTFS/lib/$lib" ] || { echo "missing $OEM_ROOTFS/lib/$lib" >&2; exit 1; }
 done
 
-build=$repo/build
+build=${BUILD_ROOT:-$repo/build}
 deps=$build/deps
 target=$build/target
-mkdir -p "$deps" "$target/bin" "$target/shared"
+generated=$build/generated
+case "$build" in /|"$repo") echo "unsafe BUILD_ROOT: $build" >&2; exit 1 ;; esac
+rm -rf "$target" "$generated"
+mkdir -p "$deps" "$target/bin" "$target/shared" "$generated"
 
 mbedtls=$deps/mbedtls-2.25.0
 if [ ! -d "$mbedtls/.git" ]; then
@@ -47,10 +56,28 @@ make -C "$repo/src/guard" -j1 all CC="$cc" \
 "$strip" "$repo/src/guard/build/libjooan_guard.so"
 cp "$repo/src/guard/build/libjooan_guard.so" "$target/shared/"
 
-"$cc" -nostdlib -static -Wl,-e,_start -Wl,--build-id=none -march=mips32r2 \
-    -mno-abicalls -fno-pic -G0 -Os "$repo/src/sha256/jooan-sha256-mips.S" \
-    -o "$target/shared/jooan-sha256"
+"$cc" -Os -muclibc -march=mips32r2 -mhard-float \
+    -I"$mbedtls/include" "$repo/src/sha256/jooan-sha256.c" \
+    "$OEM_ROOTFS/lib/libmbedcrypto.so.6" -o "$target/shared/jooan-sha256"
 "$strip" "$target/shared/jooan-sha256"
+
+release_public_key=$(python3 "$repo/packaging/generate-target-contract.py" public-key \
+    --target "$repo/packaging/targets/ja-a12.json")
+[ "${#release_public_key}" = 130 ] || { echo 'invalid target release public key length' >&2; exit 1; }
+case "$release_public_key" in 04*) ;; *) echo 'invalid target release public key prefix' >&2; exit 1 ;; esac
+case "$release_public_key" in *[!0-9a-f]*) echo 'invalid target release public key encoding' >&2; exit 1 ;; esac
+printf '#define JOOAN_RELEASE_PUBLIC_KEY_HEX "%s"\n' "$release_public_key" \
+    > "$generated/release-public-key.h"
+"$cc" -Os -muclibc -march=mips32r2 -mhard-float \
+    -I"$mbedtls/include" -include "$generated/release-public-key.h" \
+    "$repo/src/sha256/jooan-auth-verify.c" \
+    "$OEM_ROOTFS/lib/libmbedcrypto.so.6" -o "$target/shared/jooan-auth-verify"
+"$strip" "$target/shared/jooan-auth-verify"
+"$cc" -Os -muclibc -march=mips32r2 -mhard-float \
+    -I"$mbedtls/include" -DJOOAN_MODEL_TOKEN='"A12"' \
+    "$repo/src/sha256/jooan-ironman-inspect.c" \
+    "$OEM_ROOTFS/lib/libmbedcrypto.so.6" -o "$target/shared/jooan-ironman-inspect"
+"$strip" "$target/shared/jooan-ironman-inspect"
 
 dropbear=$deps/dropbear-2026.94
 dropbear_tar=$deps/dropbear-2026.94.tar.bz2
@@ -66,8 +93,8 @@ fi
 cp "$repo/runtime/admin/dropbear-localoptions.h" "$dropbear/localoptions.h"
 if [ ! -f "$dropbear/Makefile" ]; then
     (cd "$dropbear" && \
-      CC="$cc -muclibc" AR="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-ar" \
-      RANLIB="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-ranlib" \
+      CC="$cc -muclibc" AR="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-gcc-ar" \
+      RANLIB="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-gcc-ranlib" \
       CFLAGS='-Os -flto -fPIE -march=mips32r2 -mhard-float -ffunction-sections -fdata-sections' \
       LDFLAGS='-muclibc -flto -fPIE -Wl,--gc-sections' ./configure --host=mips-linux-gnu \
         --disable-zlib --disable-syslog --disable-lastlog --disable-utmp \
@@ -76,6 +103,7 @@ fi
 make -C "$dropbear" -j1 PROGRAMS='dropbear dropbearkey' MULTI=1
 "$strip" "$dropbear/dropbearmulti"
 drop_stage=$build/dropbear-stage
+rm -rf "$drop_stage"
 mkdir -p "$drop_stage/bin"
 cp "$dropbear/dropbearmulti" "$drop_stage/bin/dropbear"
 ln -f "$drop_stage/bin/dropbear" "$drop_stage/bin/dropbearkey"
@@ -85,6 +113,12 @@ tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
 (cd "$target/shared" && sha256sum libjooan_guard.so | awk '{print $1}' > guard.sha256)
 (cd "$target/shared" && sha256sum dropbear.tar.gz | awk '{print $1}' > dropbear.sha256)
 
+python3 "$repo/packaging/write-provenance.py" \
+    --repo "$repo" --build-root "$build" --toolchain-root "$TOOLCHAIN_ROOT" \
+    --oem-rootfs "$OEM_ROOTFS" --target "$repo/packaging/targets/ja-a12.json" \
+    --output "$build/build-provenance.json"
+
 file "$target/bin/joan-daemon" "$target/bin/audio-router" "$target/shared/libjooan_guard.so" \
-    "$target/shared/jooan-sha256"
+    "$target/shared/jooan-sha256" "$target/shared/jooan-auth-verify" \
+    "$target/shared/jooan-ironman-inspect"
 du -h "$target/bin/joan-daemon" "$target/shared/"*

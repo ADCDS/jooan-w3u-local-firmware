@@ -1,4 +1,4 @@
-/* Minimal release SSH server: key-only administration, no forwarding. */
+/* Local admin password is synchronized with WebUI; keys are optional. */
 #define DROPBEAR_RSA 0
 #define DROPBEAR_DSS 0
 #define DROPBEAR_ECDSA 0
@@ -13,7 +13,7 @@
 #define DROPBEAR_AES128 0
 #define DROPBEAR_AES256 0
 #define DROPBEAR_CHACHA20POLY1305 1
-#define DROPBEAR_SVR_PASSWORD_AUTH 0
+#define DROPBEAR_SVR_PASSWORD_AUTH 1
 #define DROPBEAR_SVR_PAM_AUTH 0
 #define DROPBEAR_SVR_LOCALTCPFWD 0
 #define DROPBEAR_SVR_REMOTETCPFWD 0

@@ -234,7 +234,7 @@ def _parse_version_field(field: bytes) -> tuple[str, str]:
     except UnicodeDecodeError as error:
         raise PackageValidationError("version field is not ASCII") from error
     parts = text.split(";")
-    if len(parts) < 2 or not parts[0].startswith("ver="):
+    if len(parts) != 2 or not parts[0].startswith("ver="):
         raise PackageValidationError("invalid IronMan version field")
     if not parts[1].startswith("ProductName="):
         raise PackageValidationError("missing ProductName model token")

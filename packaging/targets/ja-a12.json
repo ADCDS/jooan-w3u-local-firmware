@@ -39,17 +39,92 @@
   "compatibility_hashes": {
     "/bin/goahead": "f2e46d4b897bca54a30941b98a08327b0af37dc96d577de91486adc5ed920ffd",
     "/dev/mtdblock4": "fe4e8aac9e48155450da54b8b5e1055c2b7366ce42102a0629e955714ab25eda",
+    "/lib/ld-uClibc-0.9.33.2.so": "ae305dce334d55de87027d4fd0228215e131bfa80b589bef9ab814d55f243ce8",
     "/lib/ko/skw6316.ko": "ab8ac8328011053b41889b2ef75eefc036a85cef7f8741c12bbb678dd1dce29e",
     "/lib/ko/skw_usb_lite.ko": "02be360a7ff00409965a3b96a5f47e507c30866f480ae1e5ba667d0763d820c0",
+    "/lib/libmbedcrypto.so.6": "23cc6b8ac7da81836a8be92ae4747b256b28f4cd2c78d6e9208d084a65ea3319",
+    "/lib/libmbedtls.so.13": "7c02441ac6375209f68c8d35a04ba2877fabe48d4ac68cbeec33d3bb349aac75",
+    "/lib/libmbedx509.so.1": "b8b1435093bf65e0c9c40fb3db9ebd7c66985ff7d7179af0b2d343f92f2a125c",
+    "/lib/libuClibc-0.9.33.2.so": "696cb0d094977efcc116966a27ce8f827132890d2c892b80004d222330e27856",
     "/mnt/mtd/lib/modules/sensor_cv2005.ko": "e5080976a0f9d45e6621746a325fa26e13783ecb558d10d160c7848157f310ca",
     "/mnt/mtd/lib/modules/sensor_cv2005s1.ko": "c245eeb74c54c2174d861f449c10e458fddff708f1e3e84d1338f65608bb0eed",
     "/mnt/mtd/run/jooanipc": "edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355",
     "/mnt/mtd/startapp": "23480f1449fb9017b49283bbf12ae6a3db6df833ca89a14075df9d6c25f8d8c1"
   },
+  "abi_contract": {
+    "dynamic_loader": "/lib/ld-uClibc.so.0",
+    "dynamic_loader_target": "ld-uClibc-0.9.33.2.so",
+    "endianness": "little",
+    "float_abi": "hard",
+    "isa": "mips32r2",
+    "required_sonames": [
+      "libc.so.0",
+      "libpthread.so.0",
+      "libdl.so.0",
+      "libmbedcrypto.so.6",
+      "libmbedtls.so.13",
+      "libmbedx509.so.1"
+    ]
+  },
+  "artifact_contracts": {
+    "install": {
+      "rollback_artifact": "JOOAN_UNINSTALL",
+      "semantics": "transactional-install-with-transient-trial-rollback"
+    },
+    "uninstall": {
+      "rollback_artifact": "none",
+      "semantics": "destructive-removal-to-oem-next-boot-not-state-rollback"
+    }
+  },
+  "migration_contract": {
+    "journal": "state/migration-state",
+    "legacy_root": "/opt/open",
+    "states": [
+      "none",
+      "legacy-validated",
+      "expanded-product-0.1-validated",
+      "keys-preserved",
+      "controller-published",
+      "failclosed-hook-published",
+      "activated",
+      "expanded-controller-retired",
+      "runtime-staged",
+      "legacy-retired"
+    ],
+    "version": 1
+  },
   "notes": [
     "This target is the dual-CV2005 JA-A12 hardware revision.",
     "It is not compatible with the public single-SC2336P/ATBM6132U W3-U target."
   ],
+  "persistent_contract": {
+    "external_regular_file_reserve_bytes": 4096,
+    "final_free_reserve_bytes": 81920,
+    "layout": [
+      "local.rc",
+      "controller.tar.gz",
+      "slots/stable/runtime.tar.gz",
+      "slots/stable/runtime.md5",
+      "state/",
+      "config/"
+    ],
+    "logical_regular_file_cap_bytes": 180224,
+    "root": "/opt/custom/jooan-local",
+    "state_config_regular_file_reserve_bytes": 16384,
+    "transient_final_free_reserve_bytes": 32768,
+    "transient_regular_file_cap_bytes": 262144
+  },
+  "release_authenticity": {
+    "algorithm": "ecdsa-p256-sha256-rfc6979",
+    "key_id": "bbd5b749b66a42e2d3a6495ad1c3f88c05f3bf84d516b3e6fe8aaeb9f1715ead",
+    "public_key_sec1": "04c40bd55dee80972dcb2bab722e6a02dc498486c5da7256f70b05384a84259a8c8ba54460e0fc0b8646b0789dff2e3b9a270439e8b60054c6195569290243c8a5",
+    "signature_format": "asn1-der"
+  },
   "schema_version": 1,
-  "target_id": "jooan-ja-a12-t23n-dual-cv2005-skw6316"
+  "target_id": "jooan-ja-a12-t23n-dual-cv2005-skw6316",
+  "update_policy": {
+    "minimum_sequence": 1,
+    "reinstall_same_sequence": false,
+    "sequence_state": "state/release-sequence"
+  }
 }

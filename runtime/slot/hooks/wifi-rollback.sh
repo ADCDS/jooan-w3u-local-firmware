@@ -11,4 +11,5 @@ else
     rm -f "$dest"
 fi
 sync
-reboot
+# The transaction coordinator journals completion before requesting reboot.
+exit 0

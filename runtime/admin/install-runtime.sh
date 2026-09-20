@@ -1,12 +1,13 @@
 #!/bin/sh
 # Locally staged archive only; no downloader, OTA exploit, or shared SSH update.
-# Staging directory: runtime.tar.gz, runtime.sha256 (one lowercase SHA-256).
-# Caller establishes manifest authenticity before invoking this integrity check.
-. "${JL_ROOT:-/opt/custom/jooan-local}/boot/common.sh" || exit 1
+# Staging directory: runtime.tar.gz, runtime.md5 (one lowercase MD5 digest).
+# OTA installer establishes SHA/signature authenticity in tmpfs; MD5 checks only
+# corruption during storage. It does not authorize unauthenticated updates.
+. "${JL_CONTROL:-/run/jooan-local/controller}/boot/common.sh" || exit 1
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2
 jl_stage=$1
 case "$jl_stage" in /*) ;; *) jl_log 'staging path must be absolute'; exit 2 ;; esac
-jl_verify_archive "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.sha256" || exit 1
+jl_verify_archive "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.md5" || exit 1
 jl_lock || exit 1
 trap 'jl_unlock' EXIT
 jl_read_selection || exit 1
@@ -33,27 +34,36 @@ mkdir -p "$JL_ROOT/slots" "$JL_STATE" "$JL_CONFIG" || exit 1
 # not a third temporary archive. The selected target is proven inactive above;
 # discard only that old inactive copy while the stable/running slot remains an
 # intact rollback path across power loss.
+jl_total=$(jl_tree_bytes "$JL_ROOT")
+jl_archive_bytes=$(wc -c < "$jl_stage/runtime.tar.gz")
+jl_size=$(( (jl_archive_bytes + 1023) / 1024 ))
+jl_old=0
+[ ! -d "$jl_dest" ] || jl_old=$(jl_tree_bytes "$jl_dest")
+case "$jl_total:$jl_size:$jl_old" in *[!0-9:]*|:*|*:) exit 1 ;; esac
+jl_need=$((jl_size + 8))
+[ $((jl_total - jl_old + jl_archive_bytes + 4096)) -le 262144 ] || {
+    jl_log 'runtime trial would exceed 256 KiB transient tree'; exit 1;
+}
 if [ -d "$jl_dest" ]; then
-    rm -f "$jl_dest/runtime.tar.gz" "$jl_dest/runtime.sha256" || exit 1
+    rm -f "$jl_dest/runtime.tar.gz" "$jl_dest/runtime.md5" || exit 1
     rm -rf "$jl_dest" || exit 1
     sync
 fi
-# Reserve >=64 KiB while staging beside the stable slot.
-jl_size=$(du -k "$jl_stage/runtime.tar.gz" | awk '{print $1}')
-case "$jl_size" in ''|*[!0-9]*) exit 1 ;; esac
-jl_need=$((jl_size + 8))
-jl_wait_free_kb "$JL_ROOT" $((jl_need + 64)) 20 || {
-    jl_log 'compressed update would violate 64 KiB free-space reserve'; exit 1;
+# A two-slot trial is temporary. Preserve 32 KiB while staging; promotion or
+# rollback prunes the superseded slot and restores the 80 KiB steady reserve.
+jl_wait_free_kb "$JL_ROOT" $((jl_need + 32)) 20 || {
+    jl_log 'compressed trial would violate 32 KiB transient free-space reserve'; exit 1;
 }
 mkdir "$jl_dest.new" || exit 1
-cp "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.sha256" "$jl_dest.new/" || exit 1
-jl_verify_archive "$jl_dest.new/runtime.tar.gz" "$jl_dest.new/runtime.sha256" || exit 1
+cp "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.md5" "$jl_dest.new/" || exit 1
+jl_verify_archive "$jl_dest.new/runtime.tar.gz" "$jl_dest.new/runtime.md5" || exit 1
 sync
 mv "$jl_dest.new" "$jl_dest" || exit 1
 sync
-jl_wait_free_kb "$JL_ROOT" 64 20 || exit 1
+jl_check_transient_storage || exit 1
 jl_write_selection "$JL_STABLE" "$jl_target" 0 || exit 1
 sync
+jl_check_transient_storage || exit 1
 jl_unlock
 trap - EXIT
 jl_log "slot $jl_target staged; trial begins on the next boot"

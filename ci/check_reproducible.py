@@ -24,15 +24,19 @@ def digest(path: Path) -> tuple[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--command", default=os.environ.get("REPRO_BUILD_CMD"))
+    parser.add_argument("--command", default=os.environ.get("REPRO_BUILD_CMD", "./release.sh"))
     parser.add_argument("--artifact", action="append")
     parser.add_argument("--root")
     args = parser.parse_args()
     artifacts = args.artifact or ([os.environ["REPRO_ARTIFACT"]]
-                                  if os.environ.get("REPRO_ARTIFACT") else [])
-    if not args.command or not artifacts:
-        print("reproducible-build: SKIP (set REPRO_BUILD_CMD and REPRO_ARTIFACT)")
-        return 0
+                                  if os.environ.get("REPRO_ARTIFACT") else [
+                                      "JOOAN_FW_PKG",
+                                      "JOOAN_FW_PKG.sha256",
+                                      "JOOAN_UNINSTALL",
+                                      "JOOAN_UNINSTALL.sha256",
+                                      "manifest.json",
+                                      "manifest.json.sig",
+                                  ])
     root = Path(args.root or subprocess.check_output(
         ["git", "rev-parse", "--show-toplevel"], text=True
     ).strip()).resolve()
@@ -40,10 +44,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="jooan-repro-") as temporary:
         for run in (1, 2):
             out = Path(temporary) / f"run-{run}"
+            build = Path(temporary) / f"build-{run}"
             out.mkdir()
             env = os.environ.copy()
             env.update({
                 "BUILD_OUT": str(out),
+                "BUILD_ROOT": str(build),
                 "LC_ALL": "C",
                 "SOURCE_DATE_EPOCH": "0",
                 "TZ": "UTC",
