@@ -16,6 +16,10 @@
 #define JOOAN_GUARD_LOCAL_MQTT_PORT 1883
 #define JOOAN_GUARD_DSP_PATH "/dev/dsp"
 #define JOOAN_GUARD_TALKBACK_PATH "/tmp/jooan-guard-talkback.sock"
+#define JOOAN_GUARD_RTSP_PASSWORD_PATH \
+    "/opt/custom/jooan-local/config/rtsp.password"
+#define JOOAN_GUARD_RTSP_SYNC_PATH \
+    "/opt/custom/jooan-local/config/rtsp.synced"
 #define JOOAN_GUARD_MIC_STREAM_IOCTL 0x40145062UL
 
 /* Exact OEM AMIC_AI_GET_STREAM userspace request. On the supported 32-bit

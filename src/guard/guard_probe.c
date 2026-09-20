@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "guard.h"
+#include "guard_sha256.h"
 #include "../audio/audio_guard_wire.h"
 #include "../audio/audio_mic_wire.h"
 #include "../audio/audio_wire.h"
@@ -23,6 +24,19 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+struct accept_probe {
+    int listener;
+    int accepted;
+};
+
+static void *accept_probe_thread(void *opaque)
+{
+    struct accept_probe *probe = opaque;
+
+    probe->accepted = accept(probe->listener, NULL, NULL);
+    return NULL;
+}
+
 static int policy_probe(void)
 {
     struct addrinfo *result = NULL;
@@ -38,10 +52,19 @@ static int policy_probe(void)
     int api_listener = -1;
     int api_client = -1;
     int api_accepted = -1;
+    int rtsp_listener = -1;
+    int rtsp_first = -1;
+    int rtsp_second = -1;
     int local_pair[2] = { -1, -1 };
     struct iovec vector;
     struct msghdr message;
     char mqtt_port[16];
+    char rtsp_port[16];
+    char rtsp_digest[65];
+    const char *rtsp_password = getenv("JOOAN_GUARD_TEST_RTSP_PASSWORD_PATH");
+    const char *rtsp_sync = getenv("JOOAN_GUARD_TEST_RTSP_SYNC_PATH");
+    struct accept_probe accept_probe;
+    pthread_t accept_thread;
     int rc = 1;
 
     if (getaddrinfo(JOOAN_GUARD_API_HOST, "443", NULL, &result) != 0 ||
@@ -112,6 +135,73 @@ static int policy_probe(void)
     if (api_accepted < 0)
         goto done;
 
+    if (rtsp_password == NULL || rtsp_sync == NULL)
+        goto done;
+    rtsp_listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (rtsp_listener < 0)
+        goto done;
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_port = 0;
+    local_length = sizeof(local);
+    if (bind(rtsp_listener, (struct sockaddr *)&local, sizeof(local)) != 0 ||
+        listen(rtsp_listener, 2) != 0 ||
+        getsockname(rtsp_listener, (struct sockaddr *)&local,
+                    &local_length) != 0 ||
+        snprintf(rtsp_port, sizeof(rtsp_port), "%u",
+                 (unsigned)ntohs(local.sin_port)) <= 0 ||
+        setenv("JOOAN_GUARD_TEST_RTSP_PORT", rtsp_port, 1) != 0)
+        goto done;
+    {
+        static const char password[] = "temporary-password\n";
+        int password_fd = open(rtsp_password, O_WRONLY | O_CREAT | O_TRUNC,
+                               0600);
+        if (password_fd < 0 ||
+            write(password_fd, password, sizeof(password) - 1) !=
+                (ssize_t)(sizeof(password) - 1) || close(password_fd) != 0 ||
+            jooan_guard_sha256_file_hex(rtsp_password, rtsp_digest) != 0)
+            goto done;
+    }
+    (void)unlink(rtsp_sync);
+    memset(&accept_probe, 0, sizeof(accept_probe));
+    accept_probe.listener = rtsp_listener;
+    accept_probe.accepted = -1;
+    if (pthread_create(&accept_thread, NULL, accept_probe_thread,
+                       &accept_probe) != 0)
+        goto done;
+    rtsp_first = socket(AF_INET, SOCK_STREAM, 0);
+    if (rtsp_first < 0 ||
+        connect(rtsp_first, (struct sockaddr *)&local, sizeof(local)) != 0)
+        goto rtsp_join_fail;
+    {
+        struct timeval timeout = { 1, 0 };
+        unsigned char byte;
+        (void)setsockopt(rtsp_first, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout));
+        if (recv(rtsp_first, &byte, 1, 0) != 0)
+            goto rtsp_join_fail;
+    }
+    {
+        int marker_fd = open(rtsp_sync, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (marker_fd < 0 || write(marker_fd, rtsp_digest, 64) != 64 ||
+            close(marker_fd) != 0)
+            goto rtsp_join_fail;
+    }
+    rtsp_second = socket(AF_INET, SOCK_STREAM, 0);
+    if (rtsp_second < 0 ||
+        connect(rtsp_second, (struct sockaddr *)&local, sizeof(local)) != 0 ||
+        pthread_join(accept_thread, NULL) != 0 || accept_probe.accepted < 0)
+        goto done;
+    close(accept_probe.accepted);
+    accept_probe.accepted = -1;
+    goto rtsp_gate_done;
+rtsp_join_fail:
+    (void)shutdown(rtsp_listener, SHUT_RDWR);
+    (void)pthread_join(accept_thread, NULL);
+    goto done;
+rtsp_gate_done:
+
     memset(&blocked, 0, sizeof(blocked));
     blocked.sin_family = AF_INET;
     blocked.sin_port = htons(443);
@@ -179,6 +269,12 @@ done:
         close(api_client);
     if (api_listener >= 0)
         close(api_listener);
+    if (rtsp_first >= 0)
+        close(rtsp_first);
+    if (rtsp_second >= 0)
+        close(rtsp_second);
+    if (rtsp_listener >= 0)
+        close(rtsp_listener);
     return rc;
 }
 
@@ -197,6 +293,26 @@ static int vfork_close_probe(int descriptor)
         WEXITSTATUS(status) != 0)
         return -1;
     return 0;
+}
+
+struct dsp_writev_race {
+    int descriptor;
+    ssize_t result;
+};
+
+static void *dsp_writev_thread(void *opaque)
+{
+    static const unsigned char first = 0xa5;
+    static const unsigned char second = 0x5a;
+    struct dsp_writev_race *race = opaque;
+    struct iovec vectors[2];
+
+    vectors[0].iov_base = (void *)&first;
+    vectors[0].iov_len = 1;
+    vectors[1].iov_base = (void *)&second;
+    vectors[1].iov_len = 1;
+    race->result = writev(race->descriptor, vectors, 2);
+    return NULL;
 }
 
 static int talkback_probe(void)
@@ -220,6 +336,8 @@ static int talkback_probe(void)
     int attempt;
     int rc = 1;
     int alias;
+    struct dsp_writev_race vector_race;
+    pthread_t vector_thread;
 
     if (dsp_path == NULL || socket_path == NULL)
         return 1;
@@ -256,6 +374,58 @@ static int talkback_probe(void)
     strcpy(address.sun_path, socket_path);
     memset(encoded, 0xd5, sizeof(encoded));
     memcpy(encoded, encoded_prefix, sizeof(encoded_prefix));
+
+    /* Keep a vector write in the DSP critical section while talkback arrives.
+     * The file must contain the complete vector marker before decoded PCM. */
+    memset(&vector_race, 0, sizeof(vector_race));
+    vector_race.descriptor = dsp;
+    if (setenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE", "1", 1) != 0 ||
+        pthread_create(&vector_thread, NULL, dsp_writev_thread,
+                       &vector_race) != 0)
+        goto done;
+    usleep(20000);
+    if (jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_PTT_ACQUIRE,
+            UINT64_C(0x2122232425262728), 1, NULL, 0,
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length ||
+        jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
+            UINT64_C(0x2122232425262728), 2, encoded, sizeof(encoded),
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length) {
+        (void)pthread_join(vector_thread, NULL);
+        goto done;
+    }
+    if (pthread_join(vector_thread, NULL) != 0 || vector_race.result != 2 ||
+        unsetenv("JOOAN_GUARD_TEST_DSP_WRITEV_PAUSE") != 0)
+        goto done;
+    for (attempt = 0; attempt < 100; ++attempt) {
+        if (stat(dsp_path, &status) == 0 &&
+            status.st_size == (off_t)(sizeof(encoded) * 2U + 2U))
+            break;
+        usleep(10000);
+    }
+    if (attempt == 100)
+        goto done;
+    reader = open(dsp_path, O_RDONLY);
+    if (reader < 0 || read(reader, actual, 2) != 2 ||
+        actual[0] != 0xa5 || actual[1] != 0x5a || close(reader) != 0)
+        goto done;
+    reader = -1;
+    if (jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_PTT_RELEASE,
+            UINT64_C(0x2122232425262728), 3, NULL, 0,
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length || ftruncate(dsp, 0) != 0 ||
+        lseek(dsp, 0, SEEK_SET) != 0)
+        goto done;
 
     /* A stale owner must expire before it can deliver audio. */
     if (jooan_audio_guard_datagram_build(

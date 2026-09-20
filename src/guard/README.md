@@ -13,7 +13,11 @@ While active, the guard:
 - resolves only `use1api.jooaniot.com` and `use1mqtt01.jooaniot.com` to
   distinct loopback aliases, routing MQTT to the local TCP/1883 bridge and the
   API to its original local port;
-- rewrites OEM IPv4/IPv6 listener binds to loopback;
+- rewrites OEM IPv4/IPv6 listener binds to loopback except the product RTSP
+  contract on TCP/554;
+- rejects non-loopback RTSP accepts while the SHA-256 of the configured RTSP
+  password does not match `rtsp.synced`; loopback fMP4 ingestion remains
+  available during synchronization;
 - confines `connect`, `send`, `sendto`, `sendmsg`, `sendmmsg`, `sendfile64`,
   `write`, and `writev`, while permitting Unix sockets and replies from the
   approved local OEM listener ports;

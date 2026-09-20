@@ -18,6 +18,16 @@
       "expected": {"decision": "allow", "reason": "product-rtsp-contract", "source": "0.0.0.0", "port": 554}
     },
     {
+      "id": "deny-unsynced-external-rtsp-accept",
+      "input": {"direction": "accept", "family": "ipv4", "protocol": "tcp", "source_port": 554, "peer": "10.42.0.1", "rtsp_password_sync": false},
+      "expected": {"decision": "close", "reason": "rtsp-credential-unsynchronized"}
+    },
+    {
+      "id": "allow-unsynced-loopback-rtsp-accept",
+      "input": {"direction": "accept", "family": "ipv4", "protocol": "tcp", "source_port": 554, "peer": "127.0.0.1", "rtsp_password_sync": false},
+      "expected": {"decision": "allow", "reason": "loopback-fmp4-ingestion"}
+    },
+    {
       "id": "confine-oem-p2p-bind",
       "input": {"direction": "bind", "family": "ipv4", "protocol": "tcp", "source": "0.0.0.0", "port": 8899},
       "expected": {"decision": "rewrite", "reason": "listener-confinement", "source": "127.0.0.1", "port": 8899}
