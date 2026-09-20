@@ -28,11 +28,15 @@ globalThis.window={MediaSource:MediaSourceMock,fetch:async url=>{
   queueMicrotask(()=>player.close());
   return{ok:true,arrayBuffer:async()=>new ArrayBuffer(8),headers:{get:()=>"1"}};
 }};
-const video={src:'',currentTime:0,removeAttribute(){this.src='';},load(){},play:async()=>{}};
+let settlePlay;
+const video={src:'',currentTime:0,removeAttribute(){this.src='';},load(){},play:()=>new Promise(resolve=>{settlePlay=resolve;})};
 const {Fmp4Player}=await import('./video-player.js');
 player=new Fmp4Player(video,{mime:'video/mp4; codecs="avc1.640032"',init:'/init.mp4',fragment:'/fragment.mp4'});
 await player.start();
+for(let i=0;i<30&&!fragmentCalls;i++)await new Promise(resolve=>queueMicrotask(resolve));
+assert.ok(fragmentCalls>0,'fragment pump must not wait for the play promise to settle');
 for(let i=0;i<30&&initCalls<2;i++)await new Promise(resolve=>queueMicrotask(resolve));
 assert.ok(initCalls>=2,'player must fetch a new init segment after repeated fragment failures');
 assert.equal(player.sequence,0,'reinitialized player resets fragment sequence');
+settlePlay?.();
 console.log('video-player recovery: PASS');

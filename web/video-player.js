@@ -37,7 +37,10 @@ export class Fmp4Player {
     this.buffer = media.addSourceBuffer(mime);
     this.buffer.mode = 'segments';
     await this.append((await this.fetch(this.stream.init)).bytes, generation);
-    await this.video.play().catch(() => {});
+    // Browsers may keep play() pending until the first decodable media sample
+    // arrives.  Start the fragment pump without waiting for that promise, or
+    // an init-only MediaSource deadlocks before its first fragment request.
+    void this.video.play().catch(() => {});
   }
 
   async fetch(url) {
