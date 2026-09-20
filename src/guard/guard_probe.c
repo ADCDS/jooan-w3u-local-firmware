@@ -501,7 +501,7 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
-    usleep(650000);
+    usleep(2150000);
     if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     if (jooan_audio_guard_datagram_build(
