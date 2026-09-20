@@ -396,11 +396,11 @@ static int talkback_probe(void)
         speaker_value == NULL)
         return 1;
     if (wait_file_contents(speaker_direction, "out", 3) != 0 ||
-        wait_file_contents(speaker_value, "0", 1) != 0 ||
+        wait_file_contents(speaker_value, "1", 1) != 0 ||
         write_file_contents(speaker_direction, "in", 2) != 0 ||
         wait_file_contents(speaker_direction, "out", 3) != 0 ||
-        write_file_contents(speaker_value, "1", 1) != 0 ||
-        wait_file_contents(speaker_value, "0", 1) != 0)
+        write_file_contents(speaker_value, "0", 1) != 0 ||
+        wait_file_contents(speaker_value, "1", 1) != 0)
         return 1;
     dsp = open(dsp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     sender = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -463,9 +463,9 @@ static int talkback_probe(void)
         (void)pthread_join(vector_thread, NULL);
         goto done;
     }
-    if (wait_file_contents(speaker_value, "1", 1) != 0 ||
-        write_file_contents(speaker_value, "0", 1) != 0 ||
-        wait_file_contents(speaker_value, "1", 1) != 0) {
+    if (wait_file_contents(speaker_value, "0", 1) != 0 ||
+        write_file_contents(speaker_value, "1", 1) != 0 ||
+        wait_file_contents(speaker_value, "0", 1) != 0) {
         (void)pthread_join(vector_thread, NULL);
         goto done;
     }
@@ -487,7 +487,7 @@ static int talkback_probe(void)
         sendto(sender, datagram, datagram_length, 0,
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length ||
-        wait_file_contents(speaker_value, "0", 1) != 0 ||
+        wait_file_contents(speaker_value, "1", 1) != 0 ||
         ftruncate(dsp, 0) != 0 ||
         lseek(dsp, 0, SEEK_SET) != 0)
         goto done;
@@ -502,7 +502,7 @@ static int talkback_probe(void)
         (ssize_t)datagram_length)
         goto done;
     usleep(650000);
-    if (wait_file_contents(speaker_value, "0", 1) != 0)
+    if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
@@ -512,7 +512,7 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
-    if (wait_file_contents(speaker_value, "0", 1) != 0)
+    if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     usleep(100000);
     if (stat(dsp_path, &status) != 0 || status.st_size != 0)
@@ -526,7 +526,7 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
-    if (wait_file_contents(speaker_value, "0", 1) != 0)
+    if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,
@@ -536,7 +536,7 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
-    if (wait_file_contents(speaker_value, "1", 1) != 0)
+    if (wait_file_contents(speaker_value, "0", 1) != 0)
         goto done;
     for (attempt = 0; attempt < 100; ++attempt) {
         if (stat(dsp_path, &status) == 0 &&
@@ -554,7 +554,7 @@ static int talkback_probe(void)
                (struct sockaddr *)&address, sizeof(address)) !=
         (ssize_t)datagram_length)
         goto done;
-    if (wait_file_contents(speaker_value, "0", 1) != 0)
+    if (wait_file_contents(speaker_value, "1", 1) != 0)
         goto done;
     if (jooan_audio_guard_datagram_build(
             datagram, sizeof(datagram), JOOAN_AUDIO_PTT_PCMA,

@@ -392,27 +392,61 @@ static int speaker_write_path(const char *path, const char *value,
     return amount == (ssize_t)length ? 0 : -1;
 }
 
+static int speaker_read_level(char *level)
+{
+    int descriptor;
+    ssize_t amount;
+    int saved_errno;
+
+    if (level == NULL || next_open == NULL || next_read == NULL ||
+        next_close == NULL)
+        return -1;
+    descriptor = next_open(configured_speaker_value_path(), O_RDONLY);
+    if (descriptor < 0)
+        return -1;
+    amount = next_read(descriptor, level, 1);
+    saved_errno = errno;
+    (void)next_close(descriptor);
+    errno = saved_errno;
+    return amount == 1 ? 0 : -1;
+}
+
 static int speaker_set_enabled(int enabled)
 {
-    const char level = enabled ? '1' : '0';
+    const char level = enabled ? JOOAN_GUARD_SPEAKER_ENABLED_LEVEL :
+                                 JOOAN_GUARD_SPEAKER_MUTED_LEVEL;
+    const char muted = JOOAN_GUARD_SPEAKER_MUTED_LEVEL;
     int direction_result;
     int value_result;
+    int attempt;
+    char observed = '\0';
 
     pthread_mutex_lock(&speaker_lock);
-    direction_result = speaker_write_path(
-        configured_speaker_direction_path(), "out", 3);
-    value_result = speaker_write_path(configured_speaker_value_path(),
-                                      &level, 1);
-    if (direction_result != 0 || value_result != 0) {
-        __atomic_store_n(&speaker_enabled, 0, __ATOMIC_RELEASE);
-        if (enabled)
-            (void)speaker_write_path(configured_speaker_value_path(), "0", 1);
-        pthread_mutex_unlock(&speaker_lock);
-        return -1;
+    for (attempt = 0; attempt < 3; ++attempt) {
+        direction_result = speaker_write_path(
+            configured_speaker_direction_path(), "out", 3);
+        value_result = speaker_write_path(configured_speaker_value_path(),
+                                          &level, 1);
+        if (direction_result == 0 && value_result == 0 &&
+            speaker_read_level(&observed) == 0 && observed == level) {
+            __atomic_store_n(&speaker_enabled, enabled != 0,
+                             __ATOMIC_RELEASE);
+            pthread_mutex_unlock(&speaker_lock);
+            return 0;
+        }
+        usleep(1000);
     }
-    __atomic_store_n(&speaker_enabled, enabled != 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&speaker_enabled, 0, __ATOMIC_RELEASE);
+    for (attempt = 0; attempt < 3; ++attempt) {
+        (void)speaker_write_path(configured_speaker_direction_path(),
+                                 "out", 3);
+        (void)speaker_write_path(configured_speaker_value_path(), &muted, 1);
+        if (speaker_read_level(&observed) == 0 && observed == muted)
+            break;
+        usleep(1000);
+    }
     pthread_mutex_unlock(&speaker_lock);
-    return 0;
+    return -1;
 }
 
 static int speaker_publish_ready(void)
@@ -467,7 +501,9 @@ static ssize_t speaker_confined_write(int descriptor, unsigned int role,
         return -1;
     }
     pthread_mutex_lock(&speaker_lock);
-    level = __atomic_load_n(&speaker_enabled, __ATOMIC_ACQUIRE) ? '1' : '0';
+    level = __atomic_load_n(&speaker_enabled, __ATOMIC_ACQUIRE) ?
+            JOOAN_GUARD_SPEAKER_ENABLED_LEVEL :
+            JOOAN_GUARD_SPEAKER_MUTED_LEVEL;
     value = &level;
     if ((role & FD_ROLE_SPEAKER_DIRECTION) != 0) {
         value = "out";
@@ -482,15 +518,15 @@ static ssize_t speaker_confined_write(int descriptor, unsigned int role,
     return (ssize_t)reported_length;
 }
 
+#ifdef GUARD_TESTING
 static const char *configured_mic_socket_path(void)
 {
-#ifdef GUARD_TESTING
     const char *path = getenv("JOOAN_GUARD_TEST_MIC_SOCKET_PATH");
     if (path != NULL && path[0] != '\0')
         return path;
-#endif
     return JOOAN_AUDIO_MIC_SOCKET_PATH;
 }
+#endif
 
 static uint16_t configured_local_mqtt_port(void)
 {
@@ -779,6 +815,7 @@ static void microphone_tap_iov(int descriptor, uint32_t generation,
     pthread_mutex_unlock(&mic_lock);
 }
 
+#ifdef GUARD_TESTING
 static void start_microphone_tap(void)
 {
     const char *path = configured_mic_socket_path();
@@ -804,6 +841,7 @@ static void start_microphone_tap(void)
     mic_socket_address_length =
         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + path_length + 1);
 }
+#endif
 
 static void *talkback_main(void *unused)
 {
@@ -989,8 +1027,10 @@ __attribute__((constructor)) static void guard_initialize(void)
         if (speaker_set_enabled(0) == 0 && speaker_publish_ready() == 0 &&
             speaker_wait_hook_release() == 0)
             start_talkback();
+#ifdef GUARD_TESTING
         if (next_read != NULL && next_readv != NULL && next_sendto != NULL)
             start_microphone_tap();
+#endif
     }
 }
 
@@ -1581,8 +1621,10 @@ static int guarded_open(const char *path, int flags, mode_t mode, int use_mode,
         strcmp(path, configured_dsp_path()) == 0) {
         if ((flags & O_ACCMODE) == O_WRONLY)
             track_fresh_fd(descriptor, FD_ROLE_DSP_WRITE);
+#ifdef GUARD_TESTING
         else if ((flags & O_ACCMODE) == O_RDONLY)
             track_fresh_fd(descriptor, FD_ROLE_DSP_READ);
+#endif
     } else if (guard_applies() && descriptor >= 0 &&
                (flags & O_ACCMODE) != O_RDONLY &&
                strcmp(path, configured_speaker_direction_path()) == 0) {

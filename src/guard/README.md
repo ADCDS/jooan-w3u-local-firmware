@@ -31,7 +31,8 @@ While active, the guard:
   immediately after close or a failed write. Talk ownership expires after half
   a second without a valid packet, and malformed or out-of-sequence traffic
   releases ownership.
-- owns the active-high speaker amplifier on GPIO 63: OEM direction/value writes
+- owns the board-configured active-low speaker amplifier on GPIO 63: OEM
+  direction/value writes
   are confined to output/muted, the amplifier is enabled only for a valid local
   talkback lease, and release, malformed traffic, timeout, or shutdown restores
   mute. This suppresses the OEM motion-detection siren without disabling
@@ -40,11 +41,9 @@ While active, the guard:
   reporting successful consumption, so muted alarm audio cannot queue and leak
   into the next authenticated talkback window; guard-injected PCM bypasses the
   interposed OEM path.
-- records an `O_RDONLY` open of `/dev/dsp`, taps successful `read`/`readv` and
-  the exact OEM `AMIC_AI_GET_STREAM` ioctl PCM16 result without blocking the
-  OEM reader, converts it to 16 kHz mono A-law, and
-  sends fixed 20 ms `JAGM` datagrams to `/run/jooan-local/mic.sock`; missing or
-  backpressured listeners cause packet drops, never an OEM read failure.
+- retains a host-only probe for the recovered `AMIC_AI_GET_STREAM` ABI. The
+  production microphone path instead consumes the OEM loopback RTSP stream's
+  16 kHz mono PCMA track, avoiding an unverified live-driver interposer path.
 
 Build and run host tests with `make test`. The test-only shared object accepts
 fake executable, DSP, and socket paths through environment variables. Those

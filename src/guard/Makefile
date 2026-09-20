@@ -46,7 +46,7 @@ test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	test_tmp=$$(mktemp -d /tmp/jooan-guard-test.XXXXXX); \
 	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/speaker-direction" "$$test_tmp/speaker-value" "$$test_tmp/speaker-ready" "$$test_tmp/speaker-released" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
 	printf out > "$$test_tmp/speaker-direction"; \
-	printf 0 > "$$test_tmp/speaker-value"; \
+	printf 1 > "$$test_tmp/speaker-value"; \
 	printf released > "$$test_tmp/speaker-released"; \
 	export JOOAN_GUARD_TEST_EXE="$(CURDIR)/$(BUILD)/guard_probe"; \
 	export JOOAN_GUARD_TEST_DSP_PATH="$$test_tmp/dsp"; \
