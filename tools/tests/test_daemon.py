@@ -83,7 +83,10 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   slow=[]
   for _ in range(4):
    s=socket.create_connection(('127.0.0.1',18081),2);s.sendall(b'G');slow.append(s)
-  time.sleep(.1);overflow=socket.create_connection(('127.0.0.1',18081),2);assert b' 503 ' in overflow.recv(128);overflow.close()
+  time.sleep(.1);overflow=socket.create_connection(('127.0.0.1',18081),2);overflow.sendall(b'GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:18081\r\n\r\n');overflow.settimeout(.2)
+  try:overflow.recv(128);raise AssertionError('queued fifth request ran before a worker slot was free')
+  except socket.timeout:pass
+  slow.pop().close();overflow.settimeout(2);assert b' 200 ' in overflow.recv(256);overflow.close()
   for s in slow:s.close()
   time.sleep(.1)
   status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'change-me-password'});assert status==200,(status,b);cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is True

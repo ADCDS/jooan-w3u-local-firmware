@@ -39,8 +39,10 @@ static pthread_mutex_t ptz_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t tls_rng_lock=PTHREAD_MUTEX_INITIALIZER;
 #endif
 static pthread_mutex_t worker_lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t worker_available=PTHREAD_COND_INITIALIZER;
 static unsigned worker_count;
 static int server_fd=-1;
+static int server_stopping;
 #define MAX_WORKERS 4u
 #ifndef JOAN_NO_TLS
 static int locked_rng(void*ctx,unsigned char*out,size_t len){int rc;pthread_mutex_lock(&tls_rng_lock);rc=mbedtls_ctr_drbg_random(ctx,out,len);pthread_mutex_unlock(&tls_rng_lock);return rc;}
@@ -215,10 +217,10 @@ static void *serve_worker(void *argument)
 #ifndef JOAN_NO_TLS
     if(c.ssl){mbedtls_ssl_close_notify(c.ssl);mbedtls_ssl_free(c.ssl);}
 #endif
-    close(c.fd);pthread_mutex_lock(&worker_lock);if(worker_count)worker_count--;pthread_mutex_unlock(&worker_lock);free(worker);return NULL;
+    close(c.fd);pthread_mutex_lock(&worker_lock);if(worker_count)worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);free(worker);return NULL;
 }
 
-int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;pthread_t ptz_thread;G=*cfg;
+int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;pthread_t ptz_thread;G=*cfg;pthread_mutex_lock(&worker_lock);server_stopping=0;pthread_mutex_unlock(&worker_lock);
 #ifndef JOAN_NO_TLS
     mbedtls_entropy_context entropy;mbedtls_ctr_drbg_context drbg;mbedtls_ssl_config sc;mbedtls_x509_crt cert;mbedtls_pk_context key;char cp[512],kp[512];
     mbedtls_entropy_init(&entropy);mbedtls_ctr_drbg_init(&drbg);mbedtls_ssl_config_init(&sc);mbedtls_x509_crt_init(&cert);mbedtls_pk_init(&key);
@@ -230,11 +232,11 @@ int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;pthre
     pthread_detach(ptz_thread);
     if(!cfg->plain_http&&redirect_start())return-1;
     s=socket(AF_INET,SOCK_STREAM,0);if(s<0)return-1;server_fd=s;setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons((uint16_t)cfg->port);if(inet_pton(AF_INET,cfg->bind_addr,&a.sin_addr)!=1||bind(s,(struct sockaddr*)&a,sizeof(a))||listen(s,8)){close(s);server_fd=-1;return-1;}
-    for(;;){struct sockaddr_in peer;socklen_t pl=sizeof(peer);int fd=accept(s,(struct sockaddr*)&peer,&pl);Worker*w;pthread_t t;static const char busy[]="HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";if(fd<0){if(errno==EINTR)continue;break;}pthread_mutex_lock(&worker_lock);if(worker_count>=MAX_WORKERS){pthread_mutex_unlock(&worker_lock);sock_write_all(fd,busy,sizeof(busy)-1);close(fd);continue;}worker_count++;pthread_mutex_unlock(&worker_lock);w=calloc(1,sizeof(*w));if(!w){pthread_mutex_lock(&worker_lock);worker_count--;pthread_mutex_unlock(&worker_lock);close(fd);continue;}w->fd=fd;w->plain_http=cfg->plain_http;inet_ntop(AF_INET,&peer.sin_addr,w->remote,sizeof(w->remote));
+    for(;;){struct sockaddr_in peer;socklen_t pl=sizeof(peer);int fd=accept(s,(struct sockaddr*)&peer,&pl);Worker*w;pthread_t t;if(fd<0){if(errno==EINTR)continue;break;}pthread_mutex_lock(&worker_lock);while(worker_count>=MAX_WORKERS&&!server_stopping)pthread_cond_wait(&worker_available,&worker_lock);if(server_stopping){pthread_mutex_unlock(&worker_lock);close(fd);break;}worker_count++;pthread_mutex_unlock(&worker_lock);w=calloc(1,sizeof(*w));if(!w){pthread_mutex_lock(&worker_lock);worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);close(fd);continue;}w->fd=fd;w->plain_http=cfg->plain_http;inet_ntop(AF_INET,&peer.sin_addr,w->remote,sizeof(w->remote));
 #ifndef JOAN_NO_TLS
         w->tls_config=&sc;
 #endif
-        if(pthread_create(&t,NULL,serve_worker,w)){pthread_mutex_lock(&worker_lock);worker_count--;pthread_mutex_unlock(&worker_lock);close(fd);free(w);continue;}pthread_detach(t);
+        if(pthread_create(&t,NULL,serve_worker,w)){pthread_mutex_lock(&worker_lock);worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);close(fd);free(w);continue;}pthread_detach(t);
     }close(s);server_fd=-1;return 0;
 }
-void joan_server_stop(void){int fd=server_fd;if(fd>=0)shutdown(fd,SHUT_RDWR);}
+void joan_server_stop(void){int fd;pthread_mutex_lock(&worker_lock);server_stopping=1;fd=server_fd;pthread_cond_broadcast(&worker_available);pthread_mutex_unlock(&worker_lock);if(fd>=0)shutdown(fd,SHUT_RDWR);}
