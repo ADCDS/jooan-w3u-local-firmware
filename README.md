@@ -32,23 +32,28 @@ shape are not sufficient compatibility evidence. Read
 The target release surface is local and authenticated:
 
 - HTTP on TCP/80 redirects to per-device HTTPS on TCP/443;
-- the initial administrator is `admin` with temporary password
-  `change-me-now`, which must be changed during first-run setup;
-- each camera receives its own HTTPS identity; release artifacts never contain
-  a shared private key;
-- SSH on TCP/22 is key-only and is enabled only after key enrollment;
+- the administrator is `admin` with initial password `change-me-password`;
+  the password remains valid until changed, and the Web UI keeps a prominent
+  warning visible while the public initial value is active;
+- each camera generates its own self-signed HTTPS identity; release artifacts
+  never contain a shared private key;
+- SSH on TCP/22 uses the same `admin` password as HTTPS; changing it updates
+  both services, and optional Ed25519 authorized keys may be added;
 - RTSP over TCP/554 remains available for local video clients;
-- a configurable `.local` hostname follows DHCP address changes through mDNS;
-- outbound cloud/P2P traffic is denied by the hardened policy.
+- embedded DNS-SD advertises HTTPS, SSH, RTSP, and the camera service under a
+  configurable `.local` hostname;
+- IPv4 and IPv6 default routes are removed and continuously pruned. Connected
+  local-subnet routes remain, so local clients work without an Internet route;
+- exact-binary `jooanipc` containment blocks vendor cloud/P2P egress.
 
 The generic image does not contain Wi-Fi credentials. It preserves the
 compatible unit's existing OEM Wi-Fi configuration, and replacement Wi-Fi
 credentials must be entered manually over a trusted local connection.
 
-There is a known early-boot interval in which the retained OEM GoAhead service
-may listen before the hardening policy is active. Keep the camera on a router
+There is an immutable early-boot interval in which the retained OEM GoAhead
+service may listen before `/opt/etc/local.rc` can run. Keep the camera on a router
 VLAN or physically isolated network that blocks untrusted clients and Internet
-access. Host firewalling is defense in depth, not a substitute for router
+access. Camera-side controls are defense in depth, not a substitute for router
 isolation. See [Network security](docs/NETWORK-SECURITY.md).
 
 ## Repository contents
@@ -63,7 +68,10 @@ isolation. See [Network security](docs/NETWORK-SECURITY.md).
 install/uninstall stages, and emits both packages under `dist/`. It requires
 `TOOLCHAIN_ROOT` and a private compatible `OEM_ROOTFS` extraction for link-time
 ABI libraries; neither is redistributed. The package is model- and hash-gated
-and remains subject to the OEM IronMan limit of `0x200001` bytes.
+and remains subject to the OEM IronMan limit of `0x200001` bytes. The persistent
+layout stores a compressed controller and two compressed A/B runtime slots,
+caps regular-file content at 176 KiB (`180224` bytes), and preserves at least
+80 KiB free on `/opt`.
 
 The repository and its published releases intentionally contain no factory
 secrets, Wi-Fi credentials, device keys, flash dumps, OEM firmware, vendor
@@ -80,20 +88,27 @@ privately by that owner.
 4. Read [Recovery](docs/RECOVERY.md); this release writes only `/opt`, and a
    failed first runtime falls back to the OEM updater on the next boot.
 5. Follow [Installation](docs/INSTALL.md).
-6. Change `admin` / `change-me-now` immediately and verify the port and outbound
-   traffic policy.
+6. Sign in as `admin` / `change-me-password`; change it promptly and verify the
+   persistent warning clears and SSH accepts the synchronized new password.
 
 Do not expose an unprovisioned or freshly rebooted camera directly to the
 Internet or to an untrusted LAN.
 
 ## Status and limitations
 
-The repository now builds a complete generic IronMan image with per-device
-HTTPS, a local web UI/API, transactional Wi-Fi, key-only SSH, `jooanipc`
-egress containment, configurable mDNS discovery, snapshots/PTZ integration contracts, and browser
-microphone/push-to-talk plumbing. Host, native, MIPS/uClibc and QEMU TLS/MQTT
-tests pass. The current `0.1.0` artifact remains a pre-release until install,
-Wi-Fi, snapshot, PTZ and audio are qualified on the physical unit.
+The implemented software target includes per-device HTTPS; a Web UI/PWA with
+main/sub fragmented-MP4 playback; camera-microphone listening and press-to-talk;
+PTZ jog/stop, home, and preset controls; transactional Wi-Fi; password-synchronized
+SSH with optional keys; embedded DNS-SD; signed, sequence-gated updates; and
+exact-binary `jooanipc` containment. Host/native and emulated tests exercise
+these contracts. The current `0.1.0` line also replaces the earlier expanded
+on-flash controller with a compressed controller plus compressed A/B slots and
+uses a journaled migration for recognized predecessor trees.
+
+No release is supported or hardware-qualified yet. The software remains a
+pre-release until signed install/uninstall, migration, Wi-Fi, fMP4, snapshot,
+PTZ, audio, SSH, routing, power-loss, and cold-recovery gates pass on the
+physical JA-A12 unit and a supported tag is published.
 
 The verified SKW6316 firmware connects to Realtek-based WPA bench access
 points, but could not authenticate to the tested OpenWrt/ath11k AP even though

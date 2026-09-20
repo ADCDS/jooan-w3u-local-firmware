@@ -34,7 +34,8 @@ The release build uses:
 
 - Dropbear 2026.94, MIT-style Dropbear license, fetched from the upstream
   release site with SHA-256 `e098034a…e14c76d`. The release contains a reduced
-  key-only server and the repository contains its feature configuration.
+  server with synchronized `admin` password authentication and optional
+  Ed25519 keys; forwarding, PAM, X11, and SFTP are disabled.
 - Mbed TLS 2.25.0 headers at commit `1c54b541…a67`; Apache-2.0. The daemon links
   to the ABI-compatible Mbed TLS libraries already present on the camera and
   does not redistribute those OEM-built library files.

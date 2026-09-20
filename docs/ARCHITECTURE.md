@@ -15,7 +15,7 @@ Local browser / NVR / administrator
              |
   open gateway + policy services
      |                    |
-authenticated control   firewall/confinement
+authenticated control   route/process policy
      |                    |
      +---- retained jooanipc ---- vendor IMP/ISP/VPU
                                       |
@@ -44,30 +44,42 @@ The open layer is responsible for:
 - model-gated, transactional installation and uninstall packages;
 - local HTTPS termination and authenticated session handling;
 - the versioned `/api/v1/` management contract;
-- key-only SSH after administrator enrollment;
+- password-synchronized SSH for user `admin`, with optional authorized keys;
 - local RTSP reachability;
-- deny-by-default outbound and inbound network policy;
+- no-default-route local networking plus exact-process egress containment;
+- embedded mDNS/DNS-SD discovery;
 - health checks, update verification, and rollback/fallback handling.
 
 The generic image does not personalize Wi-Fi or embed keys. Per-device HTTPS
-material, the changed administrator secret, SSH authorized keys, and manual
-Wi-Fi settings live in device-local persistent state and are excluded from
-release artifacts.
+material, the administrator credential, optional SSH authorized keys, and
+manual Wi-Fi settings live in device-local persistent state and are excluded
+from release artifacts. The public initial password remains usable until
+changed; warning state, rather than forced setup, records that condition.
 
 ## Current implementation boundary
 
-The implementation includes deterministic packaging, compressed A/B slots,
-trial rollback, telnet suppression, transactional Wi-Fi, key-only Dropbear,
-the HTTPS daemon and UI, a local TLS MQTT sink, browser audio routing, and an
+The implementation includes deterministic signed packaging, a compressed
+controller plus compressed A/B runtime slots, trial rollback, telnet
+suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
+keys, the HTTPS daemon and PWA, main/sub fMP4, a local TLS MQTT sink, microphone
+and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
 exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
 names to loopback and denies other `jooanipc` connect/datagram traffic.
 
-No kernel-wide firewall is claimed. DHCP, SSH and the open daemon are separate
-processes, while the router/VLAN remains the hard device-wide boundary.
+All persistent regular files under the retrofit root—including the controller
+and maximum two-slot A/B layout—must total no more than 180224 bytes (176 KiB),
+with at least 81920 bytes (80 KiB) left free. Controller and slots stay
+compressed on JFFS2 and expand into tmpfs at boot.
+
+No kernel-wide firewall is claimed. The supervisor repeatedly removes IPv4 and
+IPv6 default routes and filters public resolvers; explicitly configured
+RFC1918/ULA and connected routes remain. DHCP, SSH and the open daemon are
+separate processes, while the router/VLAN remains the hard device-wide boundary.
 
 ## Boot and network sequencing
 
-The OEM boot sequence can launch GoAhead before `/opt/etc/local.rc` runs. The
+The OEM boot sequence can launch GoAhead before `/opt/etc/local.rc` runs. That
+early interval is immutable without replacing earlier OEM boot components. The
 runtime terminates the public listener and optionally reopens it on loopback
 for snapshots, but cannot eliminate that immutable early interval. The
 external router or VLAN must block untrusted peers and Internet access before
@@ -85,8 +97,18 @@ sensors, SKW6316, the `0x200001` payload limit, and the format's `0x60`-byte
 header/trailer properties. Install and uninstall packages have separate staging
 trees and hashes.
 
-The transport is only a delivery mechanism. The included installer performs
-hash/model preflight, compressed slot staging, health validation and rollback.
+The carrier is only a delivery mechanism. The inner stage has a complete
+SHA-256 inventory signed with deterministic ECDSA P-256/SHA-256 and verified
+against a pinned public key on the camera. Release sequences reject downgrade
+and replay. The included installer also performs exact model/retained-component
+preflight, compressed slot staging, health validation, and A/B fallback.
+
+The `0.1` migration is journaled. It recognizes the earlier manual-admin or
+developer-launcher `/opt/open` trees, preserves validated SSH identity material
+where available, publishes the compressed replacement, and retires the
+recognized predecessor only after activation. Unknown or partial predecessor
+trees fail closed. Expanded in-place controller layouts require their explicit
+backed-up migration rather than silent deletion.
 
 ## Non-goals
 

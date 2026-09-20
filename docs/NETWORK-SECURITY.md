@@ -21,22 +21,24 @@ reboot, and recovery.
 |---:|---|---|---|
 | 80/tcp | HTTP | Redirect to HTTPS | No application or credential exchange |
 | 443/tcp | HTTPS | UI and `/api/v1/` | Authenticated; unique per-device TLS identity |
-| 5353/udp | mDNS | Configurable `hostname.local` discovery | Link-local multicast only |
-| 22/tcp | SSH | Administrative shell | Key-only; unavailable until key enrollment |
+| 5353/udp | mDNS/DNS-SD | Host and HTTPS/SSH/RTSP/camera discovery | Link-local multicast only |
+| 22/tcp | SSH | Administrative shell | Synchronized `admin` password; optional keys |
 | 554/tcp | RTSP | Local video | TCP transport; restrict to approved viewers |
 
-All other inbound ports are denied by the steady-state camera policy. Outbound
-cloud, telemetry, P2P, and vendor discovery traffic is denied. A deployment may
-allow narrowly scoped DNS and NTP to local servers.
+The runtime removes IPv4/IPv6 default routes, filters public resolvers, kills
+public GoAhead/telnet after the boot hook runs, and confines the exact
+`jooanipc` binary. It does not add a kernel-wide firewall. Connected local
+routes and explicitly configured RFC1918/ULA routes remain. The VLAN/router is
+the device-wide inbound and outbound boundary.
 
-The runtime supplies continuous `telnetd` suppression, key-only SSH, HTTPS on
-443, the port-80 redirect, and an exact-hash `jooanipc` containment DSO. It does
-not add a kernel-wide firewall. RTSP/TCP 554 is inherited from the retained OEM
-media service, and the external VLAN/router remains mandatory.
+The runtime supplies continuous `telnetd` suppression, password-synchronized
+SSH with optional keys, HTTPS on 443, the port-80 redirect, embedded DNS-SD,
+and an exact-hash `jooanipc` containment DSO. Direct RTSP/TCP 554 is inherited
+from the retained OEM media service.
 
 ## Early-boot OEM exposure
 
-The retained OEM startup can expose GoAhead before `/opt/etc/local.rc` runs.
+The retained OEM startup exposes GoAhead before `/opt/etc/local.rc` runs.
 The runtime kills it and optionally reopens it on loopback for snapshots.
 Treat the period from
 power-on until a qualified release's health status reports hardened policy as
@@ -49,10 +51,11 @@ the port as a workaround.
 
 ## First-run credentials and HTTPS
 
-Fresh generic installations begin with administrator `admin` and temporary
-password `change-me-now`. The setup flow must require replacement before normal
-operation. Never place a fresh unit on a shared LAN, and do not reuse the
-temporary password.
+Fresh generic installations begin with `admin` / `change-me-password`. It
+remains valid and setup is not forced, but a persistent warning remains until
+rotation. The same password is synchronized to SSH and RTSP; optional Ed25519
+keys supplement SSH password authentication. Never place a fresh unit on a
+shared LAN.
 
 HTTPS keys are generated or enrolled per device. A browser warning for a
 self-signed device identity is not permission to click through blindly: verify
@@ -79,7 +82,8 @@ After installation and after each update:
 3. verify only the intended steady-state TCP ports are reachable;
 4. verify TCP/80 only redirects and sends no sensitive content;
 5. verify HTTPS identity, login throttling, and session expiry;
-6. verify password SSH fails and key-only SSH works only after enrollment;
-7. verify UDP and TCP RTSP alternatives are not unintentionally exposed;
-8. verify attempted vendor cloud/P2P connections cannot leave the VLAN;
-9. test IPv4 and IPv6 separately.
+6. verify SSH `admin` accepts the synchronized password and optional keys;
+7. verify DNS-SD records and direct RTSP/fMP4 behavior;
+8. verify no IPv4/IPv6 default route or public resolver remains;
+9. verify attempted vendor cloud/P2P connections cannot leave the VLAN;
+10. test IPv4 and IPv6 separately.
