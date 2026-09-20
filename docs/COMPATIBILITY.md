@@ -47,6 +47,23 @@ Preservation is not portability. A backup from one camera must never be
 restored onto another camera because it can contain unique calibration,
 identity, network, and credential data.
 
+## Wi-Fi access-point interoperability
+
+The verified SKW6316/SV6160Lite firmware is not interoperable with every access
+point. It completed WPA association against Realtek-based bench APs on channels
+1 and 6, but repeatedly failed against a tested OpenWrt/ath11k AP while still
+seeing its BSS at a usable signal level. Tests ruled out channel 11, HE versus
+HT, legacy-rate policy, WPA2 versus mixed mode, the UTF-8 SSID capability,
+secondary-BSSID addressing, nl80211 versus wext, and interference from the OEM
+network manager. The camera submitted authentication to its driver, while the
+ath11k hostapd instance received no corresponding station event.
+
+This is an AP/firmware compatibility limitation, not a credential error. Keep
+Ethernet recovery connected when changing Wi-Fi, let the transactional timeout
+roll back a failed association, and qualify the intended AP before relying on
+Wi-Fi-only administration. Do not substitute public SDIO SWT6621S firmware for
+this unit's USB firmware/driver pair.
+
 ## Evidence to record
 
 Before installation, record photographs of the PCB and flash marking, the
