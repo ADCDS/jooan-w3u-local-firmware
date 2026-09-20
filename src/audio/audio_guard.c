@@ -116,6 +116,24 @@ int jooan_audio_guard_pcma(struct jooan_audio_guard_client *client,
     return 0;
 }
 
+int jooan_audio_guard_speaker_lease(struct jooan_audio_guard_client *client,
+                                    uint32_t sequence)
+{
+    uint32_t accepted;
+
+    if (!client || !client->acquired) {
+        errno = EPERM;
+        return -1;
+    }
+    accepted = client->last_sequence;
+    if (jooan_audio_sequence_accept(&accepted, sequence) != 0 ||
+        send_guard(client, JOOAN_AUDIO_GUARD_SPEAKER_LEASE,
+                   sequence, NULL, 0) != 0)
+        return -1;
+    client->last_sequence = accepted;
+    return 0;
+}
+
 int jooan_audio_guard_release(struct jooan_audio_guard_client *client,
                               uint32_t sequence)
 {

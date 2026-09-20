@@ -58,21 +58,6 @@ if mkdir "$JL_SPEAKER_RUN/speaker-hook.lock" 2>/dev/null; then
     ) </dev/null >/tmp/jooan-speaker-mute.log 2>&1 &
 fi
 
-# The OEM RTSP server advertises the microphone track even when AudioEnable is
-# zero, but then emits no RTP audio. Enable the retained local microphone path
-# before jooanipc initializes media. Avoid rewriting flash when already set.
-if [ -x /mnt/mtd/run/json_debug ]; then
-    for jl_audio_config in /opt/conf/config.json /opt/conf/config.org; do
-        [ -f "$jl_audio_config" ] || continue
-        jl_audio_enabled=$(/mnt/mtd/run/json_debug -c r \
-            -k /IPCamInfo/AudioEnable "$jl_audio_config" 2>/dev/null |
-            awk '{print $3}')
-        [ "$jl_audio_enabled" = 1 ] ||
-            /mnt/mtd/run/json_debug -i -c w \
-                -k /IPCamInfo/AudioEnable -v 1 "$jl_audio_config" || :
-    done
-fi
-
 killall telnetd goahead 2>/dev/null || :
 jooanipc() { return 127; }
 jl_load_controller() {

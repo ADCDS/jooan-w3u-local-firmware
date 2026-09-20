@@ -46,6 +46,8 @@ static int valid_guard_payload(uint8_t type, uint16_t length)
 {
     if (type == JOOAN_AUDIO_PTT_ACQUIRE || type == JOOAN_AUDIO_PTT_RELEASE)
         return length == 0;
+    if (type == JOOAN_AUDIO_GUARD_SPEAKER_LEASE)
+        return length == 0;
     if (type == JOOAN_AUDIO_PTT_PCMA)
         return length == JOOAN_AUDIO_SAMPLES_PER_PACKET;
     return 0;

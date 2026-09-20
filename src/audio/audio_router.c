@@ -3,12 +3,15 @@
 #include "audio_guard.h"
 #include "audio_mic_wire.h"
 #include "audio_wire.h"
+#include "g711_alaw.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +19,7 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <time.h>
@@ -24,6 +28,17 @@
 #define DEFAULT_WS_SOCKET "/run/jooan-local/audio-ws.sock"
 #define DEFAULT_MIC_SOCKET JOOAN_AUDIO_MIC_SOCKET_PATH
 #define DEFAULT_GUARD_SOCKET "/tmp/jooan-guard-talkback.sock"
+#define DEFAULT_MIC_DRIVER "/dev/dsp"
+#define DEFAULT_SPEAKER_DRIVER "/dev/dsp"
+
+#define AMIC_AI_SET_PARAM 0x40085071UL
+#define AMIC_AI_ENABLE_STREAM 0x40045060UL
+#define AMIC_AI_DISABLE_STREAM 0x40045061UL
+#define AMIC_AI_GET_STREAM 0x40145062UL
+#define AMIC_AO_SET_PARAM 0x4008506fUL
+#define AMIC_AO_ENABLE_STREAM 0x4004505eUL
+#define AMIC_AO_DISABLE_STREAM 0x4004505fUL
+#define AMIC_AO_PLAY_STREAM 0x40085063UL
 
 #define MAX_CLIENTS 16
 #define INPUT_CAPACITY 8192u
@@ -62,6 +77,38 @@ struct sha1_context {
 static volatile sig_atomic_t stopping;
 static const char *guard_socket_path;
 static uint32_t maximum_talk_ms = JOOAN_AUDIO_MAX_TALK_MS;
+static pthread_t microphone_thread;
+static int microphone_thread_started;
+static int speaker_output_descriptor = -1;
+static int speaker_output_direct;
+
+struct microphone_driver_parameter {
+    uint32_t sample_rate;
+    uint16_t sample_bits;
+    uint16_t channels;
+};
+
+struct microphone_driver_stream {
+    uintptr_t pcm;
+    uint32_t byte_length;
+    uintptr_t reference_pcm;
+    uint32_t reference_samples;
+    uint32_t timeout_ms;
+};
+
+struct speaker_driver_stream {
+    uintptr_t pcm;
+    uint32_t byte_length;
+    uint32_t reserved[3];
+};
+
+struct microphone_capture_config {
+    char device[128];
+    struct sockaddr_un destination;
+    socklen_t destination_length;
+};
+
+static struct microphone_capture_config microphone_capture;
 
 static uint16_t read_be16(const uint8_t *p)
 {
@@ -78,6 +125,217 @@ static void stop_signal(int signal_number)
 {
     (void)signal_number;
     stopping = 1;
+}
+
+static void store_be16(uint8_t *output, uint16_t value)
+{
+    output[0] = (uint8_t)(value >> 8);
+    output[1] = (uint8_t)value;
+}
+
+static void store_be32(uint8_t *output, uint32_t value)
+{
+    output[0] = (uint8_t)(value >> 24);
+    output[1] = (uint8_t)(value >> 16);
+    output[2] = (uint8_t)(value >> 8);
+    output[3] = (uint8_t)value;
+}
+
+static void microphone_capture_emit(int sender, uint32_t *sequence,
+                                    const uint8_t *pcma)
+{
+    uint8_t datagram[JOOAN_AUDIO_MIC_DATAGRAM_SIZE];
+
+    *sequence = *sequence == UINT32_MAX ? 1U : *sequence + 1U;
+    memcpy(datagram, JOOAN_AUDIO_MIC_MAGIC, 4);
+    datagram[4] = JOOAN_AUDIO_MIC_VERSION;
+    datagram[5] = JOOAN_AUDIO_MIC_HEADER_SIZE;
+    store_be16(datagram + 6, JOOAN_AUDIO_MIC_PAYLOAD_SIZE);
+    store_be32(datagram + 8, *sequence);
+    memcpy(datagram + JOOAN_AUDIO_MIC_HEADER_SIZE, pcma,
+           JOOAN_AUDIO_MIC_PAYLOAD_SIZE);
+    (void)sendto(sender, datagram, sizeof(datagram),
+                 MSG_DONTWAIT | MSG_NOSIGNAL,
+                 (const struct sockaddr *)&microphone_capture.destination,
+                 microphone_capture.destination_length);
+}
+
+static void microphone_retry_pause(void)
+{
+    struct timespec delay = { 1, 0 };
+
+    while (!stopping && nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+    }
+}
+
+static void *microphone_capture_main(void *unused)
+{
+    struct microphone_driver_parameter parameter = {
+        JOOAN_AUDIO_SAMPLE_RATE, 16U, 1U
+    };
+    int16_t pcm[JOOAN_AUDIO_SAMPLES_PER_PACKET * 2U];
+    uint8_t pcma[JOOAN_AUDIO_MIC_PAYLOAD_SIZE];
+    size_t pcma_length = 0;
+    uint32_t sequence = 0;
+    int logged_failure = 0;
+
+    (void)unused;
+    while (!stopping) {
+        int descriptor = open(microphone_capture.device, O_RDONLY);
+        int sender = -1;
+        int enabled = 0;
+
+        if (descriptor >= 0) {
+            int descriptor_flags = fcntl(descriptor, F_GETFD, 0);
+            if (descriptor_flags >= 0)
+                (void)fcntl(descriptor, F_SETFD,
+                            descriptor_flags | FD_CLOEXEC);
+        }
+        if (descriptor >= 0 &&
+            ioctl(descriptor, AMIC_AI_SET_PARAM, &parameter) == 0 &&
+            ioctl(descriptor, AMIC_AI_ENABLE_STREAM, 1) == 0) {
+            sender = socket(AF_UNIX, SOCK_DGRAM, 0);
+            enabled = sender >= 0;
+        }
+        if (!enabled) {
+            if (!logged_failure) {
+                perror("microphone driver capture");
+                logged_failure = 1;
+            }
+            if (sender >= 0)
+                close(sender);
+            if (descriptor >= 0)
+                close(descriptor);
+            microphone_retry_pause();
+            continue;
+        }
+        if (logged_failure)
+            fprintf(stderr, "microphone driver capture recovered\n");
+        else
+            fprintf(stderr, "microphone driver capture ready\n");
+        logged_failure = 0;
+        while (!stopping) {
+            struct microphone_driver_stream stream;
+            size_t samples;
+            size_t index;
+
+            memset(&stream, 0, sizeof(stream));
+            stream.pcm = (uintptr_t)pcm;
+            stream.byte_length = sizeof(pcm);
+            stream.timeout_ms = 1000U;
+            if (ioctl(descriptor, AMIC_AI_GET_STREAM, &stream) != 0 ||
+                stream.byte_length == 0 ||
+                stream.byte_length > sizeof(pcm) ||
+                (stream.byte_length & 1U) != 0)
+                break;
+            samples = stream.byte_length / 2U;
+            for (index = 0; index < samples; ++index) {
+                pcma[pcma_length++] = jooan_alaw_encode_sample(pcm[index]);
+                if (pcma_length == sizeof(pcma)) {
+                    microphone_capture_emit(sender, &sequence, pcma);
+                    pcma_length = 0;
+                }
+            }
+        }
+        (void)ioctl(descriptor, AMIC_AI_DISABLE_STREAM, 1);
+        close(sender);
+        close(descriptor);
+        pcma_length = 0;
+        if (!stopping)
+            microphone_retry_pause();
+    }
+    return NULL;
+}
+
+static int microphone_capture_start(const char *device,
+                                    const char *socket_path)
+{
+    size_t device_length = strlen(device);
+    size_t path_length = strlen(socket_path);
+
+    if (!strcmp(device, "off"))
+        return 0;
+    if (device_length == 0 ||
+        device_length >= sizeof(microphone_capture.device) ||
+        path_length == 0 ||
+        path_length >= sizeof(microphone_capture.destination.sun_path)) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(&microphone_capture, 0, sizeof(microphone_capture));
+    memcpy(microphone_capture.device, device, device_length + 1U);
+    microphone_capture.destination.sun_family = AF_UNIX;
+    memcpy(microphone_capture.destination.sun_path, socket_path,
+           path_length + 1U);
+    microphone_capture.destination_length =
+        (socklen_t)(offsetof(struct sockaddr_un, sun_path) + path_length + 1U);
+    if (pthread_create(&microphone_thread, NULL,
+                       microphone_capture_main, NULL) != 0)
+        return -1;
+    microphone_thread_started = 1;
+    return 0;
+}
+
+static int speaker_output_start(const char *device)
+{
+    struct microphone_driver_parameter parameter = {
+        JOOAN_AUDIO_SAMPLE_RATE, 16U, 1U
+    };
+    int descriptor_flags;
+
+    if (!strcmp(device, "off"))
+        return 0;
+    speaker_output_descriptor = open(device, O_WRONLY);
+    if (speaker_output_descriptor < 0)
+        return -1;
+    descriptor_flags = fcntl(speaker_output_descriptor, F_GETFD, 0);
+    if (descriptor_flags >= 0)
+        (void)fcntl(speaker_output_descriptor, F_SETFD,
+                    descriptor_flags | FD_CLOEXEC);
+    if (ioctl(speaker_output_descriptor, AMIC_AO_SET_PARAM, &parameter) != 0 ||
+        ioctl(speaker_output_descriptor, AMIC_AO_ENABLE_STREAM, 1) != 0) {
+        int saved_errno = errno;
+        close(speaker_output_descriptor);
+        speaker_output_descriptor = -1;
+        errno = saved_errno;
+        return -1;
+    }
+    speaker_output_direct = 1;
+    fprintf(stderr, "speaker driver output ready\n");
+    return 0;
+}
+
+static int speaker_output_submit(const uint8_t *pcma, size_t length)
+{
+    int16_t pcm[JOOAN_AUDIO_SAMPLES_PER_PACKET];
+    struct speaker_driver_stream stream;
+
+    if (!speaker_output_direct || speaker_output_descriptor < 0 ||
+        pcma == NULL || length != JOOAN_AUDIO_SAMPLES_PER_PACKET) {
+        errno = EINVAL;
+        return -1;
+    }
+    jooan_alaw_decode(pcma, pcm, JOOAN_AUDIO_SAMPLES_PER_PACKET);
+    memset(&stream, 0, sizeof(stream));
+    stream.pcm = (uintptr_t)pcm;
+    stream.byte_length = sizeof(pcm);
+    if (ioctl(speaker_output_descriptor, AMIC_AO_PLAY_STREAM, &stream) != 0 ||
+        stream.byte_length != sizeof(pcm)) {
+        if (stream.byte_length != sizeof(pcm))
+            errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static void speaker_output_stop(void)
+{
+    if (speaker_output_descriptor >= 0) {
+        (void)ioctl(speaker_output_descriptor, AMIC_AO_DISABLE_STREAM, 1);
+        close(speaker_output_descriptor);
+    }
+    speaker_output_descriptor = -1;
+    speaker_output_direct = 0;
 }
 
 static uint32_t rotate_left(uint32_t value, unsigned bits)
@@ -584,12 +842,16 @@ static int client_audio_frame(struct client *client,
             jooan_audio_guard_close(&client->guard);
         client->session_id = new_session_id();
         if (jooan_audio_guard_open(&client->guard, guard_socket_path,
-                                   client->session_id) != 0)
+                                   client->session_id) != 0) {
+            perror("audio guard connect");
             return -1;
+        }
         /* JAUD is monotonic for the WebSocket lifetime. Each press is a new
          * leased JAGD session and therefore begins its own sequence at one. */
-        if (jooan_audio_guard_acquire(&client->guard, 1) != 0)
+        if (jooan_audio_guard_acquire(&client->guard, 1) != 0) {
+            perror("audio guard acquire");
             return -1;
+        }
         client->talk_deadline = monotonic_milliseconds() +
                                 maximum_talk_ms;
         if (queue_audio_state(client, JOOAN_AUDIO_STATE_ACQUIRED) != 0)
@@ -600,9 +862,16 @@ static int client_audio_frame(struct client *client,
             return 0;
         guard_sequence = client->guard.last_sequence == UINT32_MAX ? 1u :
                          client->guard.last_sequence + 1u;
-        if (jooan_audio_guard_pcma(&client->guard, guard_sequence,
-                                   frame.payload, frame.payload_length) != 0)
+        if (speaker_output_direct) {
+            if (speaker_output_submit(frame.payload, frame.payload_length) != 0 ||
+                jooan_audio_guard_speaker_lease(&client->guard,
+                                                guard_sequence) != 0)
+                return -1;
+        } else if (jooan_audio_guard_pcma(&client->guard, guard_sequence,
+                                          frame.payload,
+                                          frame.payload_length) != 0) {
             return -1;
+        }
     } else if (frame.type == JOOAN_AUDIO_PTT_RELEASE) {
         if (client_release_guard(client, JOOAN_AUDIO_STATE_RELEASED) != 0)
             return -1;
@@ -771,13 +1040,17 @@ static void usage(const char *program)
 {
     fprintf(stderr,
             "usage: %s [--ws-socket PATH] [--mic-socket PATH] "
-            "[--guard-socket PATH] [--max-talk-ms 1..60000]\n", program);
+            "[--mic-driver PATH|off] [--speaker-driver PATH|off] "
+            "[--guard-socket PATH] "
+            "[--max-talk-ms 1..60000]\n", program);
 }
 
 int main(int argc, char **argv)
 {
     const char *ws_path = getenv("JOAN_AUDIO_WS_SOCKET");
     const char *mic_path = getenv("JOAN_AUDIO_MIC_SOCKET");
+    const char *mic_driver = getenv("JOAN_AUDIO_MIC_DRIVER");
+    const char *speaker_driver = getenv("JOAN_AUDIO_SPEAKER_DRIVER");
     const char *guard_path = getenv("JOAN_GUARD_TALKBACK_SOCKET");
     struct client clients[MAX_CLIENTS];
     struct sigaction action;
@@ -790,6 +1063,10 @@ int main(int argc, char **argv)
         ws_path = DEFAULT_WS_SOCKET;
     if (!mic_path || !*mic_path)
         mic_path = DEFAULT_MIC_SOCKET;
+    if (!mic_driver || !*mic_driver)
+        mic_driver = DEFAULT_MIC_DRIVER;
+    if (!speaker_driver || !*speaker_driver)
+        speaker_driver = DEFAULT_SPEAKER_DRIVER;
     if (!guard_path || !*guard_path)
         guard_path = DEFAULT_GUARD_SOCKET;
     for (argument = 1; argument < argc; argument += 2) {
@@ -801,6 +1078,10 @@ int main(int argc, char **argv)
             ws_path = argv[argument + 1];
         else if (!strcmp(argv[argument], "--mic-socket"))
             mic_path = argv[argument + 1];
+        else if (!strcmp(argv[argument], "--mic-driver"))
+            mic_driver = argv[argument + 1];
+        else if (!strcmp(argv[argument], "--speaker-driver"))
+            speaker_driver = argv[argument + 1];
         else if (!strcmp(argv[argument], "--guard-socket"))
             guard_path = argv[argument + 1];
         else if (!strcmp(argv[argument], "--max-talk-ms")) {
@@ -836,6 +1117,14 @@ int main(int argc, char **argv)
     microphone = bind_unix_socket(mic_path, SOCK_DGRAM);
     if (microphone < 0) {
         perror("audio microphone socket");
+        goto failed;
+    }
+    if (speaker_output_start(speaker_driver) != 0) {
+        perror("audio speaker output");
+        goto failed;
+    }
+    if (microphone_capture_start(mic_driver, mic_path) != 0) {
+        perror("audio microphone capture");
         goto failed;
     }
 
@@ -902,8 +1191,12 @@ int main(int argc, char **argv)
         }
     }
 
+    stopping = 1;
     for (i = 0; i < MAX_CLIENTS; ++i)
         client_close(&clients[i]);
+    if (microphone_thread_started)
+        (void)pthread_join(microphone_thread, NULL);
+    speaker_output_stop();
     close(microphone);
     close(listener);
     unlink(mic_path);
@@ -911,8 +1204,12 @@ int main(int argc, char **argv)
     return 0;
 
 failed:
+    stopping = 1;
     for (i = 0; i < MAX_CLIENTS; ++i)
         client_close(&clients[i]);
+    if (microphone_thread_started)
+        (void)pthread_join(microphone_thread, NULL);
+    speaker_output_stop();
     if (microphone >= 0)
         close(microphone);
     if (listener >= 0)

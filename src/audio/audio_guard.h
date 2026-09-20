@@ -18,6 +18,8 @@ int jooan_audio_guard_acquire(struct jooan_audio_guard_client *client,
 int jooan_audio_guard_pcma(struct jooan_audio_guard_client *client,
                            uint32_t sequence, const uint8_t *pcma,
                            size_t length);
+int jooan_audio_guard_speaker_lease(struct jooan_audio_guard_client *client,
+                                    uint32_t sequence);
 int jooan_audio_guard_release(struct jooan_audio_guard_client *client,
                               uint32_t sequence);
 

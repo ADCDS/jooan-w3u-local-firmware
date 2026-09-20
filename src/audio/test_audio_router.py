@@ -121,6 +121,8 @@ def main():
             "./jooan-audio-router",
             "--ws-socket", ws_path,
             "--mic-socket", mic_path,
+            "--mic-driver", "off",
+            "--speaker-driver", "off",
             "--guard-socket", guard_path,
             "--max-talk-ms", "1000",
         ], cwd=os.path.dirname(__file__), stdout=subprocess.PIPE,

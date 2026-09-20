@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "audio_guard.h"
+#include "audio_guard_wire.h"
 #include "audio_wire.h"
 #include "g711_alaw.h"
 
@@ -138,13 +139,18 @@ static void test_guard_session_and_fail_safe_close(void)
     assert(be32(frame + 16) == 2);
     assert(be16(frame + 20) == JOOAN_AUDIO_SAMPLES_PER_PACKET);
 
+    assert(jooan_audio_guard_speaker_lease(&client, 3) == 0);
+    (void)receive_frame(server, frame, sizeof(frame));
+    assert(frame[5] == JOOAN_AUDIO_GUARD_SPEAKER_LEASE);
+    assert(be32(frame + 16) == 3 && be16(frame + 20) == 0);
+
     errno = 0;
-    assert(jooan_audio_guard_pcma(&client, 3, packet, sizeof(packet) - 1) == -1 &&
+    assert(jooan_audio_guard_pcma(&client, 4, packet, sizeof(packet) - 1) == -1 &&
            errno == EINVAL);
     jooan_audio_guard_close(&client);
     (void)receive_frame(server, frame, sizeof(frame));
     assert(frame[5] == JOOAN_AUDIO_PTT_RELEASE);
-    assert(be32(frame + 16) == 3 && be16(frame + 20) == 0);
+    assert(be32(frame + 16) == 4 && be16(frame + 20) == 0);
     assert(client.fd == -1 && client.acquired == 0);
     jooan_audio_guard_close(&client);
 

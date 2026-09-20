@@ -5,10 +5,12 @@
 #include <stdint.h>
 
 #define JOOAN_AUDIO_GUARD_HEADER_SIZE 24u
-/* ACQUIRE is a lease, refreshed by each valid 20 ms PCMA datagram. The guard
- * must force amplifier/playback release when this interval expires, covering
- * daemon crashes where no RELEASE datagram can be emitted. */
+/* ACQUIRE reserves a session. Each SPEAKER_LEASE follows successful direct
+ * PCM submission and refreshes the physical amplifier deadman. The guard must
+ * force release when this interval expires, covering router crashes where no
+ * RELEASE datagram can be emitted. */
 #define JOOAN_AUDIO_GUARD_LEASE_MS 500u
+#define JOOAN_AUDIO_GUARD_SPEAKER_LEASE 4u
 
 struct jooan_audio_guard_frame {
     uint8_t type;

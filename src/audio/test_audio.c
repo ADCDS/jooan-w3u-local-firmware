@@ -124,9 +124,10 @@ static void test_guard_disconnect_release(void)
     assert(jooan_audio_guard_open(&client, path, UINT64_C(0x1234)) == 0);
     assert(jooan_audio_guard_acquire(&client, 1) == 0);
     assert(jooan_audio_guard_pcma(&client, 2, pcma, sizeof(pcma)) == 0);
-    jooan_audio_guard_close(&client); /* Must emit sequence 3 RELEASE. */
+    assert(jooan_audio_guard_speaker_lease(&client, 3) == 0);
+    jooan_audio_guard_close(&client); /* Must emit sequence 4 RELEASE. */
 
-    for (i = 0; i < 3; ++i) {
+    for (i = 0; i < 4; ++i) {
         length = recv(receiver, datagram, sizeof(datagram), 0);
         assert(length > 0);
         assert(jooan_audio_guard_datagram_parse(
@@ -135,6 +136,7 @@ static void test_guard_disconnect_release(void)
         assert(frame.sequence == i + 1);
         assert(frame.type == (i == 0 ? JOOAN_AUDIO_PTT_ACQUIRE :
                               i == 1 ? JOOAN_AUDIO_PTT_PCMA :
+                              i == 2 ? JOOAN_AUDIO_GUARD_SPEAKER_LEASE :
                                        JOOAN_AUDIO_PTT_RELEASE));
     }
     close(receiver);

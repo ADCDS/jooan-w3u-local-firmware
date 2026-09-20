@@ -568,6 +568,36 @@ static int talkback_probe(void)
     if (stat(dsp_path, &status) != 0 ||
         status.st_size != (off_t)(sizeof(encoded) * 2U))
         goto done;
+
+    /* Direct-driver talkback uses the guard only as an amplifier deadman.
+     * A valid lease enables the active-low amplifier without injecting DSP
+     * data, and RELEASE restores mute. */
+    if (jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_PTT_ACQUIRE,
+            UINT64_C(0x3132333435363738), 1, NULL, 0,
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length ||
+        jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_GUARD_SPEAKER_LEASE,
+            UINT64_C(0x3132333435363738), 2, NULL, 0,
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length ||
+        wait_file_contents(speaker_value, "0", 1) != 0 ||
+        stat(dsp_path, &status) != 0 ||
+        status.st_size != (off_t)(sizeof(encoded) * 2U) ||
+        jooan_audio_guard_datagram_build(
+            datagram, sizeof(datagram), JOOAN_AUDIO_PTT_RELEASE,
+            UINT64_C(0x3132333435363738), 3, NULL, 0,
+            &datagram_length) != 0 ||
+        sendto(sender, datagram, datagram_length, 0,
+               (struct sockaddr *)&address, sizeof(address)) !=
+        (ssize_t)datagram_length ||
+        wait_file_contents(speaker_value, "1", 1) != 0)
+        goto done;
     close(dsp);
     dsp = -1;
     reader = open(dsp_path, O_RDONLY);
