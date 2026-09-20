@@ -941,6 +941,19 @@ static void *talkback_main(void *unused)
             (void)speaker_set_enabled(0);
             continue;
         }
+        if (frame.type == JOOAN_AUDIO_GUARD_SPEAKER_LEASE) {
+            if (__atomic_load_n(&speaker_enabled, __ATOMIC_ACQUIRE) ||
+                speaker_set_enabled(1) == 0) {
+                lease_deadline = now + TALKBACK_LEASE_MS;
+            } else {
+                active_session = 0;
+                session_started = 0;
+                last_sequence = 0;
+                lease_deadline = 0;
+                (void)speaker_set_enabled(0);
+            }
+            continue;
+        }
         if (frame.type != JOOAN_AUDIO_PTT_PCMA)
             continue;
         for (index = 0; index < frame.payload_length; ++index) {

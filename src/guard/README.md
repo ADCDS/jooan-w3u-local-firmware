@@ -22,15 +22,13 @@ While active, the guard:
   `write`, and `writev`, while permitting Unix sockets and replies from the
   approved local OEM listener ports;
 - records an `O_WRONLY` open of `/dev/dsp`;
-- receives the local `JAGD` ACQUIRE/PCMA/RELEASE datagram protocol on
+- receives the local `JAGD` ACQUIRE/SPEAKER_LEASE/RELEASE protocol on
   `/tmp/jooan-guard-talkback.sock`, enforces one leased, contiguous-sequence
-  talk session, decodes its G.711 A-law audio to little-endian PCM16, submits
-  it through the recovered 20-byte AO ioctl ABI, and serializes those calls
-  with OEM writes and ioctls to the DSP descriptor;
-- drops talkback while no DSP descriptor is open and stops using a descriptor
-  immediately after close or a failed write. Talk ownership expires after half
-  a second without a valid packet, and malformed or out-of-sequence traffic
-  releases ownership.
+  talk session, and grants only the amplifier lease after the authenticated
+  audio router has successfully submitted PCM through its own driver stream.
+  The legacy PCMA message remains covered by the host probe but is not used by
+  the production router. Talk ownership expires after half a second without a
+  valid packet, and malformed or out-of-sequence traffic releases ownership.
 - owns the board-configured active-low speaker amplifier on GPIO 63: OEM
   direction/value writes
   are confined to output/muted, the amplifier is enabled only for a valid local
@@ -41,9 +39,9 @@ While active, the guard:
   reporting successful consumption, so muted alarm audio cannot queue and leak
   into the next authenticated talkback window; guard-injected PCM bypasses the
   interposed OEM path.
-- retains a host-only probe for the recovered `AMIC_AI_GET_STREAM` ABI. The
-  production microphone path instead consumes the OEM loopback RTSP stream's
-  16 kHz mono PCMA track, avoiding an unverified live-driver interposer path.
+- retains a host-only interposer probe for the recovered audio ABI. The
+  production audio router instead owns dedicated read-only and write-only DSP
+  streams, independently validated against the live driver.
 
 Build and run host tests with `make test`. The test-only shared object accepts
 fake executable, DSP, and socket paths through environment variables. Those

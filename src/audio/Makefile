@@ -18,7 +18,7 @@ test_audio: test_audio.o $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 jooan-audio-router: audio_router.o $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) -pthread
 
 check: test_audio jooan-audio-router
 	./test_audio

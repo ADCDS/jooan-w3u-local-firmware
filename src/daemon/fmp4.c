@@ -1,11 +1,9 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "joan_daemon.h"
-#include "../audio/audio_mic_wire.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +11,6 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
-#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -44,41 +41,6 @@ static Stream streams[2]={
 };
 static unsigned rtsp_port=554;
 static char rtsp_state_dir[256];
-static int mic_fd=-1;
-static struct sockaddr_un mic_address;
-static socklen_t mic_address_length;
-static unsigned char mic_payload[JOOAN_AUDIO_MIC_PAYLOAD_SIZE];
-static size_t mic_payload_length;
-static uint32_t mic_sequence;
-static int mic_delivery_logged;
-
-static void store_be16(unsigned char*out,uint16_t v){out[0]=(unsigned char)(v>>8);out[1]=(unsigned char)v;}
-static void store_be32(unsigned char*out,uint32_t v){out[0]=(unsigned char)(v>>24);out[1]=(unsigned char)(v>>16);out[2]=(unsigned char)(v>>8);out[3]=(unsigned char)v;}
-static void mic_emit(void)
-{
-    unsigned char datagram[JOOAN_AUDIO_MIC_DATAGRAM_SIZE];
-    ssize_t delivered;
-    if(mic_fd<0)return;
-    if(++mic_sequence==0)mic_sequence=1;
-    memcpy(datagram,JOOAN_AUDIO_MIC_MAGIC,4);datagram[4]=JOOAN_AUDIO_MIC_VERSION;datagram[5]=JOOAN_AUDIO_MIC_HEADER_SIZE;
-    store_be16(datagram+6,JOOAN_AUDIO_MIC_PAYLOAD_SIZE);store_be32(datagram+8,mic_sequence);
-    memcpy(datagram+JOOAN_AUDIO_MIC_HEADER_SIZE,mic_payload,sizeof(mic_payload));
-    delivered=sendto(mic_fd,datagram,sizeof(datagram),MSG_DONTWAIT|MSG_NOSIGNAL,(const struct sockaddr*)&mic_address,mic_address_length);
-    if(!mic_delivery_logged){fprintf(stderr,"RTSP microphone datagram: %s\n",delivered==(ssize_t)sizeof(datagram)?"delivered":"failed");mic_delivery_logged=1;}
-}
-static void mic_feed(const unsigned char*data,size_t length)
-{
-    while(length){size_t n=sizeof(mic_payload)-mic_payload_length;if(n>length)n=length;memcpy(mic_payload+mic_payload_length,data,n);mic_payload_length+=n;data+=n;length-=n;if(mic_payload_length==sizeof(mic_payload)){mic_emit();mic_payload_length=0;}}
-}
-static int mic_open(const char*path)
-{
-    size_t n=strlen(path);int flags;
-    if(!n||n>=sizeof(mic_address.sun_path))return-1;
-    mic_fd=socket(AF_UNIX,SOCK_DGRAM,0);if(mic_fd<0)return-1;
-    flags=fcntl(mic_fd,F_GETFL,0);if(flags<0||fcntl(mic_fd,F_SETFL,flags|O_NONBLOCK)<0){close(mic_fd);mic_fd=-1;return-1;}
-    (void)fcntl(mic_fd,F_SETFD,FD_CLOEXEC);memset(&mic_address,0,sizeof(mic_address));mic_address.sun_family=AF_UNIX;memcpy(mic_address.sun_path,path,n+1);
-    mic_address_length=(socklen_t)(offsetof(struct sockaddr_un,sun_path)+n+1);return 0;
-}
 
 typedef struct{uint32_t h[4],bits[2];unsigned char block[64];size_t used;}MD5;
 static uint32_t rol(uint32_t x,unsigned n){return(x<<n)|(x>>(32-n));}
@@ -161,42 +123,15 @@ static int rtsp_request(int fd,int cseq,const char*method,const char*url,const c
     return-1;
 }
 
-static int content_base_url(const char*reply,const char*url,char*out,size_t cap)
-{
-    char*header=strcasestr(reply,"Content-Base:"),*end;size_t n;
-    if(!header){if(strlen(url)>=cap)return-1;snprintf(out,cap,"%s",url);return 0;}
-    header+=13;while(*header==' ')header++;end=strpbrk(header,"\r\n");if(!end)return-1;n=(size_t)(end-header);if(!n||n>=cap)return-1;memcpy(out,header,n);out[n]=0;return 0;
-}
-
-static int media_control_url(const char*reply,const char*media,const char*url,char*out,size_t cap)
-{
-    char*body=strstr(reply,"\r\n\r\n"),*section,*section_end,*cp,*e;char base[512];size_t z,prefix_len,slash;const char*prefix;
-    if(!body)return-1;
-    body+=4;section=strstr(body,media);if(!section)return-1;section_end=strstr(section+1,"\nm=");cp=strstr(section,"a=control:");if(!cp||(section_end&&cp>=section_end))return-1;cp+=10;e=strpbrk(cp,"\r\n");if(!e)return-1;z=(size_t)(e-cp);if(!z||(z==1&&*cp=='*')||z>=cap)return-1;
-    if(content_base_url(reply,url,base,sizeof(base)))return-1;
-    if(!strncasecmp(cp,"rtsp://",7)){memcpy(out,cp,z);out[z]=0;return 0;}
-    prefix=base;prefix_len=strlen(prefix);slash=(prefix_len&&prefix[prefix_len-1]=='/')?0:1;if(prefix_len+slash+z>=cap)return-1;memcpy(out,prefix,prefix_len);if(slash)out[prefix_len++]='/';memcpy(out+prefix_len,cp,z);out[prefix_len+z]=0;return 0;
-}
-
-static int audio_track(const char*reply,const char*url,char*control,size_t cap,unsigned*payload_type)
-{
-    char*body=strstr(reply,"\r\n\r\n"),*audio,*section_end,*mapping;unsigned pt;
-    if(!body)return-1;
-    body+=4;audio=strstr(body,"m=audio");if(!audio||sscanf(audio,"m=audio %*u RTP/AVP %u",&pt)!=1||pt>127)return-1;section_end=strstr(audio+1,"\nm=");mapping=strstr(audio,"PCMA/16000/1");if(!mapping||(section_end&&mapping>=section_end)||media_control_url(reply,"m=audio",url,control,cap))return-1;*payload_type=pt;return 0;
-}
-
 static int run_stream(Stream*s)
 {
-    int fd=-1,audio_enabled=0;struct sockaddr_in a;char url[256],play_url[512],control[512],audio_control[512],reply[16384],session[128]="",extra[512],password[320],password_path[512];unsigned char packet[MAX_NAL+64],fu[MAX_NAL],*secret=NULL;size_t fu_len=0,secret_len=0;uint32_t fu_ts=0;unsigned audio_payload_type=0;Digest digest;
+    int fd=-1;struct sockaddr_in a;char url[256],control[512],reply[16384],session[128]="",extra[512],password[320],password_path[512];unsigned char packet[MAX_NAL+64],fu[MAX_NAL],*secret=NULL;size_t fu_len=0,secret_len=0;uint32_t fu_ts=0;Digest digest;
     memset(&digest,0,sizeof(digest));snprintf(password_path,sizeof(password_path),"%s/rtsp.password",rtsp_state_dir);if(joan_read_file(password_path,&secret,&secret_len,sizeof(password)-1)){pthread_mutex_lock(&s->lock);snprintf(s->status,sizeof(s->status),"password-unsynchronized");pthread_mutex_unlock(&s->lock);return-1;}while(secret_len&&(secret[secret_len-1]=='\n'||secret[secret_len-1]=='\r'))secret_len--;memcpy(password,secret,secret_len);password[secret_len]=0;memset(secret,0,secret_len);free(secret);
     fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)return-1;{struct timeval tv={5,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));}memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons((uint16_t)rtsp_port);inet_pton(AF_INET,"127.0.0.1",&a.sin_addr);if(connect(fd,(struct sockaddr*)&a,sizeof(a)))goto fail;snprintf(url,sizeof(url),"rtsp://127.0.0.1:%u%s",rtsp_port,s->path);if(rtsp_request(fd,1,"DESCRIBE",url,"Accept: application/sdp\r\n",password,&digest,reply,sizeof(reply)))goto fail;
-    {char*body=strstr(reply,"\r\n\r\n"),*video,*section_end,*sp;if(!body||content_base_url(reply,url,play_url,sizeof(play_url)))goto fail;body+=4;video=strstr(body,"m=video");if(!video)goto fail;section_end=strstr(video+1,"\nm=");sp=strstr(video,"sprop-parameter-sets=");if(sp&&(!section_end||sp<section_end)){sp+=21;if(!b64(sp,s->sps,sizeof(s->sps),&s->sps_len)){char*comma=strchr(sp,',');if(comma&&(!section_end||comma<section_end))b64(comma+1,s->pps,sizeof(s->pps),&s->pps_len);}if(s->sps_len&&s->pps_len&&!s->init)build_init(s);}if(media_control_url(reply,"m=video",url,control,sizeof(control)))goto fail;if(s==&streams[0]&&!audio_track(reply,url,audio_control,sizeof(audio_control),&audio_payload_type))audio_enabled=1;}
-    snprintf(extra,sizeof(extra),"Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");if(rtsp_request(fd,2,"SETUP",control,extra,password,&digest,reply,sizeof(reply)))goto fail;{char*sp=strcasestr(reply,"Session:");if(!sp)goto fail;sp+=8;while(*sp==' ')sp++;size_t z=strcspn(sp,";\r\n");if(z>=sizeof(session))goto fail;memcpy(session,sp,z);session[z]=0;}
-    if(audio_enabled){snprintf(extra,sizeof(extra),"Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nSession: %s\r\n",session);if(rtsp_request(fd,3,"SETUP",audio_control,extra,password,&digest,reply,sizeof(reply)))goto fail;}
-    snprintf(extra,sizeof(extra),"Range: npt=0.000-\r\nSession: %s\r\n",session);if(rtsp_request(fd,audio_enabled?4:3,"PLAY",play_url,extra,password,&digest,reply,sizeof(reply)))goto fail;
-    if(audio_enabled)fprintf(stderr,"RTSP microphone track: payload=%u control=%s\n",audio_payload_type,audio_control);
+    {char*body=strstr(reply,"\r\n\r\n"),*video,*section_end,*sp,*cp,*base_header;char base[512]="";if(!body)goto fail;body+=4;video=strstr(body,"m=video");if(!video)goto fail;section_end=strstr(video+1,"\nm=");sp=strstr(video,"sprop-parameter-sets=");if(sp&&(!section_end||sp<section_end)){sp+=21;if(!b64(sp,s->sps,sizeof(s->sps),&s->sps_len)){char*comma=strchr(sp,',');if(comma&&(!section_end||comma<section_end))b64(comma+1,s->pps,sizeof(s->pps),&s->pps_len);}if(s->sps_len&&s->pps_len&&!s->init)build_init(s);}cp=strstr(video,"a=control:");if(!cp||(section_end&&cp>=section_end))goto fail;cp+=10;{char*e=strpbrk(cp,"\r\n");size_t z;if(!e)goto fail;z=(size_t)(e-cp);if(!z||(z==1&&*cp=='*')||z>=sizeof(control))goto fail;base_header=strcasestr(reply,"Content-Base:");if(base_header){char*be;base_header+=13;while(*base_header==' ')base_header++;be=strpbrk(base_header,"\r\n");if(be&&(size_t)(be-base_header)<sizeof(base)){memcpy(base,base_header,(size_t)(be-base_header));base[be-base_header]=0;}}if(!strncasecmp(cp,"rtsp://",7)){memcpy(control,cp,z);control[z]=0;}else{const char*prefix=base[0]?base:url;size_t prefix_len=strlen(prefix),slash=(prefix_len&&prefix[prefix_len-1]=='/')?0:1;if(prefix_len+slash+z>=sizeof(control))goto fail;memcpy(control,prefix,prefix_len);if(slash)control[prefix_len++]='/';memcpy(control+prefix_len,cp,z);control[prefix_len+z]=0;}}}
+    snprintf(extra,sizeof(extra),"Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");if(rtsp_request(fd,2,"SETUP",control,extra,password,&digest,reply,sizeof(reply)))goto fail;{char*sp=strcasestr(reply,"Session:");if(!sp)goto fail;sp+=8;while(*sp==' ')sp++;size_t z=strcspn(sp,";\r\n");if(z>=sizeof(session))goto fail;memcpy(session,sp,z);session[z]=0;}snprintf(extra,sizeof(extra),"Session: %s\r\n",session);if(rtsp_request(fd,3,"PLAY",url,extra,password,&digest,reply,sizeof(reply)))goto fail;
     pthread_mutex_lock(&s->lock);snprintf(s->status,sizeof(s->status),"connected");pthread_mutex_unlock(&s->lock);
-    for(;;){unsigned char ch,channel;uint16_t plen;size_t off,payload_length;uint32_t ts;int marker;unsigned type;if(recv(fd,&ch,1,MSG_WAITALL)!=1)goto fail;if(ch!='$')continue;if(recv(fd,packet,3,MSG_WAITALL)!=3)goto fail;channel=packet[0];plen=((uint16_t)packet[1]<<8)|packet[2];if(recv(fd,packet,plen,MSG_WAITALL)!=(ssize_t)plen)goto fail;if(plen<12||(packet[0]&0xc0)!=0x80)continue;off=12+(packet[0]&15u)*4u;if(packet[0]&0x10){if(off+4>plen)continue;off+=4+(((size_t)packet[off+2]<<8)|packet[off+3])*4;}if(off>=plen)continue;payload_length=plen-off;if(packet[0]&0x20){unsigned padding=packet[plen-1];if(!padding||padding>payload_length)continue;payload_length-=padding;}if(channel==2&&audio_enabled){if((packet[1]&0x7f)==audio_payload_type&&payload_length)mic_feed(packet+off,payload_length);continue;}if(channel!=0)continue;marker=(packet[1]&0x80)!=0;ts=((uint32_t)packet[4]<<24)|((uint32_t)packet[5]<<16)|((uint32_t)packet[6]<<8)|packet[7];type=packet[off]&31u;
+    for(;;){unsigned char ch,channel;uint16_t plen;size_t off;uint32_t ts;int marker;unsigned type;if(recv(fd,&ch,1,MSG_WAITALL)!=1)goto fail;if(ch!='$')continue;if(recv(fd,packet,3,MSG_WAITALL)!=3)goto fail;channel=packet[0];plen=((uint16_t)packet[1]<<8)|packet[2];if(recv(fd,packet,plen,MSG_WAITALL)!=(ssize_t)plen)goto fail;if(channel!=0)continue;if(plen<12||(packet[0]&0xc0)!=0x80)continue;off=12+(packet[0]&15u)*4u;if(packet[0]&0x10){if(off+4>plen)continue;off+=4+(((size_t)packet[off+2]<<8)|packet[off+3])*4;}if(off>=plen)continue;marker=(packet[1]&0x80)!=0;ts=((uint32_t)packet[4]<<24)|((uint32_t)packet[5]<<16)|((uint32_t)packet[6]<<8)|packet[7];type=packet[off]&31u;
         if(type>=1&&type<=23)append_nal(s,packet+off,plen-off);
         else if(type==24){size_t p=off+1;while(p+2<=plen){size_t z=((size_t)packet[p]<<8)|packet[p+1];p+=2;if(!z||p+z>plen)break;append_nal(s,packet+p,z);p+=z;}}
         else if(type==28&&off+2<plen){unsigned start=packet[off+1]&0x80,end=packet[off+1]&0x40;if(start){fu_len=1;fu[0]=(packet[off]&0xe0)|(packet[off+1]&0x1f);fu_ts=ts;}if(fu_len&&fu_ts==ts&&fu_len+plen-off-2<=sizeof(fu)){memcpy(fu+fu_len,packet+off+2,plen-off-2);fu_len+=plen-off-2;if(end){append_nal(s,fu,fu_len);fu_len=0;}}else fu_len=0;}
@@ -206,7 +141,7 @@ fail:memset(password,0,sizeof(password));if(fd>=0)close(fd);return-1;
 }
 
 static void *worker(void*arg){Stream*s=arg;for(;;){if(run_stream(s)){pthread_mutex_lock(&s->lock);snprintf(s->status,sizeof(s->status),"reconnecting");pthread_mutex_unlock(&s->lock);msleep(1000);}}return NULL;}
-int joan_fmp4_start(const JoanConfig*cfg){size_t i;rtsp_port=cfg->rtsp_port?cfg->rtsp_port:554;snprintf(rtsp_state_dir,sizeof(rtsp_state_dir),"%s",cfg->state_dir);if(mic_open(cfg->audio_mic_socket))return-1;for(i=0;i<2;i++)if(pthread_create(&streams[i].thread,NULL,worker,&streams[i]))return-1;for(i=0;i<2;i++)pthread_detach(streams[i].thread);return 0;}
+int joan_fmp4_start(const JoanConfig*cfg){size_t i;rtsp_port=cfg->rtsp_port?cfg->rtsp_port:554;snprintf(rtsp_state_dir,sizeof(rtsp_state_dir),"%s",cfg->state_dir);for(i=0;i<2;i++)if(pthread_create(&streams[i].thread,NULL,worker,&streams[i]))return-1;for(i=0;i<2;i++)pthread_detach(streams[i].thread);return 0;}
 static Stream*find_stream(const char*id){size_t i;for(i=0;i<2;i++)if(!strcmp(id,streams[i].id))return&streams[i];return NULL;}
 static int timedwait(Stream*s,unsigned ms){struct timespec t;clock_gettime(CLOCK_REALTIME,&t);t.tv_sec+=ms/1000;t.tv_nsec+=(long)(ms%1000)*1000000L;if(t.tv_nsec>=1000000000L){t.tv_sec++;t.tv_nsec-=1000000000L;}return pthread_cond_timedwait(&s->changed,&s->lock,&t);}
 int joan_fmp4_init_segment(const char*id,unsigned char**data,size_t*len,unsigned timeout){Stream*s=find_stream(id);if(!s||!data||!len)return-1;pthread_mutex_lock(&s->lock);while(!s->init_len&&!timedwait(s,timeout)){}if(!s->init_len){pthread_mutex_unlock(&s->lock);return-1;}*data=malloc(s->init_len);if(!*data){pthread_mutex_unlock(&s->lock);return-1;}memcpy(*data,s->init,s->init_len);*len=s->init_len;pthread_mutex_unlock(&s->lock);return 0;}

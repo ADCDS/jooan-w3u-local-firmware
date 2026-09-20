@@ -75,14 +75,15 @@ the daemon's Digest-authenticated proxy; the username is `admin` and the
 password is synchronized with WebUI/SSH. The OEM upstream is loopback-only on
 TCP/8554.
 
-The audio WebSockets bridge to the bounded local audio router. Microphone PCMA
-is sourced from the retained loopback RTSP session and repacketized without
-transcoding. Boot enables the OEM microphone-to-RTSP producer when the retained
-configuration has it disabled. The UI supports microphone listening and
+The audio WebSockets bridge to the bounded local audio router. The router owns
+a dedicated read-only audio-driver stream and converts its 16 kHz mono PCM to
+G.711 A-law packets. The UI supports microphone listening and
 explicit press-to-talk; microphone playback pauses while talking to reduce
-feedback. OEM alarm/voice playback is discarded and the board-configured
-active-low speaker amplifier is enabled only for the authenticated,
-deadman-bounded talkback lease. These paths remain hardware-promotion gates.
+feedback. PTT is decoded and submitted through the router's dedicated output
+driver stream. OEM alarm/voice playback is discarded, while the guard enables
+the board-configured active-low amplifier only after successful authenticated
+PCM submission and enforces a 500 ms deadman mute. These paths remain
+hardware-promotion gates.
 
 PTZ requires a short lease so a lost browser cannot leave the motor running.
 The Web UI exposes directional jog/stop, home, and saved presets. Commands use

@@ -29,8 +29,6 @@ class RuntimeHookTests(unittest.TestCase):
         self.assertIn('[ ! -f "$JL_SPEAKER_GUARD_READY" ] || break', hook)
         self.assertIn('printf \'%s\\n\' released > "$JL_SPEAKER_HOOK_RELEASED.new"', hook)
         self.assertNotIn('echo 0 > "$JL_SPEAKER_PATH/value"', hook[mute:media_wrapper])
-        self.assertIn("-k /IPCamInfo/AudioEnable", hook[mute:media_wrapper])
-        self.assertIn('[ "$jl_audio_enabled" = 1 ] ||', hook[mute:media_wrapper])
 
     def test_onvif_50ms_is_not_encoded_as_500ms(self) -> None:
         hook = REPOSITORY / "runtime/slot/hooks/onvif-ptz.sh"
