@@ -10,7 +10,7 @@ jl_load_controller() {
     export JL_ROOT JL_RUN JL_CONTROL
     mkdir -p "$JL_RUN" || return 1
     chmod 700 "$JL_RUN" || return 1
-    gzip -t "$JL_ROOT/controller.tar.gz" || return 1
+    tar -tzf "$JL_ROOT/controller.tar.gz" >/dev/null || return 1
     jl_identity=$(md5sum "$JL_ROOT/controller.tar.gz") || return 1
     jl_identity=${jl_identity%% *}
     if [ -d "$JL_CONTROL" ]; then

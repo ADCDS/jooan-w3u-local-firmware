@@ -50,8 +50,8 @@ def contract_values(path: Path) -> tuple[int, int, int, int, list[str]]:
         )
     if state_config < 12 * 1024 or external < 2 * 1024:
         raise ValueError("persistent dynamic/external reservations are not realistic")
-    if transient_cap != 256 * 1024 or transient_reserve != 32 * 1024:
-        raise ValueError("transient trial contract must remain 256 KiB / 32 KiB")
+    if transient_cap != 256 * 1024 or transient_reserve < 56 * 1024:
+        raise ValueError("transient trial contract must remain 256 KiB / at least 56 KiB")
     return cap, reserve, state_config, external, layout
 
 

@@ -31,9 +31,21 @@ jl_stop_ssh() {
     rm -f "$jl_pidfile"
 }
 
-# The HTTPS daemon owns the canonical salted crypt hash. Never fall back to OEM
-# accounts or a separate SSH password when this record is absent/invalid.
-[ -s "$jl_keys/passwd" ] || { jl_stop_ssh; exit 1; }
+# The HTTPS daemon owns the canonical salted crypt hash. If it has not yet
+# synchronized SSH but an enrolled key exists, project a tmpfs-only locked
+# password record; never invent or persist a password for migrated custom auth.
+jl_credential=$jl_keys/passwd
+if [ -s "$jl_credential" ] && grep -qx 'admin:!' "$jl_credential" &&
+   [ ! -s "$jl_keys/authorized_keys" ]; then
+    jl_stop_ssh
+    exit 1
+fi
+if [ ! -s "$jl_credential" ]; then
+    [ -s "$jl_keys/authorized_keys" ] || { jl_stop_ssh; exit 1; }
+    jl_credential=$JL_RUN/recovery-ssh-passwd
+    printf '%s\n' 'admin:!' > "$jl_credential" || exit 1
+    chmod 600 "$jl_credential" || exit 1
+fi
 [ "$(id -u)" = 0 ] || exit 1
 awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts || exit 1
 for jl_account in /etc/passwd /etc/shadow; do
@@ -51,7 +63,7 @@ if [ ! -f "$jl_accounts/oem-passwd" ]; then
     cp /etc/passwd "$jl_accounts/oem-passwd" || exit 1
     chmod 600 "$jl_accounts/oem-passwd" || exit 1
 fi
-jl_record_hash=$(md5sum "$jl_keys/passwd") || { jl_stop_ssh; exit 1; }
+jl_record_hash=$(md5sum "$jl_credential") || { jl_stop_ssh; exit 1; }
 jl_record_hash=${jl_record_hash%% *}
 jl_old_hash=$(cat "$jl_accounts/credential.md5" 2>/dev/null || :)
 jl_mounts=$(awk '$5=="/etc/passwd" || $5=="/etc/shadow" {print $1, $4, $5}' /proc/self/mountinfo)
@@ -61,7 +73,7 @@ if [ -n "$jl_owned_mounts" ] && [ "$jl_mounts" != "$jl_owned_mounts" ]; then
     exit 1
 fi
 if [ "$jl_record_hash" != "$jl_old_hash" ] || [ -z "$jl_owned_mounts" ]; then
-    jl_make_accounts "$jl_accounts/oem-passwd" "$jl_keys/passwd" "$jl_accounts" "$jl_home" || { jl_stop_ssh; exit 1; }
+    jl_make_accounts "$jl_accounts/oem-passwd" "$jl_credential" "$jl_accounts" "$jl_home" || { jl_stop_ssh; exit 1; }
     jl_stop_ssh
     if [ -z "$jl_owned_mounts" ]; then
         [ -z "$jl_mounts" ] || exit 1

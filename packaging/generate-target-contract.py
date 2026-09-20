@@ -74,6 +74,8 @@ def migration(target: dict[str, object]) -> str:
         "legacy-validated",
         "expanded-product-0.1-validated",
         "keys-preserved",
+        "headroom-reclaiming",
+        "headroom-reclaimed",
         "controller-published",
         "failclosed-hook-published",
         "activated",

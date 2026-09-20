@@ -84,6 +84,8 @@
       "legacy-validated",
       "expanded-product-0.1-validated",
       "keys-preserved",
+      "headroom-reclaiming",
+      "headroom-reclaimed",
       "controller-published",
       "failclosed-hook-published",
       "activated",
@@ -111,7 +113,7 @@
     "logical_regular_file_cap_bytes": 180224,
     "root": "/opt/custom/jooan-local",
     "state_config_regular_file_reserve_bytes": 16384,
-    "transient_final_free_reserve_bytes": 32768,
+    "transient_final_free_reserve_bytes": 57344,
     "transient_regular_file_cap_bytes": 262144
   },
   "release_authenticity": {

@@ -77,7 +77,7 @@ jl_tree_bytes() { printf '%s\n' 180224; }
 jl_check_storage
 jl_tree_bytes() { printf '%s\n' 180225; }
 if jl_check_storage 2>/dev/null; then exit 1; fi
-jl_wait_free_kb() { [ "$2" = 32 ]; }
+jl_wait_free_kb() { [ "$2" = 56 ]; }
 jl_tree_bytes() { printf '%s\n' 262144; }
 jl_check_transient_storage
 jl_tree_bytes() { printf '%s\n' 262145; }

@@ -44,7 +44,7 @@ jl_check_transient_storage() {
         jl_log "transient trial files total ${jl_storage_bytes} bytes; limit is 262144 bytes"
         return 1
     }
-    jl_wait_free_kb "$JL_ROOT" 32 20
+    jl_wait_free_kb "$JL_ROOT" 56 20
 }
 
 jl_check_current_storage() {
