@@ -13,10 +13,9 @@ id=$(wpa_cli -iwlan0 add_network | awk '/^[0-9]+$/{print;exit}')
 case "$id" in ''|*[!0-9]*) exit 1 ;; esac
 wpa_cli -iwlan0 set_network "$id" ssid "\"$ssid\"" | grep -q OK
 wpa_cli -iwlan0 set_network "$id" psk "\"$password\"" | grep -q OK
-wpa_cli -iwlan0 set_network "$id" key_mgmt WPA-PSK | grep -q OK
-wpa_cli -iwlan0 set_network "$id" proto RSN | grep -q OK
-wpa_cli -iwlan0 set_network "$id" pairwise CCMP | grep -q OK
-wpa_cli -iwlan0 set_network "$id" group CCMP | grep -q OK
+# Let the OEM wpa_supplicant 2.9 select protocol and ciphers from the BSS.
+# Explicit RSN/CCMP constraints leave this SKW6316 build stuck in SCANNING,
+# including against otherwise compatible WPA2 bench access points.
 wpa_cli -iwlan0 select_network "$id" | grep -q OK
 wpa_cli -iwlan0 enable_network "$id" | grep -q OK
 i=0
