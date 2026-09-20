@@ -47,6 +47,8 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or add explicitly allowed RFC1918/ULA routes |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
+| `/api/v1/time` | `PUT` | Set the camera clock from the client (UTC epoch seconds, as a JSON string) |
+| `/api/v1/timezone` | `GET`, `PUT` | Inspect or set the stored time zone (`gmt_tz` like `"GMT-03:00"`, optional IANA `tz_name`). The burned-in OSD overlay adopts it on the next camera restart. |
 | `/api/v1/streams` | `GET` | Enumerate main/sub RTSP and fMP4 resources |
 | `/api/v1/video/{main,sub}/init.mp4` | `GET` | fMP4 initialization segment |
 | `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | Next fMP4 fragment after sequence `N` |
@@ -67,7 +69,7 @@ accepted, not completed; poll its `/api/v1/operations/{id}` URL.
 
 ## Media and controls
 
-The PWA consumes the main and sub fMP4 routes. The daemon converts the retained
+The Web UI consumes the main and sub fMP4 routes. The daemon converts the retained
 local RTSP/RTP H.264 streams into initialization segments and bounded fragmented
 MP4; it does not transcode video. Stream readiness is reported separately for
 main and sub. RTSP remains available on TCP/554 for local NVR clients through

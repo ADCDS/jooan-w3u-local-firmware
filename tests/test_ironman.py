@@ -438,20 +438,30 @@ class HostBuilderTests(unittest.TestCase):
         for soname in ("libmbedcrypto.so.6", "libmbedtls.so.13", "libmbedx509.so.1"):
             self.assertIn(f"/lib/{soname}", target["compatibility_hashes"])
 
-    def test_stage_web_filter_includes_pwa_and_excludes_tests(self) -> None:
+    def test_stage_web_filter_ships_ui_minified_without_pwa(self) -> None:
         assembly = (REPOSITORY / "packaging/assemble-stages.sh").read_text()
         for pattern in ("*.html", "*.css", "*.js", "*.svg", "*.webmanifest"):
             self.assertIn(pattern, assembly)
         self.assertIn("! -name '*.test.js'", assembly)
+        # The persistent budget has no room for readable source, so staged
+        # assets are stripped the same way the shell scripts are.
+        self.assertIn("minify-web.py", assembly)
         deployable = {
             path.name for path in (REPOSITORY / "web").iterdir()
             if path.is_file()
             and path.suffix in (".html", ".css", ".js", ".svg", ".webmanifest")
             and not path.name.endswith(".test.js")
         }
-        self.assertIn("manifest.webmanifest", deployable)
-        self.assertIn("icon.svg", deployable)
+        self.assertIn("app.js", deployable)
         self.assertNotIn("audio-codec.test.js", deployable)
+        # The PWA shell was retired to buy that space. A service worker also
+        # cached index.html and app.js, which would have kept serving the
+        # pre-update UI after a firmware upgrade.
+        self.assertNotIn("manifest.webmanifest", deployable)
+        self.assertNotIn("icon.svg", deployable)
+        self.assertNotIn("sw.js", deployable)
+        app = (REPOSITORY / "web/app.js").read_text()
+        self.assertIn("getRegistrations", app)
 
     def test_expanded_product_migration_orders_durable_replacement_first(self) -> None:
         installer = (REPOSITORY / "packaging/payload/install-upgrade.sh").read_text()

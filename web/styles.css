@@ -1,1 +1,172 @@
-:root{color-scheme:dark;--bg:#10151b;--panel:#19222c;--line:#344353;--ink:#eef5fb;--muted:#9fb1c1;--brand:#61d2a4;--danger:#f07777;font:16px/1.45 system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#0b1015,#15202a);color:var(--ink);min-height:100vh}header{display:flex;justify-content:space-between;align-items:center;padding:1rem clamp(1rem,4vw,3rem);border-bottom:1px solid var(--line);background:#101820dd;position:sticky;top:0;z-index:2}h1,h2{margin:.2rem 0 1rem}h1{font-size:1.25rem}main{max-width:1200px;margin:auto;padding:1rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:1rem}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1rem;box-shadow:0 12px 35px #0004}.narrow{max-width:450px;margin:8vh auto}.hidden{display:none!important}label{display:grid;gap:.35rem;margin:.8rem 0;color:var(--muted)}input,textarea,button{font:inherit;border-radius:8px;border:1px solid var(--line);padding:.7rem;background:#0d141b;color:var(--ink)}button{background:var(--brand);color:#07130f;border:0;font-weight:700;cursor:pointer;margin:.2rem}.secondary{background:#8393a3}.danger{background:var(--danger)}button:disabled{opacity:.5;cursor:not-allowed}pre,output{display:block;white-space:pre-wrap;word-break:break-word;background:#0d141b;padding:.7rem;border-radius:8px;min-height:2.5rem}img{width:100%;min-height:120px;object-fit:contain;background:#080b0f;border-radius:8px;margin:.5rem 0}.row{display:flex;flex-wrap:wrap}.ptz{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem}.ptz button:first-child{grid-column:2}.ptz button:nth-child(2){grid-column:1}.ptz button:nth-child(5){grid-column:2}#notice{position:fixed;right:1rem;bottom:1rem;max-width:420px;background:#080b0fee;padding:.8rem;border-radius:8px;border:1px solid var(--line)}code{color:var(--brand)}.video-card{grid-column:1/-1}.video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.8rem}.video-grid figure{margin:0}.video-grid video{width:100%;min-height:180px;background:#000;border-radius:8px}.video-grid figcaption{color:var(--muted);padding:.3rem}.warning{background:#5b4212;color:#fff0bc;border:1px solid #b88728;padding:.75rem;border-radius:8px;margin-bottom:.8rem}@media(max-width:500px){header{position:static}.card{border-radius:8px}main{padding:.6rem}}
+/* Jooan Local console.
+   Three surfaces from one tree: pointer browser, phone, and a TV remote.
+   Responsive for pointer (desktop) and touch (phone). */
+:root{
+  color-scheme:dark;
+  --bg:#0d1418; --panel:#151f25; --panel2:#1c282f; --line:#2b3941;
+  --ink:#e9f1f4; --muted:#8ba0aa;
+  --accent:#52d3a4; --accent-ink:#04231a;
+  /* Focus is deliberately not the accent: on a D-pad the ring is the only
+     cursor, and "where I am" must never read as "what this does". */
+  --focus:#3d94ff; --ring-sep:#050a0d;
+  --warn:#e6ab48; --crit:#f0736a;
+  --pad:1rem; --radius:10px;
+  font:16px/1.5 system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
+
+/* ---------- chrome ---------- */
+header{display:flex;justify-content:space-between;align-items:center;gap:1rem;
+  padding:.7rem clamp(.8rem,3vw,2rem);border-bottom:1px solid var(--line);flex:none}
+h1{font-size:1.05rem;margin:0;letter-spacing:.02em}
+h2{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem}
+main{flex:1;min-height:0;display:flex;flex-direction:column;padding:var(--pad);gap:var(--pad)}
+.hidden{display:none!important}
+.muted{color:var(--muted);font-size:.85rem;margin:.4rem 0 0}
+.grow{flex:1}
+code{color:var(--accent);font-family:ui-monospace,monospace}
+
+/* ---------- controls ---------- */
+button,input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);
+  padding:.6rem .75rem;background:var(--panel2);color:var(--ink);min-height:44px}
+button{cursor:pointer;font-weight:600}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+button.danger{color:var(--crit);border-color:rgba(240,115,106,.5)}
+button.ghost{background:transparent}
+button.wide{width:100%}
+button.link{background:none;border:0;color:var(--accent);padding:0;min-height:0;text-decoration:underline}
+button:disabled{opacity:.45;cursor:not-allowed}
+label{display:grid;gap:.3rem;margin:.6rem 0;color:var(--muted);font-size:.8rem}
+input,textarea{background:#0d161c}
+form{margin:0}
+output{display:block;white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:var(--muted);margin-top:.5rem}
+output:empty{display:none}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:var(--pad)}
+.narrow{max-width:420px;margin:6vh auto}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.5rem}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.row-chips button{min-height:44px}
+
+.pill{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;
+  padding:.3rem .65rem;border-radius:999px;border:1px solid var(--line);
+  background:var(--panel);color:var(--muted);white-space:nowrap}
+.pill .led{width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);flex:none}
+.pill b{color:var(--ink);font-weight:600}
+.pill.warn{border-color:rgba(230,171,72,.5);color:var(--warn)} .pill.warn .led{background:var(--warn)}
+.pill.off .led{background:var(--muted)}
+.pill.crit{border-color:rgba(240,115,106,.5);color:var(--crit)} .pill.crit .led{background:var(--crit)}
+
+.gap-top{margin-top:.7rem}
+.kv{display:flex;flex-direction:column;gap:.45rem}
+.kv .row{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;font-size:.82rem}
+.kv .row span{color:var(--muted);flex:none;white-space:nowrap}
+.kv .row b{font-family:ui-monospace,monospace;font-weight:500;text-align:right;word-break:break-all}
+.kv.stack .row{flex-direction:column;align-items:flex-start;gap:.15rem}
+.kv.stack .row b{text-align:left}
+
+.banner{display:flex;align-items:center;gap:.6rem;border:1px solid rgba(230,171,72,.45);
+  background:rgba(230,171,72,.12);border-radius:var(--radius);padding:.6rem .8rem;
+  font-size:.85rem;color:var(--warn)}
+.banner strong{color:var(--ink)}
+.warn-icon{width:1.2rem;height:1.2rem;flex:none;fill:none;stroke:currentColor;stroke-width:2}
+.confirm{border:1px solid var(--crit);background:rgba(240,115,106,.12);
+  border-radius:var(--radius);padding:.7rem;margin-top:.5rem}
+.confirm p{margin:0 0 .5rem;font-size:.85rem}
+
+
+/* ---------- console shell ---------- */
+#console{flex:1;min-height:0;display:flex;gap:var(--pad)}
+#rail{display:flex;flex-direction:column;gap:.25rem;width:11rem;flex:none}
+#rail .brand{display:block;margin-bottom:.8rem;line-height:1.2}
+#rail .brand b{display:block;font-size:.95rem}
+#rail .brand small{display:block;color:var(--muted);font-size:.7rem;font-family:ui-monospace,monospace}
+#rail button{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;text-align:left;
+  background:none;border:1px solid transparent;color:var(--muted);font-size:.9rem;width:100%}
+#rail button svg{width:1.2rem;height:1.2rem;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+#rail button[aria-current="true"]{background:var(--panel);color:var(--ink);border-color:var(--line)}
+#rail button[aria-current="true"] svg{stroke:var(--accent)}
+
+#view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:.7rem}
+.zone{flex:1;min-height:0;display:flex;flex-direction:column;gap:.7rem}
+[data-scrollport]{overflow-y:auto;scrollbar-width:none;scroll-behavior:smooth}
+[data-scrollport]::-webkit-scrollbar{display:none}
+@media (prefers-reduced-motion:reduce){[data-scrollport]{scroll-behavior:auto}}
+
+#zone-live{flex-direction:row}
+.cams{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:.6rem}
+.side{width:15rem;flex:none;display:flex;flex-direction:column;gap:.6rem;overflow-y:auto;scrollbar-width:none}
+.side::-webkit-scrollbar{display:none}
+
+/* ---------- camera tiles ---------- */
+.cam{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);
+  background:#080d11;cursor:pointer}
+.cam video{display:block;width:100%;height:100%;object-fit:contain;background:#080d11}
+.cam.main{flex:1;min-height:0}
+/* Both sensors are 16:9 and the live area is roughly 16:9 too, so a
+   full-width sub tile letterboxes a 16:9 source into a slot: the box grows,
+   the picture does not. A 16:9 tile at partial width makes the image larger. */
+.cam.sub{flex:none;width:40%;aspect-ratio:16/9;align-self:flex-start}
+.cam .badge{position:absolute;top:.4rem;right:.5rem;display:flex;gap:.3rem;align-items:center;
+  font:700 .6rem/1 ui-monospace,monospace;letter-spacing:.1em;color:#fff;
+  background:rgba(0,0,0,.5);border-radius:4px;padding:.25rem .4rem}
+.cam .badge i{width:.4rem;height:.4rem;border-radius:50%;background:var(--crit)}
+.cam .cap{position:absolute;left:.5rem;bottom:.4rem;font:.62rem/1.2 ui-monospace,monospace;
+  color:#bccfd8;text-shadow:0 1px 2px #000;
+  max-width:calc(100% - 9rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.camfs{position:absolute;right:.5rem;bottom:.4rem;display:inline-flex;align-items:center;gap:.3rem;
+  font:600 .68rem/1 system-ui,sans-serif;padding:.4rem .55rem;border-radius:6px;
+  border:1px solid rgba(255,255,255,.28);background:rgba(8,14,18,.75);color:#e9f1f4}
+.camfs svg{width:.85rem;height:.85rem;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round}
+
+.dpad{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem}
+.dpad button{aspect-ratio:1;display:grid;place-items:center;padding:0}
+.dpad .u{grid-column:2;grid-row:1} .dpad .l{grid-column:1;grid-row:2}
+.dpad .c{grid-column:2;grid-row:2} .dpad .r{grid-column:3;grid-row:2}
+.dpad .d{grid-column:2;grid-row:3}
+
+/* ---------- full screen ----------
+   A CSS state, not a DOM move: the selected tile is promoted to fill the
+   viewport while its <video> keeps playing. Moving the element would tear
+   down and restart the MediaSource for no benefit. */
+#console[data-fs]{flex-direction:column}
+#console[data-fs] #rail,#console[data-fs] #chips,#console[data-fs] #pw-warning,
+#console[data-fs] .side,#console[data-fs] .zone:not(#zone-live){display:none}
+#console[data-fs] #zone-live{display:flex}
+#console[data-fs] .cams{gap:0}
+#console[data-fs="main"] .cam.sub,#console[data-fs="sub"] .cam.main{display:none}
+#console[data-fs] .cam{flex:1;width:auto;aspect-ratio:auto;min-height:0;border-radius:8px}
+#console[data-fs] .camfs{display:none}
+#fs-bar{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex:none}
+
+#notice{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(1rem + env(safe-area-inset-bottom,0px));
+  max-width:min(92vw,34rem);display:flex;align-items:center;gap:.6rem;margin:0;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:.6rem .7rem .6rem .9rem;font-size:.85rem;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:60}
+#notice button{background:none;border:0;color:var(--muted);font-size:1.2rem;padding:0 .3rem;min-height:0}
+
+/* ---------- phone ---------- */
+@media (max-width:760px){
+  :root{--pad:.6rem}
+  main{padding:var(--pad)}
+  #console{flex-direction:column}
+  /* Rail becomes a bottom bar, inside thumb reach. */
+  #rail{flex-direction:row;width:auto;order:3;gap:.2rem;border-top:1px solid var(--line);
+    padding-top:.4rem;padding-bottom:env(safe-area-inset-bottom,0px)}
+  #rail .brand{display:none}
+  #rail button{flex-direction:column;gap:.2rem;justify-content:center;text-align:center;font-size:.68rem;padding:.4rem .2rem}
+  #zone-live{flex-direction:column}
+  .cams{flex:none}
+  .cam.main{flex:none;aspect-ratio:16/9}
+  .cam.sub{width:62%}
+  .side{width:auto;overflow:visible}
+  .desktop-only{display:none}
+  .cam .cap{max-width:calc(100% - 8rem)}
+  #view{overflow-y:auto}
+  /* Clear the bottom rail: a toast covering the navigation is worse than the
+     error it reports. */
+  #notice{bottom:calc(4.6rem + env(safe-area-inset-bottom,0px))}
+}
+

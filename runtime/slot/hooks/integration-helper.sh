@@ -116,6 +116,48 @@ case "$op" in
         private_routes_apply "$root/config/routes.list" || exit 1
         private_routes_json "$root/config/routes.list"
         ;;
+    time-set)
+        # id is the UTC epoch; the daemon has already range-checked it, but keep
+        # the helper defensive since it runs privileged.
+        case "$id" in ''|*[!0-9]*) exit 2 ;; esac
+        date -s "@$id" >/dev/null 2>&1 || exit 1
+        ;;
+    timezone-set)
+        # id is "<GmtTz> [<IANA name>]" (space-separated). The daemon validated
+        # both fields; re-check here since we run privileged. jooanipc burns the
+        # OSD clock using /IpcParam/TimeZomeCfg/GmtTz, which it reads at startup,
+        # so this write is persistent and the overlay picks it up on the next
+        # reboot. json_debug is the OEM's own in-place config writer.
+        set -- $id
+        tz_gmt=${1:-}
+        tz_name=${2:-}
+        case "$tz_gmt" in
+            GMT[+-][0-9][0-9]:[0-9][0-9]) : ;;
+            *) exit 2 ;;
+        esac
+        [ -z "$tz_name" ] || case "$tz_name" in
+            *[!A-Za-z0-9_/+-]*) exit 2 ;;
+        esac
+        tz_cfg=/opt/conf/config.json
+        tz_jd=/mnt/mtd/run/json_debug
+        [ -f "$tz_cfg" ] && [ -x "$tz_jd" ] || exit 1
+        LD_LIBRARY_PATH=/mnt/mtd/lib:/mnt/mtd/run "$tz_jd" -i -c w \
+            -k /IpcParam/TimeZomeCfg/GmtTz -v "$tz_gmt" "$tz_cfg" >/dev/null 2>&1 || exit 1
+        if [ -n "$tz_name" ]; then
+            LD_LIBRARY_PATH=/mnt/mtd/lib:/mnt/mtd/run "$tz_jd" -i -c w \
+                -k /IpcParam/TimeZomeCfg/TimeZone -v "$tz_name" "$tz_cfg" >/dev/null 2>&1 || exit 1
+        fi
+        sync
+        ;;
+    timezone-get)
+        tz_cfg=/opt/conf/config.json
+        [ -f "$tz_cfg" ] || { echo '{"gmt_tz":"","tz_name":""}'; exit 0; }
+        tz_gmt=$(sed -n 's/.*"GmtTz"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tz_cfg" | head -1)
+        tz_name=$(sed -n 's/.*"TimeZone"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tz_cfg" | head -1)
+        tz_gmt=$(printf %s "$tz_gmt" | tr -cd 'A-Za-z0-9:+-')
+        tz_name=$(printf %s "$tz_name" | tr -cd 'A-Za-z0-9_/+-')
+        printf '{"gmt_tz":"%s","tz_name":"%s"}\n' "$tz_gmt" "$tz_name"
+        ;;
     snapshot)
         echo 'snapshot backend unavailable with OEM GoAhead disabled' >&2
         exit 69
