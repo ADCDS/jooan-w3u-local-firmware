@@ -71,6 +71,7 @@ function show(id) {
   $(id).classList.remove('hidden');
 }
 
+let replaying = false;
 function requireLogin() {
   videoPlayers.forEach(p => p.close());
   videoPlayers = [];
@@ -79,6 +80,12 @@ function requireLogin() {
   recordingsLoaded = false;
   exitFullscreen(false);
   show('#login');
+  /* A session that expired behind your back should not make a TV user spell
+     the password out again. Once, and never from inside its own failure. */
+  if (!replaying && readSaved()?.password) {
+    replaying = true;
+    autoSignIn().finally(() => { replaying = false; });
+  }
 }
 window.addEventListener('joan-auth-required', requireLogin);
 
@@ -266,20 +273,65 @@ async function load() {
 }
 
 /* ---------- auth ---------- */
+/* Staying signed in, for the remote.
+ *
+ * Signing in on a television means spelling a password out on a grid keyboard
+ * with four arrows and OK, every time the app is opened. So the credential can
+ * be kept here and replayed on load.
+ *
+ * It is kept in clear text in this origin's localStorage, which is the honest
+ * description and the reason it is opt-in and off by default: anyone who can
+ * reach this browser profile can read it. It buys nothing against an attacker
+ * who is already on the camera's network -- the camera is the thing being
+ * protected -- and it is discarded the moment the credential stops working,
+ * so a changed password does not leave a stale copy lying around. */
+const SAVED = 'joan-credential';
+const readSaved = () => {
+  try { return JSON.parse(localStorage.getItem(SAVED) || 'null'); } catch (_) { return null; }
+};
+const forgetSaved = () => { try { localStorage.removeItem(SAVED); } catch (_) { /* private mode */ } };
+
+async function signIn(credential, remember) {
+  const d = await api('/api/v1/session', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credential),
+  });
+  csrf = d.csrf;
+  if (remember) {
+    try { localStorage.setItem(SAVED, JSON.stringify(credential)); } catch (_) { /* private mode */ }
+  }
+  clearNotice();
+  await load();
+}
+
 $('#login-form').addEventListener('submit', e => {
   e.preventDefault();
   busy(e.submitter || $('#login-form button'), async () => {
     try {
-      const body = JSON.stringify(Object.fromEntries(new FormData(e.target)));
-      const d = await api('/api/v1/session', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-      });
-      csrf = d.csrf;
-      clearNotice();
-      await load();
+      await signIn(Object.fromEntries(new FormData(e.target)), $('#remember').checked);
     } catch (x) { notice(x.message, 'crit'); }
   });
 });
+
+/* A saved credential that no longer works is worse than none: it would fail
+   on every load and strand you behind a form you cannot see. Drop it and show
+   the form instead. */
+async function autoSignIn() {
+  const saved = readSaved();
+  if (!saved?.password) return false;
+  $('#remember').checked = true;
+  try {
+    await busy($('#login-form button'), () => signIn(saved, false));
+    return true;
+  } catch (x) {
+    forgetSaved();
+    $('#remember').checked = false;
+    notice(x.kind === 'offline' ? x.message : 'The saved password no longer works.', 'warn');
+    return false;
+  }
+}
+
+
 
 $('#password-form').addEventListener('submit', e => {
   e.preventDefault();
@@ -359,10 +411,14 @@ $('#time-set-manual').onclick = async () => {
 $('#goto-password').onclick = () => show('#setup');
 $('#setup-cancel').onclick = () => show('#console');
 $('#refresh').onclick = () => load().catch(x => notice(x.message, 'crit'));
-$('#logout').onclick = async () => {
+$('#logout').onclick = () => busy($('#logout'), async () => {
+  /* Forget first, and before requireLogin: signing out has to mean it, and
+     requireLogin replays a saved credential the moment it finds one. */
+  forgetSaved();
   try { await api('/api/v1/session', { method: 'DELETE' }); } catch (_) { /* ending anyway */ }
+  csrf = '';
   requireLogin();
-};
+});
 
 /* ---------- network ---------- */
 $('#wifi-form').addEventListener('submit', async e => {
@@ -905,9 +961,12 @@ async function resume() {
 }
 setZone('live');
 initTvRemote();
-resume().catch(x => {
-  if (x.kind === 'offline') notice(x.message, 'crit');
+resume().catch(async x => {
+  if (x.kind === 'offline') { notice(x.message, 'crit'); show('#login'); return; }
+  /* Show the form first: a slow camera should not leave a blank screen while
+     the saved credential is replayed. */
   show('#login');
+  await autoSignIn();
 });
 /* Retire any service worker installed by an earlier build; it cached index.html
    and app.js and would keep serving the pre-update UI after a firmware upgrade. */

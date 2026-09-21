@@ -48,6 +48,8 @@ button[data-busy]::after{content:"";position:absolute;width:1.1em;height:1.1em;
 @keyframes spin{to{transform:rotate(1turn)}}
 @media (prefers-reduced-motion:reduce){button[data-busy]::after{animation:none}}
 label{display:grid;gap:.3rem;margin:.6rem 0;color:var(--muted);font-size:.8rem}
+.check{display:flex;align-items:center;gap:.5rem}
+.check input{width:1.15rem;height:1.15rem;min-height:0;flex:none;accent-color:var(--accent)}
 input,textarea{background:#0d161c}
 form{margin:0}
 output{display:block;white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:var(--muted);margin-top:.5rem}
