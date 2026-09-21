@@ -161,7 +161,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | Set clock (from phone / UTC) | ✓ |
 | Time zone | ✓ (the burned-in OSD adopts it on the next restart) |
 | **Network** | |
-| Wi-Fi credentials | ✓ transactional stage / commit / roll back |
+| Wi-Fi credentials | ✓ transactional stage / commit / roll back; prefers 5 GHz, falls back to 2.4 GHz when 5 GHz is weak/absent |
 | Wi-Fi scan (nearby APs) | ✗ |
 | Signal / RSSI readout | ✗ |
 | **System** | |

@@ -35,7 +35,7 @@ jl_check_storage() {
         jl_log "persistent regular files total ${jl_storage_bytes} bytes; limit is 184320 bytes (180 KiB)"
         return 1
     }
-    jl_wait_free_kb "$JL_ROOT" 80 20
+    jl_wait_free_kb "$JL_ROOT" 76 20
 }
 
 jl_check_maintenance_storage() {
