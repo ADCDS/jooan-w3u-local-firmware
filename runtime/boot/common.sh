@@ -29,6 +29,39 @@ jl_lock() {
 }
 jl_unlock() { rm -rf "$JL_RUN/state.lock" 2>/dev/null || :; }
 
+# The board has no RTC, so every boot starts near 2021 until a client sets the
+# clock -- which misdates SD recordings and the burned-in OSD. Persist a coarse
+# last-known-good time and restore it at boot. The clock is only ever moved
+# forward, so a client-set (accurate) time is never regressed. Written rarely,
+# via /tmp then mv, because /opt is JFFS2 on NOR and nearly full.
+jl_time_state() { printf '%s\n' "$JL_STATE/last-time"; }
+jl_time_valid() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+jl_restore_time() {
+    jl_time_file=$(jl_time_state)
+    [ -f "$jl_time_file" ] || return 0
+    jl_saved=$(cat "$jl_time_file" 2>/dev/null) || return 0
+    jl_time_valid "$jl_saved" || return 0
+    jl_now=$(date -u +%s 2>/dev/null) || return 0
+    jl_time_valid "$jl_now" || return 0
+    [ "$jl_saved" -gt "$jl_now" ] || return 0
+    date -s "@$jl_saved" >/dev/null 2>&1 || return 1
+    jl_log "clock restored to persisted $jl_saved (no RTC on this board)"
+}
+jl_save_time() {
+    jl_now=$(date -u +%s 2>/dev/null) || return 0
+    jl_time_valid "$jl_now" || return 0
+    jl_time_file=$(jl_time_state)
+    if [ -f "$jl_time_file" ]; then
+        jl_saved=$(cat "$jl_time_file" 2>/dev/null) || jl_saved=0
+        jl_time_valid "$jl_saved" || jl_saved=0
+        [ "$jl_now" -gt "$jl_saved" ] || return 0
+    fi
+    mkdir -p "$JL_STATE" 2>/dev/null || return 1
+    jl_time_tmp=/tmp/jl-last-time.$$
+    printf '%s\n' "$jl_now" > "$jl_time_tmp" 2>/dev/null || return 1
+    mv -f "$jl_time_tmp" "$jl_time_file" 2>/dev/null || { rm -f "$jl_time_tmp"; return 1; }
+}
+
 jl_check_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
     [ "$jl_storage_bytes" -le 188416 ] || {
