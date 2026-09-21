@@ -122,6 +122,36 @@ grep -q '^-A inet6 add fd00:dead::/64 gw fe80::1 dev wlan0$' "$fixture/route-act
 unset -f route
 rm -f "$JL_CONFIG/routes.list" "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
 
+# The supervisor applies the committed network only once wpa_supplicant
+# answers, exactly once per boot, and gives up rather than thrashing.
+mkdir -p "$JL_RUN/slot-A/hooks"
+cat > "$JL_RUN/slot-A/hooks/wifi-apply.sh" <<'HOOK'
+#!/bin/sh
+printf '%s\n' "$1" >> "$JL_WIFI_CALLS"
+[ ! -f "$JL_WIFI_FAIL" ] || exit 1
+HOOK
+chmod +x "$JL_RUN/slot-A/hooks/wifi-apply.sh"
+JL_WIFI_CALLS=$fixture/wifi-calls; export JL_WIFI_CALLS
+: > "$JL_WIFI_CALLS"
+printf '{"ssid":"x","password":"y"}\n' > "$JL_CONFIG/wifi.json"
+wpa_cli() { return 1; }                       # control socket not up yet
+jl_ensure_wifi A
+[ ! -s "$JL_WIFI_CALLS" ]
+wpa_cli() { printf 'PONG\n'; }                # wpa_supplicant now answering
+jl_ensure_wifi A
+[ "$(wc -l < "$JL_WIFI_CALLS")" = 1 ]
+jl_ensure_wifi A                              # already applied: not repeated
+[ "$(wc -l < "$JL_WIFI_CALLS")" = 1 ]
+# A hook that keeps failing is retried, but only up to the cap.
+rm -f "$JL_RUN/wifi-applied" "$JL_RUN/wifi-attempts"
+: > "$JL_WIFI_CALLS"
+JL_WIFI_FAIL=$fixture/wifi-fail; export JL_WIFI_FAIL; : > "$JL_WIFI_FAIL"
+i=0; while [ "$i" -lt 9 ]; do jl_ensure_wifi A 2>/dev/null || :; i=$((i + 1)); done
+[ "$(wc -l < "$JL_WIFI_CALLS")" = 5 ]
+[ ! -f "$JL_RUN/wifi-applied" ]
+unset -f wpa_cli
+rm -f "$JL_WIFI_FAIL" "$JL_CONFIG/wifi.json" "$JL_RUN/wifi-applied" "$JL_RUN/wifi-attempts"
+
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
 mkdir -p "$JL_ROOT/slots/A" "$JL_ROOT/slots/B"
 printf stable > "$JL_ROOT/slots/A/runtime.tar.gz"

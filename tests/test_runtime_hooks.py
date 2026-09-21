@@ -146,14 +146,19 @@ class RuntimeHookTests(unittest.TestCase):
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
 
-    def test_boot_does_not_block_the_daemon_on_the_wifi_join(self) -> None:
-        """wpa_supplicant only appears ~54s into OEM boot, so the hook's wait
-        must not sit in front of the daemon start."""
+    def test_slot_start_does_not_apply_wifi(self) -> None:
+        """start.sh is bounded to 15s and runs long before wpa_supplicant
+        exists, so it must not try to apply the committed network: doing so
+        either configured nothing or ran past the bound and killed the slot
+        before the daemon started. The supervisor owns this instead."""
         start = (REPOSITORY / "runtime/slot/start.sh").read_text(encoding="utf-8")
-        wifi = start.index("hooks/wifi-apply.sh")
-        daemon = start.index("bin/joan-daemon")
-        self.assertLess(wifi, daemon)
-        self.assertRegex(start[wifi:daemon], r'wifi-boot\.log"\s*2>&1\s*&')
+        self.assertNotIn('"$JL_SLOT_DIR/hooks/wifi-apply.sh"', start)
+        boot = (REPOSITORY / "runtime/boot/boot.sh").read_text(encoding="utf-8")
+        self.assertIn("jl_ensure_wifi", boot)
+        common = (REPOSITORY / "runtime/boot/common.sh").read_text(encoding="utf-8")
+        # It only acts once wpa_supplicant answers, and not forever.
+        self.assertIn("wpa_cli -iwlan0 ping", common)
+        self.assertIn("wifi-attempts", common)
 
     def test_wifi_hook_waits_for_wpa_supplicant_control_socket(self) -> None:
         """At boot the hook can run before wpa_supplicant's control socket

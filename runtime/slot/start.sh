@@ -24,17 +24,10 @@ if [ -x "$JL_SLOT_DIR/bin/audio-router" ]; then
     echo $! > "$JL_RUN/audio-router.pid"
 fi
 
-if [ -f "$JL_ROOT/config/wifi.json" ] &&
-   [ -x "$JL_SLOT_DIR/hooks/wifi-apply.sh" ]; then
-    # OEM boot starts wpa_supplicant well after this point (~54s in on the
-    # verified unit), and the hook cannot configure anything before its
-    # control socket exists. Applying the committed network must therefore
-    # not block the daemon behind that wait, so it runs in the background
-    # and joins as soon as wpa_supplicant answers. Until then the camera
-    # stays on whatever network the OEM configuration brought up.
-    "$JL_SLOT_DIR/hooks/wifi-apply.sh" "$JL_ROOT/config/wifi.json" \
-        >"$JL_RUN/wifi-boot.log" 2>&1 &
-fi
+# The committed Wi-Fi network is deliberately NOT applied here. OEM boot only
+# starts wpa_supplicant about a minute after this runs, so the hook could
+# configure nothing, and start.sh itself is bounded to 15s. The supervisor
+# (jl_ensure_wifi) applies it once wpa_supplicant answers instead.
 
 JOAN_STATE_DIR="$JL_ROOT/config" \
 JOAN_RELEASE_SEQUENCE_PATH="$JL_ROOT/state/release-sequence" \
