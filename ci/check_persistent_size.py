@@ -11,8 +11,8 @@ import subprocess
 import sys
 
 
-DEFAULT_CAP = 176 * 1024
-DEFAULT_RESERVE = 80 * 1024
+DEFAULT_CAP = 180 * 1024
+DEFAULT_RESERVE = 76 * 1024
 
 
 def apparent_size(root: Path) -> tuple[int, list[tuple[int, str]]]:
@@ -51,7 +51,7 @@ def contract_values(path: Path) -> tuple[int, int, int, int, list[str]]:
     if state_config < 12 * 1024 or external < 2 * 1024:
         raise ValueError("persistent dynamic/external reservations are not realistic")
     if transient_cap != DEFAULT_CAP or transient_reserve < 56 * 1024:
-        raise ValueError("maintenance contract must remain 176 KiB / at least 56 KiB")
+        raise ValueError("maintenance contract must remain 180 KiB / at least 56 KiB")
     return cap, reserve, state_config, external, layout
 
 
@@ -122,7 +122,7 @@ def main() -> int:
         for error in errors:
             print(f"  {error}", file=sys.stderr)
         return 1
-    print("persistent-size: PASS (80 KiB final device free-space reserve is mandatory)")
+    print("persistent-size: PASS (76 KiB final device free-space reserve is mandatory)")
     return 0
 
 

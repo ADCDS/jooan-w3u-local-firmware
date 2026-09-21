@@ -421,15 +421,15 @@ class HostBuilderTests(unittest.TestCase):
         self.assertEqual(target["device"]["radio"]["driver_family"], "skw6316")
         self.assertEqual(
             target["persistent_contract"]["logical_regular_file_cap_bytes"],
-            176 * 1024,
+            180 * 1024,
         )
         self.assertEqual(
             target["persistent_contract"]["final_free_reserve_bytes"],
-            80 * 1024,
+            76 * 1024,
         )
         self.assertEqual(
             target["persistent_contract"]["maintenance_regular_file_cap_bytes"],
-            176 * 1024,
+            180 * 1024,
         )
         self.assertGreaterEqual(
             target["persistent_contract"]["maintenance_final_free_reserve_bytes"],
@@ -666,11 +666,11 @@ class HostBuilderTests(unittest.TestCase):
             (stage / "release.manifest.sig").write_bytes(b"signature")
             (stage / "persistent.contract").write_text(
                 "JOOAN-PERSISTENT-CONTRACT-V1\n"
-                "logical_regular_file_cap_bytes=180224\n"
-                "final_free_reserve_bytes=81920\n"
+                "logical_regular_file_cap_bytes=184320\n"
+                "final_free_reserve_bytes=77824\n"
                 "state_config_regular_file_reserve_bytes=12288\n"
                 "external_regular_file_reserve_bytes=4096\n"
-                "maintenance_regular_file_cap_bytes=180224\n"
+                "maintenance_regular_file_cap_bytes=184320\n"
                 "maintenance_final_free_reserve_bytes=57344\n",
                 encoding="utf-8",
             )

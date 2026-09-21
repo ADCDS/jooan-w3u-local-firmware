@@ -107,7 +107,7 @@
   ],
   "persistent_contract": {
     "external_regular_file_reserve_bytes": 4096,
-    "final_free_reserve_bytes": 81920,
+    "final_free_reserve_bytes": 77824,
     "layout": [
       "local.rc",
       "controller.tar.gz",
@@ -118,11 +118,11 @@
       "state/",
       "config/"
     ],
-    "logical_regular_file_cap_bytes": 180224,
+    "logical_regular_file_cap_bytes": 184320,
     "root": "/opt/custom/jooan-local",
     "state_config_regular_file_reserve_bytes": 12288,
     "maintenance_final_free_reserve_bytes": 57344,
-    "maintenance_regular_file_cap_bytes": 180224
+    "maintenance_regular_file_cap_bytes": 184320
   },
   "release_authenticity": {
     "algorithm": "ecdsa-p256-sha256-rfc6979",

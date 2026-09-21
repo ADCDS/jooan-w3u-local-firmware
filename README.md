@@ -88,7 +88,7 @@ unchanged). The private inputs are not redistributed. The package is model- and 
 and remains subject to the OEM IronMan limit of `0x200001` bytes. The persistent
 steady layout stores a compressed controller core, a separate SSH recovery
 bundle, and exactly one compressed runtime. Project regular files remain below
-176 KiB (`180224` bytes), with at least 80 KiB free on `/opt`. A signed update
+180 KiB (`184320` bytes), with at least 76 KiB free on `/opt`. A signed update
 first enters controller-owned SSH recovery, deletes the old persistent runtime,
 then stages one replacement while retaining at least 56 KiB free—above the OEM
 startapp cleanup threshold of 50 KiB. The already-expanded old services continue
