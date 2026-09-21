@@ -115,6 +115,66 @@ privately by that owner.
 Do not expose an unprovisioned or freshly rebooted camera directly to the
 Internet or to an untrusted LAN.
 
+## Feature coverage
+
+The OEM app drives this hardware through `jooanipc`'s local command surface (the
+P2P/MQTT/CGI "DP" handlers). The table lists the capabilities that surface exposes
+on the verified `JA-A12` unit — leaving out the cloud/P2P transport and account
+plumbing — and whether the retrofit reimplements each one over its local,
+authenticated API. The retrofit deliberately prioritizes live control and
+security; several OEM conveniences are intentionally not (yet) reimplemented.
+
+Legend: ✓ implemented · ~ partial · ✗ not implemented.
+
+| Capability (OEM app · `jooanipc`) | Retrofit (local WebUI + API) |
+|---|---|
+| **Video** | |
+| Live view, dual sensor — main 2304×1296 + sub 640×360 | ✓ fMP4 in the WebUI, per-sensor full screen |
+| Direct RTSP for NVR / VLC clients | ✓ both streams, Digest auth (OEM RTSP kept loopback-only) |
+| JPEG snapshot | ✓ `/api/v1/snapshot` |
+| Video flip / mirror | ✗ |
+| Digital zoom | ✗ |
+| OSD timestamp / logo overlay | ~ time and time-zone are set; overlay on/off toggles not exposed |
+| **Pan / tilt** | |
+| Jog (up / down / left / right) + stop | ✓ |
+| Presets — save / recall / delete | ✓ |
+| Home / calibration | ✓ go-to-home |
+| Cruise / patrol schedule | ✗ |
+| Auto-tracking | ✗ |
+| Privacy / PTZ-hide schedule | ✗ |
+| **Audio** | |
+| Listen (camera microphone) | ✓ |
+| Two-way talk | ✓ push-to-talk over the retrofit's own DSP path (not the OEM video-call) |
+| Speaker volume | ✗ |
+| Custom voice / alert clips | ✗ |
+| **Light & night vision** | |
+| Day / Night / IR-cut mode | ✗ (investigated; deferred — reachable only via a closed OEM DP) |
+| Floodlight / white light (+ schedule) | ✗ |
+| **Detection & alarms** | |
+| Motion detection (+ sensitivity, zones) | ✗ |
+| Human / person detection (+ area) | ✗ |
+| **Storage (microSD)** | |
+| Scheduled / continuous recording | ✗ |
+| Playback | ✗ |
+| Card format / capacity | ✗ |
+| **Time** | |
+| Set clock (from phone / UTC) | ✓ |
+| Time zone | ✓ (the burned-in OSD adopts it on the next restart) |
+| **Network** | |
+| Wi-Fi credentials | ✓ transactional stage / commit / roll back |
+| Wi-Fi scan (nearby APs) | ✗ |
+| Signal / RSSI readout | ✗ |
+| **System** | |
+| Firmware update | ✓ signed, sequence-gated |
+| Change password | ✓ (synchronized to SSH + RTSP) |
+| Reboot | ✗ (only implicitly, when a signed update is applied) |
+| Device info / UID | ~ version and state in `/api/v1/status` |
+
+Beyond the OEM app, the retrofit adds per-device **HTTPS**, **SSH**
+(password-synchronized, optional Ed25519 keys), **mDNS** `.local` naming,
+**local-only egress** (continuous default-route pruning), and exact-binary
+`jooanipc` **cloud/P2P containment**.
+
 ## Status and limitations
 
 The implemented software target includes per-device HTTPS; a Web UI/PWA with
