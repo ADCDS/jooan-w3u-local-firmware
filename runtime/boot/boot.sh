@@ -9,6 +9,10 @@ fi
 trap 'rm -rf "$JL_RUN/supervisor.lock" 2>/dev/null || :' EXIT
 printf '%s\n' "$$" > "$JL_RUN/supervisor.pid"
 
+# No RTC: lift the clock to the last persisted time before the runtime (and any
+# recording) starts, so files are not stamped years in the past.
+jl_restore_time || jl_log 'clock restore failed'
+
 # OEM initialization may start services/routes after local.rc has returned.
 # This independent watcher survives runtime/controller failure.
 if mkdir "$JL_RUN/local-policy.lock" 2>/dev/null; then
@@ -91,6 +95,7 @@ if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
 fi
 
 # This supervisor never invokes a saved OEM/user hook or revives telnet.
+jl_time_ticks=0
 while :; do
     if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
         "$JL_CONTROL/admin/wifi-transaction.sh" tick || :
@@ -100,6 +105,12 @@ while :; do
     fi
     if [ "$jl_running" != - ]; then
         jl_ensure_wifi "$jl_running" || :
+    fi
+    # Persist the clock about every 30 minutes; NOR flash tolerates few writes.
+    jl_time_ticks=$((jl_time_ticks + 1))
+    if [ "$jl_time_ticks" -ge 360 ]; then
+        jl_time_ticks=0
+        jl_save_time || :
     fi
     sleep 5
 done
