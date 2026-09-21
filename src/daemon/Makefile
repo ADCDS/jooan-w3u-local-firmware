@@ -4,7 +4,7 @@ CPPFLAGS += -I.
 LDFLAGS ?=
 CRYPT_LIBS ?= -lcrypt
 TLS ?= 1
-SOURCES = main.c util.c crypto.c auth.c integrations.c mqtt_bridge.c mdns.c fmp4.c rtsp_proxy.c tls.c http.c
+SOURCES = main.c util.c crypto.c auth.c integrations.c mqtt_bridge.c mdns.c fmp4.c recmp4.c rtsp_proxy.c tls.c http.c
 OBJECTS = $(SOURCES:.c=.o)
 AUDIO_WIRE_OBJECT = audio_wire_shared.o
 
