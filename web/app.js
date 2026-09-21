@@ -839,11 +839,22 @@ function clipRow(day, span) {
    clip as MP4 on the way out. A plain <video> element then supplies transport,
    scrubbing and speed without shipping a player. Audio is dropped in the
    rewrite: the recorder stores G.711, which browsers will not decode in MP4. */
+const CLIP_NOTE = "video only, converted from the recorder's AVI";
 function playClip(day, name, label) {
   const wrap = $('#rec-player-wrap');
   const video = $('#rec-player');
+  const note = $('#rec-player-note');
   wrap.classList.remove('hidden');
-  $('#rec-player-note').textContent = `${label} · video only, converted from the recorder's AVI`;
+  /* The camera walks the whole AVI to build a sample table before it can
+     answer, which is seconds on a long clip -- measured at 5s for 23 MB. An
+     empty player sitting there reads as a freeze, so say what is happening,
+     and say it when it fails: this used to swallow the error and show nothing
+     at all. `play()` rejecting is not that failure -- it is usually autoplay
+     policy, and the controls still work -- so only the element's own error
+     counts. */
+  note.textContent = `${label} · preparing…`;
+  video.onloadeddata = () => { note.textContent = `${label} · ${CLIP_NOTE}`; };
+  video.onerror = () => { note.textContent = `${label} · could not be played.`; };
   video.src = `/api/v1/recordings/play/${day}/${encodeURIComponent(name)}`;
   video.play().catch(() => {});
   wrap.scrollIntoView({ block: 'nearest' });
