@@ -36,6 +36,17 @@ button.wide{width:100%}
 button.link,a.link{background:none;border:0;color:var(--accent);padding:0;min-height:0;text-decoration:underline;cursor:pointer}
 a.link.danger,button.link.danger{color:var(--crit)}
 button:disabled{opacity:.45;cursor:not-allowed}
+/* Feedback for a press. Neither a touch screen nor a remote has hover, so
+   until the button moves there is nothing to say it registered; and a request
+   that wakes a shell helper can take a second, which reads as a dead control
+   and gets pressed again. The press moves, the wait spins. */
+button:not(:disabled):active{transform:translateY(1px)}
+button[data-busy]{opacity:.8;cursor:progress;position:relative;color:transparent}
+button[data-busy]::after{content:"";position:absolute;width:1.1em;height:1.1em;
+  top:calc(50% - .55em);left:calc(50% - .55em);border:2px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(1turn)}}
+@media (prefers-reduced-motion:reduce){button[data-busy]::after{animation:none}}
 label{display:grid;gap:.3rem;margin:.6rem 0;color:var(--muted);font-size:.8rem}
 input,textarea{background:#0d161c}
 form{margin:0}
