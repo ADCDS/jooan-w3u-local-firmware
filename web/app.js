@@ -95,7 +95,11 @@ function setFullscreen(which) {
 function exitFullscreen(restoreFocus = true) {
   delete $('#console').dataset.fs;
   $('#fs-bar').classList.add('hidden');
+  const origin = fsOrigin;
   fsOrigin = null;
+  /* Return focus to the tile that opened full screen, so a keyboard/remote
+     user lands back where they were instead of at the top of the document. */
+  if (restoreFocus && origin) document.querySelector(origin)?.focus();
 }
 for (const tile of all('[data-fs]')) {
   tile.onclick = () => { fsOrigin = '#' + tile.id; setFullscreen(tile.dataset.fs); };
@@ -558,18 +562,23 @@ $('#preset-set').onclick = async () => {
 
 $('#preset-delete').onclick = () => {
   if (!selectedPreset) { notice('Choose a preset first.'); return; }
-  const chosen = presets.find(p => String(p.coordinateID ?? p.token) === selectedPreset);
-  guard($('#preset-confirm'), `Delete preset ${chosen?.name || selectedPreset}?`, 'Delete', () =>
+  /* Snapshot the target: the guard box is non-modal, so the selection can
+     change before the operator confirms — delete exactly what the dialog names. */
+  const token = selectedPreset;
+  const chosen = presets.find(p => String(p.coordinateID ?? p.token) === token);
+  guard($('#preset-confirm'), `Delete preset ${chosen?.name || token}?`, 'Delete', () =>
     api('/api/v1/ptz/presets', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: Number(selectedPreset) }),
-    }).then(operation).then(() => { selectedPreset = null; return loadPresets(); })
+      body: JSON.stringify({ token: Number(token) }),
+    }).then(operation).then(() => { if (selectedPreset === token) selectedPreset = null; return loadPresets(); })
       .catch(x => notice(x.message, 'crit')));
 };
 
 /* ---------- audio ---------- */
+/* Both Talkback buttons (live zone and control zone) reflect one shared audio
+   state, so update whichever exist together instead of a single hardcoded one. */
+function setAudioLabel(text) { for (const b of all('#audio-connect, #audio-connect-2')) b.textContent = text; }
 async function toggleAudio() {
-  const button = $('#audio-connect');
   try {
     if (audioClient) {
       unbindTalk?.();
@@ -577,7 +586,7 @@ async function toggleAudio() {
       audioClient = null;
       $('#push-to-talk').disabled = true;
       $('#audio-state').textContent = 'Disconnected';
-      button.textContent = 'Listen';
+      setAudioLabel('Listen');
       return;
     }
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -597,13 +606,13 @@ async function toggleAudio() {
       audioClient = null;
       $('#push-to-talk').disabled = true;
       $('#audio-state').textContent = 'Disconnected';
-      button.textContent = 'Listen';
+      setAudioLabel('Listen');
     });
     await audioClient.connect();
     unbindTalk = audioClient.bindPressToTalk($('#push-to-talk'));
     $('#push-to-talk').disabled = false;
     $('#audio-state').textContent = 'Listening';
-    button.textContent = 'Disconnect audio';
+    setAudioLabel('Disconnect audio');
   } catch (x) {
     audioClient = null;
     $('#push-to-talk').disabled = true;
