@@ -52,11 +52,11 @@ jl_archive_bytes=$(wc -c < "$jl_stage/runtime.tar.gz")
 jl_size=$(( (jl_archive_bytes + 1023) / 1024 ))
 case "$jl_archive_bytes:$jl_size" in *[!0-9:]*|:*|*:) exit 1 ;; esac
 jl_need=$((jl_size + 8))
-[ $(( $(jl_tree_bytes "$JL_ROOT") + jl_archive_bytes + 4096)) -le 184320 ] || {
-    jl_log 'runtime maintenance would exceed 180 KiB persistent tree'; exit 1;
+[ $(( $(jl_tree_bytes "$JL_ROOT") + jl_archive_bytes + 4096)) -le 188416 ] || {
+    jl_log 'runtime maintenance would exceed 184 KiB persistent tree'; exit 1;
 }
 # Runtime replacement happens only after the old persistent runtime is removed.
-# Preserve 56 KiB through maintenance; health promotion restores the 76 KiB gate.
+# Preserve 56 KiB through maintenance; health promotion restores the 72 KiB gate.
 jl_wait_free_kb "$JL_ROOT" $((jl_need + 56)) 20 || {
     jl_log 'runtime maintenance would violate 56 KiB free-space reserve'; exit 1;
 }

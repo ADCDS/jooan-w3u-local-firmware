@@ -70,13 +70,13 @@ and grants the amplifier only to bounded local talkback. An authenticated
 Digest proxy exposes RTSP to local clients on TCP/554.
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
-runtime must total no more than 184320 bytes (180 KiB), with at least 77824 bytes
-(76 KiB) free. Updates are maintenance transactions, not A/B coexistence: after
+runtime must total no more than 188416 bytes (184 KiB), with at least 73728 bytes
+(72 KiB) free. Updates are maintenance transactions, not A/B coexistence: after
 the controller and recovery path are durable, selection becomes `- - 0`, the old
 persistent runtime is removed, and one signed candidate is staged while at least
 57344 bytes (56 KiB) remain free. This exceeds the OEM 50 KiB cleanup threshold.
 Failure leaves controller-owned SSH recovery; successful health promotion selects
-the candidate and restores the 76 KiB steady reserve.
+the candidate and restores the 72 KiB steady reserve.
 
 No kernel-wide firewall is claimed. The supervisor repeatedly removes IPv4 and
 IPv6 default routes and filters public resolvers; explicitly configured
