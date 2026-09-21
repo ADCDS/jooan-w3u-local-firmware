@@ -1,5 +1,12 @@
 # JOOAN W3-U local firmware
 
+<p align="center">
+  <img src="docs/images/w3u-camera.jpg" width="320"
+       alt="The JOOAN W3-U camera held in a hand: two lenses stacked in one white pan/tilt housing, two Wi-Fi antennas, and an Ethernet pigtail">
+  <br>
+  <sub>The camera this project targets: JOOAN W3-U (<code>JA-A12</code>), dual lens.</sub>
+</p>
+
 This project is building a hardened, local-first retrofit for one verified JOOAN
 W3-U hardware revision. It removes the camera's dependency on JOOAN cloud and
 P2P services while preserving the vendor media path needed to operate its two
@@ -21,6 +28,16 @@ Use this project only with a unit that matches all of the following:
 - sensors: dual `cv2005` and `cv2005s1`;
 - radio: USB SeekWave SKW6316 (`SV6160LITE` on the verified unit);
 - flash: 8 MiB SPI NOR (verified unit: Puya P25Q64HA).
+
+The retail box of the verified unit carries this label: brand `JOOAN`, model
+`W3-U`, FCC ID `2BBQ4-W3U`, 5 V / 1.5 A. It only identifies the product name,
+which — as noted below — is not sufficient on its own; the checklist above is
+what decides compatibility.
+
+<p>
+  <img src="docs/images/w3u-box-label.jpg" width="440"
+       alt="Retail box label of the JOOAN W3-U: brand JOOAN, model W3-U, FCC ID 2BBQ4-W3U, input 5 V 1.5 A, operating band 2412-2462 MHz, made in China">
+</p>
 
 The verified `JA-6621 V1.0` board — the Ingenic T23N SoC and the 8 MiB Puya
 P25Q64HA SPI-NOR flash listed above are visible on it:
