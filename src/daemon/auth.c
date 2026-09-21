@@ -231,7 +231,12 @@ int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
                               const char *old_password, const char *new_password)
 {
     unsigned i; int ignored;size_t password_len=new_password?strlen(new_password):0;
-    if(password_len<12||password_len>128)return-1;
+    /* No minimum. The operator owns this device and its threat model -- a
+       camera on an isolated VLAN with a memorable password is a choice the
+       UI should allow, not overrule. Control characters and the 128-byte
+       ceiling still go, because those break the SSH and RTSP records the
+       password is synchronized into. */
+    if(!password_len||password_len>128)return-1;
     for(i=0;i<password_len;i++)if((unsigned char)new_password[i]<0x20||(unsigned char)new_password[i]==0x7f)return-1;
     if (!auth->authenticated || !verify(cfg, old_password, &ignored) ||
         save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
