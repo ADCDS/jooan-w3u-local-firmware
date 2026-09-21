@@ -24,13 +24,6 @@ function notice(message, kind) {
 function clearNotice() { $('#notice').classList.add('hidden'); }
 $('#notice-close').onclick = clearNotice;
 
-function connection(state, label) {
-  const pill = $('#connection');
-  pill.className = 'pill' + (state === 'ok' ? '' : state === 'warn' ? ' warn' : ' crit');
-  pill.innerHTML = '<i class="led"></i>';
-  pill.append(label);
-}
-
 /* ---------- api ---------- */
 class ApiError extends Error {
   constructor(message, kind) { super(message); this.kind = kind; }
@@ -43,7 +36,6 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, options);
   } catch (_) {
-    connection('crit', 'Camera not responding');
     throw new ApiError('The camera is not responding. It may be rebooting or off the network.', 'offline');
   }
   const type = response.headers.get('content-type') || '';
@@ -55,7 +47,6 @@ async function api(path, options = {}) {
     throw new ApiError(data?.error?.message || data?.error || data || `HTTP ${response.status}`,
       response.status === 401 ? 'auth' : 'api');
   }
-  connection('ok', 'Connected');
   return data;
 }
 
@@ -71,7 +62,6 @@ function requireLogin() {
   csrf = '';
   recordingsLoaded = false;
   exitFullscreen(false);
-  connection('warn', 'Signed out');
   show('#login');
 }
 window.addEventListener('joan-auth-required', requireLogin);
@@ -634,10 +624,20 @@ $('#firmware-apply').onclick = () => {
 
 /* ---------- recordings (microSD) ----------
    The camera's retained OEM media process records to the card on its own; this
-   zone curates that: it lists the day/clip files so they can be downloaded or
-   deleted. (Card-capacity readout and schedule configuration are follow-ups
-   gated on the persistent-size budget and on-card verification.) */
-let recordingsLoaded = false;
+   zone curates that: card capacity, the days it has footage for, and the clips
+   in a day, which can be downloaded or deleted. Playback is deliberately absent:
+   the OEM writes AVI, which no browser plays, and remuxing to fMP4 does not fit
+   the persistent-size budget. Schedule configuration is not offered because
+   jooanipc provably ignores external RecodSchedTime edits. */
+let recordingsLoaded = false, selectedDay = '';
+function kvRow([k, v]) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const a = document.createElement('span'); a.textContent = k;
+  const b = document.createElement('b'); b.textContent = v;
+  row.append(a, b);
+  return row;
+}
 function fmtSize(kb) {
   kb = Number(kb) || 0;
   if (kb >= 1048576) return (kb / 1048576).toFixed(1) + ' GB';
@@ -675,22 +675,64 @@ async function loadClips(day) {
   if (!clips.length) { $('#rec-clips').textContent = 'No recordings for this day.'; return; }
   $('#rec-clips').replaceChildren(...clips.map(cl => clipRow(day, cl)));
 }
+async function loadSdStatus() {
+  const s = await api('/api/v1/storage/sd');
+  const bar = $('#sd-used');
+  if (s.mounted) {
+    const total = s.total_kb || 0, used = s.used_kb || 0;
+    const pct = total ? Math.min(100, Math.round(used / total * 100)) : 0;
+    bar.style.width = pct + '%';
+    bar.classList.toggle('full', pct >= 90);
+    $('#sd-status').replaceChildren(...[
+      ['State', 'Mounted'],
+      ['Used', `${fmtSize(used)} of ${fmtSize(total)}`],
+      ['Free', fmtSize(s.free_kb || 0)],
+    ].map(kvRow));
+    $('#sd-note').textContent = '';
+  } else {
+    bar.style.width = '0';
+    $('#sd-status').replaceChildren(kvRow(['State', s.present ? 'Not mounted' : 'No card detected']));
+    $('#sd-note').textContent = 'Insert a microSD card; the camera records to it automatically.';
+  }
+}
+async function selectDay(day) {
+  selectedDay = day;
+  for (const b of all('#rec-days button')) b.classList.toggle('primary', b.dataset.day === day);
+  $('#rec-clips-title').textContent = day ? `Recordings — ${formatDay(day)}` : 'Recordings';
+  $('#rec-del-day').disabled = !day;
+  await loadClips(day);
+}
 async function loadRecordings() {
   try {
+    await loadSdStatus();
     const days = (await api('/api/v1/recordings/days')).days || [];
-    const sel = $('#rec-day');
     if (!days.length) {
-      sel.replaceChildren(new Option('No recordings yet', ''));
-      $('#rec-clips').textContent = 'No recordings on the card.';
+      $('#rec-days').textContent = 'No recordings on the card yet.';
+      $('#rec-clips').replaceChildren();
+      $('#rec-del-day').disabled = true;
     } else {
-      sel.replaceChildren(...days.map(d => new Option(
-        `${formatDay(d.day)} · ${fmtSize(d.size_kb)} · ${d.count} clips`, d.day)));
-      await loadClips(sel.value);
+      $('#rec-days').replaceChildren(...days.map(d => {
+        const b = document.createElement('button');
+        b.dataset.day = d.day;
+        b.textContent = `${formatDay(d.day)} · ${fmtSize(d.size_kb)} · ${d.count}`;
+        b.onclick = () => selectDay(d.day).catch(x => notice(x.message, 'crit'));
+        return b;
+      }));
+      const keep = days.some(d => d.day === selectedDay) ? selectedDay : days[days.length - 1].day;
+      await selectDay(keep);
     }
     recordingsLoaded = true;
   } catch (x) { notice(x.message, 'crit'); }
 }
-$('#rec-day').onchange = () => loadClips($('#rec-day').value).catch(x => notice(x.message, 'crit'));
+$('#rec-refresh').onclick = () => loadRecordings();
+$('#rec-del-day').onclick = () => {
+  if (!selectedDay) return;
+  const day = selectedDay;
+  guard($('#rec-day-confirm'), `Delete every recording from ${formatDay(day)}?`, 'Delete day',
+    () => api('/api/v1/recordings/day/' + day, { method: 'DELETE' })
+      .then(() => { selectedDay = ''; return loadRecordings(); })
+      .catch(x => notice(x.message, 'crit')));
+};
 $('[data-zone="recordings"]').addEventListener('click', () => { if (!recordingsLoaded) loadRecordings(); });
 
 /* ---------- boot ---------- */

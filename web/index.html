@@ -9,11 +9,6 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<header id="top">
-  <h1>Jooan Local</h1>
-  <span id="connection" class="pill"><i class="led"></i>Offline</span>
-</header>
-
 <main>
   <section id="login" class="card narrow">
     <h2>Administrator sign in</h2>
@@ -155,8 +150,22 @@
 
       <section id="zone-recordings" class="zone hidden" data-scrollport>
         <div class="card">
-          <h2>Recordings</h2>
-          <label>Day<select id="rec-day"></select></label>
+          <h2>microSD card</h2>
+          <div id="sd-status" class="kv"><div class="row"><span>State</span><b>&mdash;</b></div></div>
+          <div class="cap-bar"><div id="sd-used" class="u"></div></div>
+          <p id="sd-note" class="muted"></p>
+        </div>
+        <div class="card">
+          <h2>Days with footage</h2>
+          <div id="rec-days" class="chips row-chips"></div>
+          <div class="grid2">
+            <button id="rec-refresh">Refresh</button>
+            <button id="rec-del-day" class="danger">Delete this day</button>
+          </div>
+          <div id="rec-day-confirm"></div>
+        </div>
+        <div class="card">
+          <h2 id="rec-clips-title">Recordings</h2>
           <div id="rec-clips" class="kv stack"></div>
           <div id="rec-clip-confirm"></div>
         </div>

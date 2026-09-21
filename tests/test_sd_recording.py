@@ -80,6 +80,13 @@ class SdRecordingHelper(unittest.TestCase):
             self.assertEqual(run("recordings-delete", ident=bad, env=self.env)[0], 2, bad)
         self.assertTrue(victim.exists())
 
+    def test_sd_status_is_json(self):
+        code, out = run("sd-status", env=self.env)
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertIn("mounted", payload)
+        self.assertIn("present", payload)
+
 
 if __name__ == "__main__":
     unittest.main()
