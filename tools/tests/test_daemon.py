@@ -4,8 +4,9 @@ ROOT=pathlib.Path(__file__).resolve().parents[2];BIN=ROOT/'src/daemon/joan-daemo
 SPS=base64.b64decode('Z2QAKKzZQFAFuhAAAAMAEAAAAwDxgxHg');PPS=base64.b64decode('aO48gA==')
 LIBCRYPT=ctypes.CDLL(ctypes.util.find_library('crypt'));LIBCRYPT.crypt.argtypes=(ctypes.c_char_p,ctypes.c_char_p);LIBCRYPT.crypt.restype=ctypes.c_char_p
 def crypt_verify(password,hashed):return LIBCRYPT.crypt(password.encode(),hashed.encode()).decode()==hashed
-def request(method,path,body=None,cookie='',csrf='',ctype='application/json',origin=''):
+def request(method,path,body=None,cookie='',csrf='',ctype='application/json',origin='',extra=None):
  c=http.client.HTTPConnection('127.0.0.1',18081,timeout=12);h={'Content-Type':ctype}
+ if extra:h.update(extra)
  if cookie:h['Cookie']=cookie
  if csrf:h['X-CSRF-Token']=csrf
  if origin:h['Origin']=origin
