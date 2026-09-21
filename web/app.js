@@ -7,7 +7,7 @@ const $ = s => document.querySelector(s);
 const all = s => Array.from(document.querySelectorAll(s));
 
 let csrf = '', wifiId = '', firmwareId = '';
-let ptzLease = '', ptzHeld = false, ptzStopping = false;
+let ptzLease = '', ptzHeld = false, ptzStopping = false, jogDir = '';
 let audioClient = null, unbindTalk = null;
 let videoPlayers = [];
 let streams = [];
@@ -42,7 +42,7 @@ async function busy(el, fn) {
 
 /* ---------- api ---------- */
 class ApiError extends Error {
-  constructor(message, kind) { super(message); this.kind = kind; }
+  constructor(message, kind, code) { super(message); this.kind = kind; this.code = code; }
 }
 
 async function api(path, options = {}) {
@@ -61,7 +61,7 @@ async function api(path, options = {}) {
     const isLogin = path === '/api/v1/session' && options.method === 'POST';
     if (response.status === 401 && !isLogin) requireLogin();
     throw new ApiError(data?.error?.message || data?.error || data || `HTTP ${response.status}`,
-      response.status === 401 ? 'auth' : 'api');
+      response.status === 401 ? 'auth' : 'api', data?.error?.code);
   }
   return data;
 }
@@ -482,6 +482,27 @@ $('#ssh-form').addEventListener('submit', async e => {
 
 /* ---------- ptz ---------- */
 let jogSpeed = 3;
+/* Moving a camera is a live, repeated action, so its failures must not behave
+   like events. They used to raise a toast per key press -- a stack of
+   "PTZ is leased" and "local integration operation failed" that named internal
+   machinery, said nothing a viewer could act on, and buried the screen the
+   moment you held a direction. Say it once, in words, on the line under the
+   pad where you are already looking. */
+const PTZ_TROUBLE = {
+  ptz_busy: 'Something else is moving the camera right now.',
+  invalid_lease: 'Lost the camera; press again.',
+  invalid_ptz_jog: 'That move is outside what the camera accepts.',
+};
+function ptzTrouble(x) {
+  /* A stale lease is normal -- it expires on its own -- and the next press
+     re-takes one, so drop it quietly rather than reporting it. */
+  if (x.code === 'invalid_lease' || x.code === 'ptz_busy') ptzLease = '';
+  if (x.kind === 'auth') return;           /* the session dialog already says so */
+  $('#ptz-state').textContent = x.kind === 'offline'
+    ? 'The camera is not answering.'
+    : PTZ_TROUBLE[x.code] || 'The camera did not take the move.';
+}
+
 async function ptz(command) {
   if (!ptzLease) ptzLease = (await api('/api/v1/ptz/lease', { method: 'POST' })).lease;
   if (command === 'stop') {
@@ -496,19 +517,20 @@ async function ptz(command) {
       body: JSON.stringify({ lease: ptzLease, command, duration_ms: 500, speed: jogSpeed }),
     });
   }
-  $('#ptz-state').textContent = ptzLease ? `Lease active: ${command}` : 'Stopped';
+  $('#ptz-state').textContent = ptzLease ? `Moving ${command}` : 'Stopped';
 }
 function releasePtz() {
   ptzHeld = false;
+  jogDir = '';
   if (!ptzLease || ptzStopping) return;
   ptzStopping = true;
-  ptz('stop').catch(x => { ptzLease = ''; notice(x.message, 'crit'); })
+  ptz('stop').catch(x => { ptzLease = ''; ptzTrouble(x); })
     .finally(() => { ptzStopping = false; });
 }
 function startPtz(command) {
   ptzHeld = true;
   ptz(command).then(() => { if (!ptzHeld) releasePtz(); })
-    .catch(x => { ptzLease = ''; notice(x.message, 'crit'); });
+    .catch(x => { ptzLease = ''; ptzTrouble(x); });
 }
 
 /* Pointer AND keyboard. A D-pad OK press emits keydown/keyup and a click;
@@ -936,7 +958,9 @@ function initTvRemote() {
     root: document.body,
     onCapture: (el, dir) => {
       if (el.id !== 'jog' || !jogOn) return false;
-      startPtz(dir);
+      /* A held arrow repeats keydown several times a second; one press is one
+         move, and the release stops it. */
+      if (dir !== jogDir) { jogDir = dir; startPtz(dir); }
       return true;
     },
     onBack: () => {
