@@ -18,15 +18,17 @@ export LC_ALL
 case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 1 ;; esac
 [ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 1
 
-# At boot this hook runs from start.sh before wpa_supplicant has necessarily
-# created its control socket. Every wpa_cli call would then fail instantly
-# with "Failed to connect to non-global ctrl_ifname", the hook would exit,
-# and the committed network would silently never be applied. Wait, bounded,
-# for the control interface to answer; on the live API path it answers at
-# once, so this costs nothing there.
+# At boot this hook runs from start.sh before wpa_supplicant has created its
+# control socket -- OEM boot starts it about 54s in on the verified unit.
+# Every wpa_cli call would then fail instantly with "Failed to connect to
+# non-global ctrl_ifname", the hook would exit, and the committed network
+# would silently never be applied. Wait, bounded, for the control interface
+# to answer. start.sh backgrounds this hook so the wait never delays the
+# daemon, and on the live API path wpa_supplicant is already serving, so it
+# answers on the first probe and this costs nothing there.
 wpa_ready=0
 i=0
-while [ "$i" -lt 20 ]; do
+while [ "$i" -lt 150 ]; do
     if wpa_cli -iwlan0 ping 2>/dev/null | grep -q PONG; then wpa_ready=1; break; fi
     sleep 1
     i=$((i + 1))
