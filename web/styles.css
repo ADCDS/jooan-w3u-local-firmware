@@ -66,9 +66,7 @@ output:empty{display:none}
   background:var(--panel);color:var(--muted);white-space:nowrap}
 .pill .led{width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);flex:none}
 .pill b{color:var(--ink);font-weight:600}
-.pill.warn{border-color:rgba(230,171,72,.5);color:var(--warn)} .pill.warn .led{background:var(--warn)}
 .pill.off .led{background:var(--muted)}
-.pill.crit{border-color:rgba(240,115,106,.5);color:var(--crit)} .pill.crit .led{background:var(--crit)}
 
 .gap-top{margin-top:.7rem}
 .cap-bar{height:10px;border-radius:5px;background:var(--panel2);overflow:hidden;margin:.6rem 0}

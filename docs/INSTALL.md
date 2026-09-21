@@ -34,7 +34,7 @@ the authenticity boundary.
 
 The steady contract stores a compressed controller core, separate SSH recovery
 bundle, and exactly one compressed runtime. Regular-file content is capped at
-192512 bytes (188 KiB), with at least 69632 bytes (68 KiB) free on `/opt`.
+196608 bytes (192 KiB), with at least 65536 bytes (64 KiB) free on `/opt`.
 Updates deliberately enter SSH recovery (`selection = - - 0`), remove the old
 persistent runtime, and stage one replacement while preserving at least 57344
 bytes (56 KiB), above the OEM startapp cleanup threshold of 50 KiB. Do not expect

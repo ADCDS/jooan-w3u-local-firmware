@@ -64,17 +64,17 @@ jl_save_time() {
 
 jl_check_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
-    [ "$jl_storage_bytes" -le 192512 ] || {
-        jl_log "persistent regular files total ${jl_storage_bytes} bytes; limit is 192512 bytes (188 KiB)"
+    [ "$jl_storage_bytes" -le 196608 ] || {
+        jl_log "persistent regular files total ${jl_storage_bytes} bytes; limit is 196608 bytes (192 KiB)"
         return 1
     }
-    jl_wait_free_kb "$JL_ROOT" 68 20
+    jl_wait_free_kb "$JL_ROOT" 64 20
 }
 
 jl_check_maintenance_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
-    [ "$jl_storage_bytes" -le 192512 ] || {
-        jl_log "maintenance files total ${jl_storage_bytes} bytes; limit is 192512 bytes"
+    [ "$jl_storage_bytes" -le 196608 ] || {
+        jl_log "maintenance files total ${jl_storage_bytes} bytes; limit is 196608 bytes"
         return 1
     }
     jl_wait_free_kb "$JL_ROOT" 56 20
