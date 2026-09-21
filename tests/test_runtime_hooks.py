@@ -85,6 +85,17 @@ class RuntimeHookTests(unittest.TestCase):
             "for value in \"$@\"; do printf '|%s' \"$value\" >> \"$WPA_LOG\"; done\n"
             "printf '\\n' >> \"$WPA_LOG\"\n"
             "case \"$*\" in\n"
+            "  *ping*)\n"
+            "    t=0; [ -f \"$WPA_PINGS\" ] && t=$(cat \"$WPA_PINGS\")\n"
+            "    echo $((t + 1)) > \"$WPA_PINGS\"\n"
+            "    # Stay unreachable for PING_FAILS calls, like a boot-time\n"
+            "    # wpa_supplicant whose control socket does not exist yet.\n"
+            "    if [ \"$t\" -lt \"${PING_FAILS:-0}\" ]; then\n"
+            "      echo 'Failed to connect to non-global ctrl_ifname: wlan0' >&2\n"
+            "      exit 255\n"
+            "    fi\n"
+            "    printf 'PONG\\n'\n"
+            "    ;;\n"
             "  *add_network*)\n"
             "    n=0; [ -f \"$WPA_COUNTER\" ] && n=$(cat \"$WPA_COUNTER\")\n"
             "    printf '%s\\n' \"$n\"; echo $((n + 1)) > \"$WPA_COUNTER\"\n"
@@ -104,6 +115,7 @@ class RuntimeHookTests(unittest.TestCase):
             "JOAN_JSON_TOOL": str(json_tool),
             "WPA_LOG": str(log),
             "WPA_COUNTER": str(root / "wpa.counter"),
+            "WPA_PINGS": str(root / "wpa.pings"),
         }
         return environment, log
 
@@ -133,6 +145,30 @@ class RuntimeHookTests(unittest.TestCase):
             calls = log.read_text(encoding="utf-8")
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
+
+    def test_wifi_hook_waits_for_wpa_supplicant_control_socket(self) -> None:
+        """At boot the hook can run before wpa_supplicant's control socket
+        exists. It must wait for it rather than exiting, or the committed
+        network is silently never applied and the camera keeps the OEM one."""
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        fixture = REPOSITORY / "tools/tests/wifi-space.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, log = self._wifi_apply_environment(root)
+            environment["PING_FAILS"] = "3"
+            result = subprocess.run(
+                [str(hook), str(fixture)],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = log.read_text(encoding="utf-8")
+            # It kept probing past the failures and still configured the network.
+            self.assertGreaterEqual(
+                int((root / "wpa.pings").read_text(encoding="utf-8").strip()), 4
+            )
+            self.assertIn('set_network|0|ssid|"Family Room WiFi"', calls)
 
     def test_wifi_hook_prefers_5ghz_when_scan_shows_it_usable(self) -> None:
         hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
