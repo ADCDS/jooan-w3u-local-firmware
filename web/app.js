@@ -963,12 +963,26 @@ function initTvRemote() {
       if (dir !== jogDir) { jogDir = dir; startPtz(dir); }
       return true;
     },
+    /* Back walks back up, one step per press: release the jog, close what is
+       open, out of the content to the rail, off the zone to Live, and only
+       from there out of the app. It used to give up as soon as the ring was
+       anywhere in the Live zone -- so Back on the jog quit the app instead of
+       stepping out of it, which reads as the remote firing at random. */
     onBack: () => {
       if (jogOn) { setJog(false); return true; }
       if (guardOpen()) { closeGuard(); return true; }
       if ($('#console').dataset.fs) { exitFullscreen(); return true; }
       if (!$('#setup').classList.contains('hidden')) { show('#console'); return true; }
-      if ($('#console').dataset.zone && $('#console').dataset.zone !== 'live') { setZone('live'); return true; }
+      if ($('#console').classList.contains('hidden')) return false;   /* sign-in screen */
+      const zone = $('#console').dataset.zone;
+      const ring = tvNav.current();
+      const tab = $(`#rail button[data-zone="${zone}"]`);
+      if (ring && tab && !ring.closest('#rail')) { tvNav.focus(tab); return true; }
+      if (zone && zone !== 'live') {
+        setZone('live');
+        tvNav.focus($('#rail button[data-zone="live"]'));
+        return true;
+      }
       return false;
     },
   });
