@@ -89,22 +89,37 @@ if jl_check_maintenance_storage 2>/dev/null; then exit 1; fi
 # Allowlisted private routes are installed through the pruned default gateway,
 # as specific prefixes only; a default route is never re-created.
 mkdir -p "$JL_CONFIG"
-printf '%s\n' '192.168.100.0/24' 'fd00:dead::/64' '0.0.0.0/0' > "$JL_CONFIG/routes.list"
-ip() { printf '%s\n' "$*" >> "$fixture/ip-actions"; }
-: > "$fixture/ip-actions"
+[ "$(jl_netmask_of 24)" = 255.255.255.0 ]
+[ "$(jl_netmask_of 8)" = 255.0.0.0 ]
+[ "$(jl_netmask_of 12)" = 255.240.0.0 ]
+[ "$(jl_netmask_of 32)" = 255.255.255.255 ]
+: > "$fixture/route-actions"
+# Existing routes are reported so an already-present prefix is not re-added.
+route() {
+    case "$*" in
+        '-n') printf '%s\n' '10.42.0.0 0.0.0.0 255.255.255.0 U 0 0 0 wlan0' \
+            '172.16.9.0 192.168.20.1 255.255.255.0 UG 0 0 0 wlan0' ;;
+        '-A inet6 -n') printf '%s\n' 'fd00:beef::/64 fe80::1 UG 100 0 0 wlan0' ;;
+        *) printf '%s\n' "$*" >> "$fixture/route-actions" ;;
+    esac
+}
 # The pruning above already recorded its gateway; with none remembered at all,
 # nothing may be installed.
 rm -f "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
 jl_apply_allowed_routes
-[ ! -s "$fixture/ip-actions" ]
+[ ! -s "$fixture/route-actions" ]
 printf '%s %s\n' 192.168.20.1 wlan0 > "$JL_RUN/default-gateway"
 printf '%s %s\n' fe80::1 wlan0 > "$JL_RUN/default-gateway6"
+printf '%s\n' '192.168.100.0/24' 'fd00:dead::/64' '0.0.0.0/0' \
+    '172.16.9.0/24' 'fd00:beef::/64' > "$JL_CONFIG/routes.list"
 jl_apply_allowed_routes
-grep -q '^route replace 192.168.100.0/24 via 192.168.20.1 dev wlan0$' "$fixture/ip-actions"
-grep -q '^-6 route replace fd00:dead::/64 via fe80::1 dev wlan0$' "$fixture/ip-actions"
-! grep -q '0.0.0.0/0' "$fixture/ip-actions"
-[ "$(wc -l < "$fixture/ip-actions")" = 2 ]
-unset -f ip
+grep -q '^add -net 192.168.100.0 netmask 255.255.255.0 gw 192.168.20.1 dev wlan0$' \
+    "$fixture/route-actions"
+grep -q '^-A inet6 add fd00:dead::/64 gw fe80::1 dev wlan0$' "$fixture/route-actions"
+! grep -q '0\.0\.0\.0/0\|default' "$fixture/route-actions"   # never a default route
+! grep -q '172\.16\.9\.0\|fd00:beef' "$fixture/route-actions" # already present
+[ "$(wc -l < "$fixture/route-actions")" = 2 ]
+unset -f route
 rm -f "$JL_CONFIG/routes.list" "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
 
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.

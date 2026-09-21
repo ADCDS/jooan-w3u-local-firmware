@@ -117,6 +117,21 @@ jl_prune_default_routes() {
 # no route to anything outside the allowlist. It only restores the return path
 # to management clients on a different local subnet than the camera, which a
 # router already has to forward deliberately.
+# The BusyBox `ip` applet here is built without the route object, so routes
+# are managed with `route`, which needs a dotted netmask and refuses an
+# existing route: derive the mask and skip prefixes already present, so this
+# stays idempotent for the continuous enforce loop.
+jl_netmask_of() {
+    awk -v jl_p="$1" 'BEGIN {
+        for (i = 0; i < 4; i++) {
+            b = jl_p >= 8 ? 8 : (jl_p > 0 ? jl_p : 0)
+            jl_p -= b
+            o[i] = b == 0 ? 0 : 256 - 2 ^ (8 - b)
+        }
+        printf "%d.%d.%d.%d", o[0], o[1], o[2], o[3]
+    }'
+}
+
 jl_apply_allowed_routes() {
     [ -f "$JL_CONFIG/routes.list" ] || return 0
     jl_route_gw= jl_route_if= jl_route_gw6= jl_route_if6=
@@ -128,17 +143,27 @@ jl_apply_allowed_routes() {
     fi
     while IFS= read -r jl_cidr; do
         [ -n "$jl_cidr" ] || continue
+        jl_net=${jl_cidr%/*}
+        jl_prefix=${jl_cidr#*/}
+        case "$jl_prefix" in ''|*[!0-9]*|0) continue ;; esac
         case "$jl_cidr" in
-            */0) continue ;;
             *:*)
                 [ -n "$jl_route_gw6" ] && [ -n "$jl_route_if6" ] || continue
-                ip -6 route replace "$jl_cidr" via "$jl_route_gw6" \
+                route -A inet6 -n 2>/dev/null |
+                    awk -v jl_c="$jl_cidr" '$1==jl_c {found=1} END {exit !found}' &&
+                    continue
+                route -A inet6 add "$jl_cidr" gw "$jl_route_gw6" \
                     dev "$jl_route_if6" 2>/dev/null || :
                 ;;
             *)
                 [ -n "$jl_route_gw" ] && [ -n "$jl_route_if" ] || continue
-                ip route replace "$jl_cidr" via "$jl_route_gw" \
-                    dev "$jl_route_if" 2>/dev/null || :
+                jl_mask=$(jl_netmask_of "$jl_prefix") || continue
+                route -n 2>/dev/null |
+                    awk -v jl_n="$jl_net" -v jl_m="$jl_mask" \
+                        '$1==jl_n && $3==jl_m {found=1} END {exit !found}' &&
+                    continue
+                route add -net "$jl_net" netmask "$jl_mask" \
+                    gw "$jl_route_gw" dev "$jl_route_if" 2>/dev/null || :
                 ;;
         esac
     done < "$JL_CONFIG/routes.list"
