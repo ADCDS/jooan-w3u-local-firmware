@@ -1,6 +1,7 @@
 'use strict';
 import { JooanAudioClient } from './audio-client.js';
 import { Fmp4Player } from './video-player.js';
+import { looksLikeTv, createNavigator } from './spatial.js';
 
 const $ = s => document.querySelector(s);
 const all = s => Array.from(document.querySelectorAll(s));
@@ -821,6 +822,32 @@ $('#rec-del-day').onclick = () => {
 };
 $('[data-zone="recordings"]').addEventListener('click', () => { if (!recordingsLoaded) loadRecordings(); });
 
+/* ---------- TV remote ----------
+   A Fire TV / Android TV remote sends four arrows and OK: no pointer, no Tab.
+   Spatial navigation moves the ring over whatever is on screen, so nothing has
+   to declare a focus order. Inert unless the page looks like a TV, so arrows
+   keep scrolling an ordinary browser.
+
+   Back is handled in the order a viewer expects to unwind: dismiss a confirm,
+   leave full screen, leave the password form, return to Live. Returning false
+   at the end hands Back to the system, which is how you leave the app. */
+let tvNav = null;
+function initTvRemote() {
+  if (!looksLikeTv()) return;
+  document.documentElement.setAttribute('data-tv', '');
+  tvNav = createNavigator({
+    root: document.body,
+    onBack: () => {
+      if (guardOpen()) { closeGuard(); return true; }
+      if ($('#console').dataset.fs) { exitFullscreen(); return true; }
+      if (!$('#setup').classList.contains('hidden')) { show('#console'); return true; }
+      if ($('#console').dataset.zone && $('#console').dataset.zone !== 'live') { setZone('live'); return true; }
+      return false;
+    },
+  });
+  tvNav.restore();
+}
+
 /* ---------- boot ---------- */
 async function resume() {
   const session = await api('/api/v1/session');
@@ -828,6 +855,7 @@ async function resume() {
   await load();
 }
 setZone('live');
+initTvRemote();
 resume().catch(x => {
   if (x.kind === 'offline') notice(x.message, 'crit');
   show('#login');

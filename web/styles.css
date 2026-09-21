@@ -115,6 +115,19 @@ output:empty{display:none}
 .confirm p{margin:0 0 .5rem;font-size:.85rem}
 
 
+/* ---------- TV remote ----------
+   One ring for pointer-keyboard focus and the D-pad. It is layered over its
+   neighbours because on a remote the ring is the only cursor: losing it means
+   losing your place. A remote is also used from across a room, so a TV gets
+   larger type and taller controls from the same tree. */
+:where(a,button,input,select,textarea,[tabindex]):focus-visible,.nav-focus{outline:none;position:relative;z-index:10;
+  box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--focus)}
+[data-tv] .nav-focus{transform:scale(1.04);transition:transform .15s ease}
+@media (prefers-reduced-motion:reduce){[data-tv] .nav-focus{transform:none;transition:none}}
+[data-tv]{font-size:20px}
+[data-tv] main{padding:1.4rem}
+[data-tv] button{min-height:3rem}
+
 /* ---------- console shell ---------- */
 #console{flex:1;min-height:0;display:flex;gap:var(--pad)}
 #rail{display:flex;flex-direction:column;gap:.25rem;width:11rem;flex:none}
