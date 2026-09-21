@@ -149,25 +149,35 @@
       </section>
 
       <section id="zone-recordings" class="zone hidden" data-scrollport>
-        <div class="card">
-          <h2>microSD card</h2>
-          <div id="sd-status" class="kv"><div class="row"><span>State</span><b>&mdash;</b></div></div>
-          <div class="cap-bar"><div id="sd-used" class="u"></div></div>
-          <p id="sd-note" class="muted"></p>
-        </div>
-        <div class="card">
-          <h2>Days with footage</h2>
-          <div id="rec-days" class="chips row-chips"></div>
-          <div class="grid2">
-            <button id="rec-refresh">Refresh</button>
-            <button id="rec-del-day" class="danger">Delete this day</button>
+        <div class="browse">
+          <div class="bcol">
+            <div class="card">
+              <h2>microSD card</h2>
+              <div id="sd-status" class="kv"><div class="row"><span>State</span><b>&mdash;</b></div></div>
+              <div class="cap-bar"><div id="sd-used" class="u"></div></div>
+              <p id="sd-note" class="muted"></p>
+            </div>
+            <div class="card">
+              <h2>Days with footage</h2>
+              <div id="rec-days" class="days"></div>
+            </div>
           </div>
-          <div id="rec-day-confirm"></div>
-        </div>
-        <div class="card">
-          <h2 id="rec-clips-title">Recordings</h2>
-          <div id="rec-clips" class="kv stack"></div>
-          <div id="rec-clip-confirm"></div>
+          <div class="card">
+            <div class="toolbar">
+              <h2 id="rec-clips-title">Recordings</h2>
+              <span class="grow"></span>
+              <button id="rec-refresh" class="btn-sm">Refresh</button>
+              <button id="rec-del-day" class="btn-sm danger">Delete day</button>
+            </div>
+            <div id="rec-day-confirm"></div>
+            <div class="tl-wrap hidden" id="rec-tl-wrap">
+              <div class="tl" id="rec-tl"></div>
+              <div class="tl-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+              <p class="legend"><span><i></i>Recorded</span><span class="muted">gaps are time the recorder was not writing</span></p>
+            </div>
+            <div id="rec-clips" class="clips"></div>
+            <div id="rec-clip-confirm"></div>
+          </div>
         </div>
       </section>
 

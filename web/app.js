@@ -644,36 +644,98 @@ function fmtSize(kb) {
   if (kb >= 1024) return Math.round(kb / 1024) + ' MB';
   return kb + ' KB';
 }
+const clipEpoch = name => (/^\d{9,11}$/.test(name) ? Number(name) : 0);
 function clipTime(name) {
-  return /^\d{9,11}$/.test(name) ? new Date(Number(name) * 1000).toLocaleTimeString() : name;
+  const e = clipEpoch(name);
+  return e ? new Date(e * 1000).toLocaleTimeString() : name;
+}
+/* Seconds past local midnight, which is the axis the day folder is named on. */
+function secondsIntoDay(epoch) {
+  const d = new Date(epoch * 1000);
+  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+}
+/* The recorder only stamps a START per clip, so a clip's end is the next clip's
+   start. The last clip of a day has no successor: if that day is today it is
+   still being written and ends "now", but on an earlier day the recorder simply
+   stopped at some unrecorded moment. Do not invent that moment -- claiming it
+   ran to midnight would draw coverage the card cannot prove. */
+function clipSpans(day, clips) {
+  const midnight = new Date(`${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}T00:00:00`).getTime() / 1000;
+  const now = Date.now() / 1000;
+  const isToday = now >= midnight && now < midnight + 86400;
+  return clips.map((cl, i) => {
+    const start = clipEpoch(cl.name);
+    const next = i + 1 < clips.length ? clipEpoch(clips[i + 1].name) : 0;
+    if (next) return { clip: cl, start, end: Math.max(next, start), state: 'closed' };
+    if (isToday) return { clip: cl, start, end: Math.max(now, start), state: 'recording' };
+    return { clip: cl, start, end: start, state: 'unknown' };
+  });
 }
 function formatDay(d) {
   if (!/^\d{8}$/.test(d)) return d;
   return new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00`)
     .toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
-function clipRow(day, cl) {
+const ICON_DOWNLOAD = 'M12 4v10m0 0l-4-4m4 4l4-4M5 19h14';
+const ICON_TRASH = 'M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12';
+function iconEl(tag, path, label) {
+  const el = document.createElement(tag);
+  el.title = label;
+  el.setAttribute('aria-label', label);
+  el.innerHTML = `<svg viewBox="0 0 24 24"><path d="${path}"/></svg>`;
+  return el;
+}
+function clipRow(day, span) {
+  const cl = span.clip;
   const row = document.createElement('div');
-  row.className = 'row';
-  const name = document.createElement('span');
-  name.textContent = `${clipTime(cl.name)} · ${fmtSize(Math.round((cl.size || 0) / 1024))}`;
-  const act = document.createElement('b');
+  row.className = 'clip';
+  const rng = document.createElement('span');
+  rng.className = 'rng';
+  const from = clipTime(cl.name);
+  rng.textContent = span.state === 'closed'
+    ? `${from} — ${new Date(span.end * 1000).toLocaleTimeString()}`
+    : span.state === 'recording' ? `${from} — recording` : from;
+  const sz = document.createElement('span');
+  sz.className = 'sz';
+  sz.textContent = fmtSize(Math.round((cl.size || 0) / 1024));
+  const act = document.createElement('span');
+  act.className = 'act';
   const href = `/api/v1/recordings/file/${day}/${encodeURIComponent(cl.name)}`;
-  const dl = document.createElement('a');
-  dl.href = href; dl.className = 'link'; dl.textContent = 'Download'; dl.setAttribute('download', `${day}-${cl.name}.avi`);
-  const del = document.createElement('button');
-  del.className = 'link danger'; del.textContent = 'Delete';
-  del.onclick = () => guard($('#rec-clip-confirm'), `Delete recording ${clipTime(cl.name)}?`, 'Delete',
+  const dl = iconEl('a', ICON_DOWNLOAD, 'Download');
+  dl.href = href;
+  dl.setAttribute('download', `${day}-${cl.name}.avi`);
+  const del = iconEl('button', ICON_TRASH, 'Delete');
+  del.className = 'danger';
+  del.onclick = () => guard($('#rec-clip-confirm'), `Delete recording ${from}?`, 'Delete',
     () => api(href, { method: 'DELETE' }).then(() => loadRecordings()).catch(x => notice(x.message, 'crit')));
-  act.append(dl, document.createTextNode(' '), del);
-  row.append(name, act);
+  act.append(dl, del);
+  row.append(rng, sz, act);
   return row;
 }
+function renderTimeline(spans) {
+  const tl = $('#rec-tl');
+  $('#rec-tl-wrap').classList.toggle('hidden', !spans.length);
+  tl.replaceChildren(...spans.map(s => {
+    const a = secondsIntoDay(s.start);
+    const b = Math.min(a + Math.max(s.end - s.start, 0), 86400);
+    const bar = document.createElement('i');
+    bar.style.left = (a / 86400 * 100) + '%';
+    bar.style.width = ((b - a) / 86400 * 100) + '%';
+    bar.title = `${clipTime(s.clip.name)} · ${fmtSize(Math.round((s.clip.size || 0) / 1024))}`;
+    return bar;
+  }));
+}
 async function loadClips(day) {
-  if (!day) { $('#rec-clips').replaceChildren(); return; }
+  if (!day) { $('#rec-clips').replaceChildren(); renderTimeline([]); return; }
   const clips = (await api('/api/v1/recordings/day/' + day)).clips || [];
-  if (!clips.length) { $('#rec-clips').textContent = 'No recordings for this day.'; return; }
-  $('#rec-clips').replaceChildren(...clips.map(cl => clipRow(day, cl)));
+  if (!clips.length) {
+    $('#rec-clips').textContent = 'No recordings for this day.';
+    renderTimeline([]);
+    return;
+  }
+  const spans = clipSpans(day, clips);
+  renderTimeline(spans);
+  $('#rec-clips').replaceChildren(...spans.map(s => clipRow(day, s)));
 }
 async function loadSdStatus() {
   const s = await api('/api/v1/storage/sd');
@@ -697,7 +759,10 @@ async function loadSdStatus() {
 }
 async function selectDay(day) {
   selectedDay = day;
-  for (const b of all('#rec-days button')) b.classList.toggle('primary', b.dataset.day === day);
+  for (const b of all('#rec-days button')) {
+    if (b.dataset.day === day) b.setAttribute('aria-current', 'true');
+    else b.removeAttribute('aria-current');
+  }
   $('#rec-clips-title').textContent = day ? `Recordings — ${formatDay(day)}` : 'Recordings';
   $('#rec-del-day').disabled = !day;
   await loadClips(day);
@@ -714,7 +779,10 @@ async function loadRecordings() {
       $('#rec-days').replaceChildren(...days.map(d => {
         const b = document.createElement('button');
         b.dataset.day = d.day;
-        b.textContent = `${formatDay(d.day)} · ${fmtSize(d.size_kb)} · ${d.count}`;
+        b.append(formatDay(d.day));
+        const sub = document.createElement('small');
+        sub.textContent = `${fmtSize(d.size_kb)} · ${d.count} clip${d.count === 1 ? '' : 's'}`;
+        b.append(sub);
         b.onclick = () => selectDay(d.day).catch(x => notice(x.message, 'crit'));
         return b;
       }));

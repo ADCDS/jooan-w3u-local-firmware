@@ -61,6 +61,41 @@ output:empty{display:none}
 .cap-bar{height:10px;border-radius:5px;background:var(--panel2);overflow:hidden;margin:.6rem 0}
 .cap-bar .u{height:100%;width:0;background:var(--accent)}
 .cap-bar .u.full{background:var(--crit)}
+
+/* ---------- recordings browser ----------
+   Two columns so the card/day context stays visible beside the clip list
+   instead of pushing it off-screen on a wide display. */
+.browse{display:grid;grid-template-columns:16rem 1fr;gap:.7rem;align-items:start}
+.bcol{display:flex;flex-direction:column;gap:.7rem;min-width:0}
+.toolbar{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.toolbar h2{margin:0}
+.btn-sm{min-height:32px;padding:.25rem .6rem;font-size:.78rem}
+/* A day is a target, not a chip: two lines, so size and count stay readable
+   when a card holds a fortnight of them. */
+.days{display:flex;flex-direction:column;gap:.25rem;max-height:22rem;overflow-y:auto;scrollbar-width:none}
+.days::-webkit-scrollbar{display:none}
+.days button{display:block;width:100%;text-align:left;padding:.4rem .55rem;min-height:0;
+  background:none;border:1px solid transparent;color:var(--ink);font-weight:600;font-size:.84rem}
+.days button small{display:block;color:var(--muted);font-weight:400;font-size:.72rem;font-family:ui-monospace,monospace}
+.days button[aria-current="true"]{background:var(--panel2);border-color:var(--accent)}
+.clips{display:flex;flex-direction:column;gap:.3rem;margin-top:.6rem}
+.clip{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel2);font-size:.82rem}
+.clip .rng{font-family:ui-monospace,monospace;white-space:nowrap}
+.clip .sz{margin-left:auto;color:var(--muted);font-family:ui-monospace,monospace;font-size:.76rem}
+.clip .act{display:inline-flex;gap:.3rem;flex:none}
+.clip .act a,.clip .act button{display:grid;place-items:center;min-height:30px;min-width:30px;padding:0;
+  border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);text-decoration:none}
+.clip .act .danger{color:var(--crit);border-color:rgba(240,115,106,.45)}
+.clip .act svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tl{position:relative;height:24px;border-radius:6px;background:var(--panel2);
+  border:1px solid var(--line);overflow:hidden;margin-top:.5rem}
+.tl i{position:absolute;top:4px;bottom:4px;min-width:2px;background:var(--accent);border-radius:2px}
+.tl-axis{display:flex;justify-content:space-between;margin-top:.2rem;font:.62rem/1 ui-monospace,monospace;color:var(--muted)}
+.legend{display:flex;gap:.8rem;align-items:center;margin:.35rem 0 0;font-size:.72rem;color:var(--muted);flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:.35rem}
+.legend i{width:.7rem;height:.7rem;border-radius:2px;background:var(--accent);flex:none}
+@media (max-width:900px){.browse{grid-template-columns:1fr}.days{max-height:none}}
 .kv{display:flex;flex-direction:column;gap:.45rem}
 .kv .row{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;font-size:.82rem}
 .kv .row span{color:var(--muted);flex:none;white-space:nowrap}
