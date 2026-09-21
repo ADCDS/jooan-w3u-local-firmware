@@ -22,11 +22,11 @@
 
   <section id="setup" class="card narrow hidden">
     <h2>Change administrator password</h2>
-    <p>Choose a unique password of at least 12 characters. It is shared with SSH and RTSP.</p>
+    <p>Shared with SSH and RTSP. Any length; a long one is still the better idea.</p>
     <form id="password-form">
       <input type="hidden" name="username" value="admin" autocomplete="username">
       <label>Current password<input name="old_password" type="password" autocomplete="current-password" required></label>
-      <label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <label>New password<input name="new_password" type="password" autocomplete="new-password" required></label>
       <button class="primary">Change password</button>
       <button type="button" id="setup-cancel" class="ghost">Cancel</button>
     </form>

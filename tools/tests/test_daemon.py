@@ -98,7 +98,13 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert request('GET','/api/v1/status',cookie=cookie,origin='https://evil.invalid')[0]==403
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'x'*129},cookie,csrf)[0]==400
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'twelve-chars\n'},cookie,csrf)[0]==400
-  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'correct horse battery staple'},cookie,csrf)[0]==200
+  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':''},cookie,csrf)[0]==400
+  # No minimum length: a short password is the operator's call, an empty one is not.
+  # A change drops every session, so each one is followed by a fresh sign-in.
+  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'shrt'},cookie,csrf)[0]==200
+  status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'shrt'});assert status==200,(status,b)
+  cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf']
+  assert request('POST','/api/v1/setup/password',{'old_password':'shrt','new_password':'correct horse battery staple'},cookie,csrf)[0]==200
   user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert crypt_verify('correct horse battery staple',sh)
   status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'correct horse battery staple'});assert status==200;cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is False
   assert websocket_status(cookie,'jaud.v1')==403
