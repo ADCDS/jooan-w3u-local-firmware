@@ -1,5 +1,6 @@
 # Build and release output
 build/
+/src/daemon/joan-daemon
 /dist/
 /out/
 core
