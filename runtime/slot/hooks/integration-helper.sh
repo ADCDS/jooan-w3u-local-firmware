@@ -9,18 +9,30 @@ control=${JL_CONTROL:-$run/controller}
 PATH=${JOOAN_PATH:-/bin:/sbin:/usr/bin:/usr/sbin}
 export PATH
 
+# This BusyBox has NO rmdir applet, so every `rmdir` here silently did nothing
+# and the mount point outlived the run that made it. `mkdir` then refused it
+# and the SAME package could never be verified again -- which only ever bites
+# a retry, because a different package gets a different id and a fresh name.
+# `rm -rf` is what this target actually has.
 firmware_mount() {
     fw_image=$1 fw_mount=$2
+    if [ -d "$fw_mount" ]; then
+        # Reclaim a leftover from a killed run; refuse if something is still
+        # mounted on it rather than mounting over the top.
+        umount "$fw_mount" 2>/dev/null || :
+        rm -rf "$fw_mount" 2>/dev/null || :
+        [ -d "$fw_mount" ] && return 1
+    fi
     mkdir "$fw_mount" || return 1
     mount -t squashfs -o ro,loop "$fw_image" "$fw_mount" || {
-        rmdir "$fw_mount" 2>/dev/null || :
+        rm -rf "$fw_mount" 2>/dev/null || :
         return 1
     }
 }
 firmware_unmount() {
     fw_mount=$1
     umount "$fw_mount" 2>/dev/null || return 1
-    rmdir "$fw_mount" 2>/dev/null || :
+    rm -rf "$fw_mount" 2>/dev/null || :
 }
 firmware_metadata() {
     fw_manifest=$1
@@ -306,7 +318,7 @@ case "$op" in
             apply_mount=$run/firmware.$id.apply-mount
             cleanup_apply() {
                 firmware_unmount "$apply_mount" 2>/dev/null || :
-                rmdir "$lock" 2>/dev/null || :
+                rm -rf "$lock" 2>/dev/null || :
             }
             trap cleanup_apply EXIT HUP INT TERM
             if ! firmware_mount "$payload" "$apply_mount"; then
