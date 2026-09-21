@@ -31,17 +31,17 @@ jl_unlock() { rm -rf "$JL_RUN/state.lock" 2>/dev/null || :; }
 
 jl_check_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
-    [ "$jl_storage_bytes" -le 184320 ] || {
-        jl_log "persistent regular files total ${jl_storage_bytes} bytes; limit is 184320 bytes (180 KiB)"
+    [ "$jl_storage_bytes" -le 188416 ] || {
+        jl_log "persistent regular files total ${jl_storage_bytes} bytes; limit is 188416 bytes (184 KiB)"
         return 1
     }
-    jl_wait_free_kb "$JL_ROOT" 76 20
+    jl_wait_free_kb "$JL_ROOT" 72 20
 }
 
 jl_check_maintenance_storage() {
     jl_storage_bytes=$(jl_tree_bytes "$JL_ROOT") || return 1
-    [ "$jl_storage_bytes" -le 184320 ] || {
-        jl_log "maintenance files total ${jl_storage_bytes} bytes; limit is 184320 bytes"
+    [ "$jl_storage_bytes" -le 188416 ] || {
+        jl_log "maintenance files total ${jl_storage_bytes} bytes; limit is 188416 bytes"
         return 1
     }
     jl_wait_free_kb "$JL_ROOT" 56 20
