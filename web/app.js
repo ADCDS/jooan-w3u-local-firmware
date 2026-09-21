@@ -155,8 +155,6 @@ function chip(label, value, tone) {
   return el;
 }
 
-const GLANCE = ['fmp4_main', 'fmp4_sub'];
-
 function renderStatus(s) {
   const build = keys => keys.map(key => {
     const raw = s.features?.[key];
@@ -165,8 +163,6 @@ function renderStatus(s) {
     const value = raw === true ? (fixed || 'on') : raw === false ? 'off' : String(raw);
     return chip(label, value, raw === false ? 'off' : '');
   }).filter(Boolean);
-  const local = chip('Local only', s.local_only ? 'yes' : 'no', s.local_only ? '' : 'warn');
-  $('#chips').replaceChildren(local, ...build(GLANCE));
   $('#state-chips').replaceChildren(...build(Object.keys(FEATURE_LABELS)));
 
   const rows = [
@@ -188,13 +184,11 @@ function renderStatus(s) {
     return row;
   }));
 
-  const stale = s.default_password_warning;
-  $('#pw-warning').classList.toggle('hidden', !stale && s.ssh_password_sync);
-  if (!s.ssh_password_sync) {
-    $('#pw-warning').querySelector('.grow').textContent =
-      'SSH password is not synchronized after upgrade. Change the administrator password once to enable it.';
-  }
-  $('#pw-state').textContent = stale ? 'initial value' : 'changed';
+  /* Only the SSH mismatch is worth a banner: it means SSH will refuse the
+     password you just used. That the initial password is still set is a fact
+     the System zone already states, not something to interrupt every screen. */
+  $('#ssh-warning').classList.toggle('hidden', !!s.ssh_password_sync);
+  $('#pw-state').textContent = s.default_password_warning ? 'initial value' : 'changed';
 }
 
 /* ---------- load ---------- */
@@ -257,7 +251,6 @@ $('#login-form').addEventListener('submit', async e => {
     csrf = d.csrf;
     clearNotice();
     await load();
-    if (d.default_password_warning) notice('The initial password is still active.', 'warn');
   } catch (x) { notice(x.message, 'crit'); }
 });
 
