@@ -252,7 +252,6 @@ async function load() {
     }));
   } catch (x) { $('#ssh-list').textContent = x.message; }
   loadPresets().catch(() => {});
-  loadCameraZone().catch(() => {});
 }
 
 /* ---------- auth ---------- */
@@ -298,7 +297,7 @@ async function setCameraTime(epochSeconds) {
     body: JSON.stringify({ epoch: String(epochSeconds) }),
   });
   $('#time-camera').textContent = new Date(d.epoch * 1000).toLocaleString();
-  $('#time-result').textContent = 'Camera clock set. Live video reloads to pick up the new timestamp.';
+  $('#time-result').textContent = 'Camera clock set; live video reloads.';
   load().catch(() => {});
 }
 /* Seed the manual field with the current local time as a starting point. */
@@ -319,33 +318,20 @@ function browserTimeZone() {
   const abs = Math.abs(off);
   const hh = String(Math.floor(abs / 60)).padStart(2, '0');
   const mm = String(abs % 60).padStart(2, '0');
-  let name = '';
-  try { name = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) { /* no Intl */ }
-  return { gmt_tz: `GMT${sign}${hh}:${mm}`, tz_name: name };
-}
-function renderCameraZone(label) {
-  const el = $('#time-zone');
-  if (el) el.textContent = label || '—';
-}
-async function loadCameraZone() {
-  const d = await api('/api/v1/timezone');
-  renderCameraZone(d.tz_name || d.gmt_tz || '—');
+  return `GMT${sign}${hh}:${mm}`;
 }
 async function setCameraTimezone() {
-  const { gmt_tz, tz_name } = browserTimeZone();
   return api('/api/v1/timezone', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gmt_tz, tz_name }),
+    body: JSON.stringify({ gmt_tz: browserTimeZone() }),
   });
 }
 $('#time-sync').onclick = async () => {
   try {
     await setCameraTime(Math.floor(Date.now() / 1000));
     const d = await setCameraTimezone();
-    const zone = d.tz_name || d.gmt_tz;
-    renderCameraZone(zone);
     $('#time-result').textContent =
-      `Camera clock set to this device. Time zone saved as ${zone}; the on-screen overlay switches to it after the camera restarts.`;
+      `Clock synced; time zone ${d.gmt_tz} saved. The overlay updates after a restart.`;
   } catch (x) { notice(x.message, 'crit'); }
 };
 $('#time-set-manual').onclick = async () => {
