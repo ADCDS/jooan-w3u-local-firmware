@@ -35,6 +35,27 @@ typedef struct {
 #endif
 } Conn;
 static JoanConfig G;
+/* The names the served certificate is for. A camera reached over a real DNS
+   name -- which is the whole point of enrolling a real certificate -- has to
+   accept that name as its own, or every state-changing request is refused as
+   a cross-origin one and the page is useless through it. The certificate is
+   the right source for that list: it is exactly the set of names an authority
+   agreed this camera answers to. */
+#define JOAN_CERT_NAMES 4
+static char cert_names[JOAN_CERT_NAMES][128];
+static void cache_cert_names(const mbedtls_x509_crt *id)
+{
+    const mbedtls_x509_sequence *san=&id->subject_alt_names; unsigned n=0;
+    memset(cert_names,0,sizeof(cert_names));
+    for(;san&&n<JOAN_CERT_NAMES;san=san->next){
+        /* dNSName entries only; an IP entry is already covered by host_ok. */
+        if((san->buf.tag&MBEDTLS_ASN1_TAG_VALUE_MASK)!=2||!san->buf.p||!san->buf.len)continue;
+        if(san->buf.len>=sizeof(cert_names[0]))continue;
+        memcpy(cert_names[n],san->buf.p,san->buf.len);
+        cert_names[n][san->buf.len]=0;
+        n++;
+    }
+}
 static pthread_mutex_t ptz_lock=PTHREAD_MUTEX_INITIALIZER;
 #ifndef JOAN_NO_TLS
 static pthread_mutex_t tls_rng_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -78,7 +99,9 @@ static int header_copy(const char*headers,const char*name,char*out,size_t cap){s
 
 static int parse_request(Conn*c,JoanRequest*r){unsigned char*h=malloc(JOAN_MAX_HEADERS+1),*end=NULL;size_t used=0,head,body_limit;char*line_end,*headers,*q;ssize_t n;int result=-1;if(!h)return-1;memset(r,0,sizeof(*r));r->fd=c->fd;while(used<JOAN_MAX_HEADERS){n=cread(c,h+used,JOAN_MAX_HEADERS-used);if(n<=0){if(!used)result=-3;goto fail;}used+=(size_t)n;h[used]=0;end=(unsigned char*)strstr((char*)h,"\r\n\r\n");if(end)break;}if(!end)goto fail;head=(size_t)(end-h)+4;line_end=strstr((char*)h,"\r\n");if(!line_end)goto fail;*line_end=0;headers=line_end+2;if(sscanf((char*)h,"%11s %511s",r->method,r->path)!=2)goto fail;q=strchr(r->path,'?');if(q){*q++=0;snprintf(r->query,sizeof(r->query),"%s",q);}*end=0;header_copy(headers,"Host",r->host,sizeof(r->host));header_copy(headers,"Cookie",r->cookie,sizeof(r->cookie));header_copy(headers,"X-CSRF-Token",r->csrf,sizeof(r->csrf));header_copy(headers,"Content-Type",r->content_type,sizeof(r->content_type));header_copy(headers,"Upgrade",r->upgrade,sizeof(r->upgrade));header_copy(headers,"Sec-WebSocket-Key",r->ws_key,sizeof(r->ws_key));header_copy(headers,"Sec-WebSocket-Protocol",r->ws_protocol,sizeof(r->ws_protocol));header_copy(headers,"Origin",r->origin,sizeof(r->origin));header_copy(headers,"Transfer-Encoding",r->transfer_encoding,sizeof(r->transfer_encoding));header_copy(headers,"Range",r->range,sizeof(r->range));if(!r->host[0]||r->transfer_encoding[0])goto fail;{char cl[32]={0};if(!header_copy(headers,"Content-Length",cl,sizeof(cl))){char*ep=NULL;unsigned long z=strtoul(cl,&ep,10);if(!ep||*ep)goto fail;r->content_length=(size_t)z;}}body_limit=!strcmp(r->method,"POST")&&!strcmp(r->path,"/api/v1/update")?JOAN_MAX_UPDATE_BODY:JOAN_MAX_BODY;if(r->content_length>body_limit){result=-2;goto fail;}if(r->content_length){size_t have=used-head,off=0;r->body=malloc(r->content_length+1);if(!r->body)goto fail;if(have>r->content_length)have=r->content_length;memcpy(r->body,end+4,have);off=have;while(off<r->content_length){n=cread(c,r->body+off,r->content_length-off);if(n<=0)goto fail;off+=(size_t)n;}r->body[r->content_length]=0;}free(h);return 0;fail:free(r->body);free(h);return result;}
 
-static int host_ok(const char*host){char name[256],label[64],*colon;struct in_addr a4;size_t n;if(!host||(n=strlen(host))==0||n>=sizeof(name)||strpbrk(host,"/\\@\r\n"))return 0;snprintf(name,sizeof(name),"%s",host);if(name[0]=='['){char*end=strchr(name,']');struct in6_addr a6;if(!end)return 0;*end=0;if(inet_pton(AF_INET6,name+1,&a6)!=1)return 0;return IN6_IS_ADDR_LOOPBACK(&a6)||(a6.s6_addr[0]&0xfe)==0xfc;}colon=strrchr(name,':');if(colon)*colon=0;if(inet_pton(AF_INET,name,&a4)==1){uint32_t a=ntohl(a4.s_addr);return(a>>24)==127||(a>>24)==10||(a>>20)==0xac1||(a>>16)==0xc0a8;}joan_mdns_get_hostname(&G,label);{char wanted[80];snprintf(wanted,sizeof(wanted),"%s.local",label);return!strcasecmp(name,wanted);}}
+static int host_ok(const char*host){char name[256],label[64],*colon;struct in_addr a4;size_t n;if(!host||(n=strlen(host))==0||n>=sizeof(name)||strpbrk(host,"/\\@\r\n"))return 0;snprintf(name,sizeof(name),"%s",host);if(name[0]=='['){char*end=strchr(name,']');struct in6_addr a6;if(!end)return 0;*end=0;if(inet_pton(AF_INET6,name+1,&a6)!=1)return 0;return IN6_IS_ADDR_LOOPBACK(&a6)||(a6.s6_addr[0]&0xfe)==0xfc;}colon=strrchr(name,':');if(colon)*colon=0;if(inet_pton(AF_INET,name,&a4)==1){uint32_t a=ntohl(a4.s_addr);return(a>>24)==127||(a>>24)==10||(a>>20)==0xac1||(a>>16)==0xc0a8;}joan_mdns_get_hostname(&G,label);{char wanted[80];unsigned i;snprintf(wanted,sizeof(wanted),"%s.local",label);if(!strcasecmp(name,wanted))return 1;
+    for(i=0;i<JOAN_CERT_NAMES;i++)if(cert_names[i][0]&&!strcasecmp(name,cert_names[i]))return 1;
+    return 0;}}
 static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r->origin[0])return required?0:1;if(!host_ok(r->host))return 0;snprintf(expected,sizeof(expected),"%s://%s",G.plain_http?"http":"https",r->host);return !strcmp(r->origin,expected);}
 static int authorized(Conn*c,JoanRequest*r,JoanAuthz*a,int csrf){if(!origin_ok(r,0))return error_json(c,403,"origin_rejected","request origin is not this camera"),-1;if(joan_auth_request(r,csrf,a))return error_json(c,401,"authentication_required","authentication required"),-1;return 0;}
 static int helper_json(Conn*c,const char*op,const char*path,const char*id){unsigned char*out=NULL;size_t n=0;char esc[4096],body[4352];unsigned timeout=!strcmp(op,"firmware-verify")?60u:!strcmp(op,"wifi-stage")?65u:15u;int rc=joan_run_helper(&G,op,path,id,&out,&n,timeout);if(rc){free(out);return error_json(c,502,"integration_failed","local integration operation failed");}if(!strcmp(op,"ssh-list")){if(n>1800)n=1800;json_escape(out?out:(unsigned char*)"",n,esc,sizeof(esc));snprintf(body,sizeof(body),"{\"ok\":true,\"authorized_keys\":\"%s\"}",esc);}else snprintf(body,sizeof(body),"{\"ok\":true,\"id\":\"%s\"}",id?id:"");free(out);return json(c,200,body);}
@@ -298,7 +321,7 @@ int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;pthre
 #ifndef JOAN_NO_TLS
     mbedtls_entropy_context entropy;mbedtls_ctr_drbg_context drbg;mbedtls_ssl_config sc;mbedtls_x509_crt cert;mbedtls_pk_context key;char cp[512],kp[512];
     mbedtls_entropy_init(&entropy);mbedtls_ctr_drbg_init(&drbg);mbedtls_ssl_config_init(&sc);mbedtls_x509_crt_init(&cert);mbedtls_pk_init(&key);
-    if(!cfg->plain_http){snprintf(cp,sizeof(cp),"%s/tls-cert.pem",cfg->state_dir);snprintf(kp,sizeof(kp),"%s/tls-key.pem",cfg->state_dir);if(mbedtls_ctr_drbg_seed(&drbg,mbedtls_entropy_func,&entropy,(unsigned char*)"joan-httpd",11)||mbedtls_x509_crt_parse_file(&cert,cp)||mbedtls_pk_parse_keyfile(&key,kp,NULL)||mbedtls_ssl_config_defaults(&sc,MBEDTLS_SSL_IS_SERVER,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT)||mbedtls_ssl_conf_own_cert(&sc,&cert,&key))return-1;mbedtls_ssl_conf_min_version(&sc,MBEDTLS_SSL_MAJOR_VERSION_3,MBEDTLS_SSL_MINOR_VERSION_3);mbedtls_ssl_conf_renegotiation(&sc,MBEDTLS_SSL_RENEGOTIATION_DISABLED);mbedtls_ssl_conf_session_tickets(&sc,MBEDTLS_SSL_SESSION_TICKETS_DISABLED);mbedtls_ssl_conf_rng(&sc,locked_rng,&drbg);}
+    if(!cfg->plain_http){snprintf(cp,sizeof(cp),"%s/tls-cert.pem",cfg->state_dir);snprintf(kp,sizeof(kp),"%s/tls-key.pem",cfg->state_dir);if(mbedtls_ctr_drbg_seed(&drbg,mbedtls_entropy_func,&entropy,(unsigned char*)"joan-httpd",11)||mbedtls_x509_crt_parse_file(&cert,cp)||(cache_cert_names(&cert),0)||mbedtls_pk_parse_keyfile(&key,kp,NULL)||mbedtls_ssl_config_defaults(&sc,MBEDTLS_SSL_IS_SERVER,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT)||mbedtls_ssl_conf_own_cert(&sc,&cert,&key))return-1;mbedtls_ssl_conf_min_version(&sc,MBEDTLS_SSL_MAJOR_VERSION_3,MBEDTLS_SSL_MINOR_VERSION_3);mbedtls_ssl_conf_renegotiation(&sc,MBEDTLS_SSL_RENEGOTIATION_DISABLED);mbedtls_ssl_conf_session_tickets(&sc,MBEDTLS_SSL_SESSION_TICKETS_DISABLED);mbedtls_ssl_conf_rng(&sc,locked_rng,&drbg);}
 #else
     if(!cfg->plain_http){fprintf(stderr,"HTTPS requested but binary was built JOAN_NO_TLS; refusing\n");return-1;}
 #endif

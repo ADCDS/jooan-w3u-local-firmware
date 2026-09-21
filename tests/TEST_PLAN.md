@@ -70,6 +70,10 @@ UNPROVISIONED -> PROVISIONED -> SESSION_AUTHENTICATED
 
 Exercise every allowed transition and every forbidden edge. In particular:
 
+- an enrolled certificate survives an mDNS rename, and the camera accepts the
+  name on that certificate as its own origin while still refusing every other
+  origin (`tools/tests/test_cert_origin.py`, which needs TLS and so runs apart
+  from the plain-HTTP daemon suite);
 - the public initial `admin` / `admin` remains valid until changed, with
   neither forced setup nor a warning banner;
 - the reported state survives restart and flips only after password rotation;
