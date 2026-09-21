@@ -22,6 +22,18 @@ Use this project only with a unit that matches all of the following:
 - radio: USB SeekWave SKW6316 (`SV6160LITE` on the verified unit);
 - flash: 8 MiB SPI NOR (verified unit: Puya P25Q64HA).
 
+The verified `JA-6621 V1.0` board — the Ingenic T23N SoC and the 8 MiB Puya
+P25Q64HA SPI-NOR flash listed above are visible on it:
+
+<p>
+  <img src="docs/images/board-overview.jpg" width="230"
+       alt="JA-6621 V1.0 board: Ingenic T23N SoC, microSD slot, and u.FL Wi-Fi antenna">
+  <img src="docs/images/board-soc-flash.jpg" width="230"
+       alt="Close-up of the Ingenic T23 SoC and the Puya P25Q64HA SPI-NOR flash">
+  <img src="docs/images/teardown.jpg" width="300"
+       alt="FCC internal photo: the pan/tilt housing opened, exposing the board and lens module">
+</p>
+
 The Thingino image named for “Jooan W3-U” targets a different
 SC2336P/ATBM6132U revision and is not interchangeable. Product name and case
 shape are not sufficient compatibility evidence. Read
