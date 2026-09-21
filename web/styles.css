@@ -18,9 +18,6 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
 
 /* ---------- chrome ---------- */
-header{display:flex;justify-content:space-between;align-items:center;gap:1rem;
-  padding:.7rem clamp(.8rem,3vw,2rem);border-bottom:1px solid var(--line);flex:none}
-h1{font-size:1.05rem;margin:0;letter-spacing:.02em}
 h2{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem}
 main{flex:1;min-height:0;display:flex;flex-direction:column;padding:var(--pad);gap:var(--pad)}
 .hidden{display:none!important}
@@ -61,6 +58,9 @@ output:empty{display:none}
 .pill.crit{border-color:rgba(240,115,106,.5);color:var(--crit)} .pill.crit .led{background:var(--crit)}
 
 .gap-top{margin-top:.7rem}
+.cap-bar{height:10px;border-radius:5px;background:var(--panel2);overflow:hidden;margin:.6rem 0}
+.cap-bar .u{height:100%;width:0;background:var(--accent)}
+.cap-bar .u.full{background:var(--crit)}
 .kv{display:flex;flex-direction:column;gap:.45rem}
 .kv .row{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;font-size:.82rem}
 .kv .row span{color:var(--muted);flex:none;white-space:nowrap}

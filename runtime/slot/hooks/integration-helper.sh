@@ -121,6 +121,12 @@ case "$op" in
         # the helper defensive since it runs privileged.
         case "$id" in ''|*[!0-9]*) exit 2 ;; esac
         date -s "@$id" >/dev/null 2>&1 || exit 1
+        # No RTC: persist at once so this client-set time survives a reboot.
+        mkdir -p "$root/state" 2>/dev/null || :
+        if printf '%s\n' "$id" > /tmp/jl-set-time.$$ 2>/dev/null; then
+            mv -f /tmp/jl-set-time.$$ "$root/state/last-time" 2>/dev/null ||
+                rm -f /tmp/jl-set-time.$$
+        fi
         ;;
     timezone-set)
         # id is a "GMT+HH:MM" offset; the daemon validated it, re-checked here
@@ -139,6 +145,17 @@ case "$op" in
     snapshot)
         echo 'snapshot backend unavailable with OEM GoAhead disabled' >&2
         exit 69
+        ;;
+    sd-status)
+        # read-only microSD capacity/mount report (df -k, busybox-safe)
+        sd=${JL_SD_DIR:-/mnt/sd_card}
+        if grep -q " $sd " /proc/mounts 2>/dev/null; then
+            set -- $(df -k "$sd" 2>/dev/null | awk 'NR==2{print $2,$3,$4}')
+            printf '{"present":true,"mounted":true,"total_kb":%s,"used_kb":%s,"free_kb":%s}\n' \
+                "${1:-0}" "${2:-0}" "${3:-0}"
+        else
+            printf '{"present":false,"mounted":false}\n'
+        fi
         ;;
     recordings-days)
         # OEM recorder day folders: JOOAN_RECORD/YYYYMMDD.
