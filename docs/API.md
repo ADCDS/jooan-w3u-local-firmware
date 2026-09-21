@@ -44,7 +44,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/setup/password` | `POST` | Rotate the shared administrator password |
 | `/api/v1/session` | `POST`, `GET`, `DELETE` | Create, inspect, or end a session |
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, and helper status |
-| `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction |
+| `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or add explicitly allowed RFC1918/ULA routes |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
 | `/api/v1/time` | `PUT` | Set the camera clock from the client (UTC epoch seconds, as a JSON string) |
