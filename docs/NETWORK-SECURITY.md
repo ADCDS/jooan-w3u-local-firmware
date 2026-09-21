@@ -52,9 +52,9 @@ the port as a workaround.
 
 ## First-run credentials and HTTPS
 
-Fresh generic installations begin with `admin` / `change-me-password`. It
-remains valid and setup is not forced, but a persistent warning remains until
-rotation. The same password is synchronized to SSH and RTSP; optional Ed25519
+Fresh generic installations begin with `admin` / `admin`, a publicly known
+value. It remains valid, setup is not forced, and the Web UI does not warn
+about it; the System zone reports whether it is still in use. Rotate it. The same password is synchronized to SSH and RTSP; optional Ed25519
 keys supplement SSH password authentication. Never place a fresh unit on a
 shared LAN.
 

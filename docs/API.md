@@ -22,7 +22,7 @@ A fresh image uses:
 
 ```text
 username: admin
-password: change-me-password
+password: admin
 ```
 
 The initial password remains valid; setup is not forced. Login and the status

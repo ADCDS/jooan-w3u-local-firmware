@@ -41,7 +41,7 @@ def rtsp_client(c):
     if not challenged:
      challenged=True;c.sendall(b'RTSP/1.0 401 Unauthorized\r\nCSeq: '+cseq+b'\r\nWWW-Authenticate: Digest realm="camera", nonce="abcdef", qop="auth"\r\nContent-Length: 0\r\n\r\n');continue
     assert b'Authorization: Digest username="admin"' in raw and b'qop=auth' in raw and b'uri="rtsp://127.0.0.1:18554/live/ch' in raw
-    auth=next(h.decode() for h in raw.split(b'\r\n') if h.startswith(b'Authorization:'));fields={m.group(1):m.group(2) or m.group(3) for m in re.finditer(r'(\w+)=(?:"([^"]*)"|([^,\s]+))',auth)};ha1=hashlib.md5(b'admin:camera:change-me-password').hexdigest();ha2=hashlib.md5(f'DESCRIBE:{fields["uri"]}'.encode()).hexdigest();expected=hashlib.md5(f'{ha1}:abcdef:{fields["nc"]}:{fields["cnonce"]}:auth:{ha2}'.encode()).hexdigest();assert fields['response']==expected
+    auth=next(h.decode() for h in raw.split(b'\r\n') if h.startswith(b'Authorization:'));fields={m.group(1):m.group(2) or m.group(3) for m in re.finditer(r'(\w+)=(?:"([^"]*)"|([^,\s]+))',auth)};ha1=hashlib.md5(b'admin:camera:admin').hexdigest();ha2=hashlib.md5(f'DESCRIBE:{fields["uri"]}'.encode()).hexdigest();expected=hashlib.md5(f'{ha1}:abcdef:{fields["nc"]}:{fields["cnonce"]}:auth:{ha2}'.encode()).hexdigest();assert fields['response']==expected
     sdp=b'v=0\r\na=control:*\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets='+base64.b64encode(SPS)+b','+base64.b64encode(PPS)+b'\r\na=control:trackID=1\r\nm=audio 0 RTP/AVP 8\r\na=control:trackID=2\r\n'
     channel=b'ch1' if b'/live/ch1 ' in line else b'ch0';c.sendall(b'RTSP/1.0 200 OK\r\nCSeq: '+cseq+b'\r\nContent-Base: rtsp://127.0.0.1:18554/'+channel+b'/\r\nContent-Length: '+str(len(sdp)).encode()+b'\r\n\r\n'+sdp)
    elif line.startswith(b'SETUP'):
@@ -71,10 +71,10 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
     if request('GET','/api/health')[0]==200:break
    except OSError:time.sleep(.05)
   else:raise AssertionError('daemon did not listen')
-  ver,rounds,salt,want,warning=(pathlib.Path(state)/'auth.db').read_text().strip().split(':');assert ver=='v1' and warning=='1';assert hashlib.pbkdf2_hmac('sha256',b'change-me-password',bytes.fromhex(salt),int(rounds)).hex()==want
-  user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert user=='admin' and crypt_verify('change-me-password',sh)
+  ver,rounds,salt,want,warning=(pathlib.Path(state)/'auth.db').read_text().strip().split(':');assert ver=='v1' and warning=='1';assert hashlib.pbkdf2_hmac('sha256',b'admin',bytes.fromhex(salt),int(rounds)).hex()==want
+  user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert user=='admin' and crypt_verify('admin',sh)
   setup_status,setup_headers,setup_body=request('GET','/api/v1/setup/status');setup=json.loads(setup_body);assert setup_status==200 and setup['setup_required'] is False and setup['default_password_warning'] is True and setup['release_version']=='0.1.0' and setup['release_sequence']==7;assert "media-src 'self' blob:" in setup_headers['Content-Security-Policy']
-  login_body=b'{"username":"admin","password":"change-me-password"}'
+  login_body=b'{"username":"admin","password":"admin"}'
   assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nhost: 127.0.0.1:18081\r\ncontent-length: '+str(len(login_body)).encode()+b'\r\ncontent-type: application/json\r\n\r\n'+login_body)==200
   smuggled=b'Host: 127.0.0.1:18081\r\nCookie: joan_session=attacker'
   assert raw_status(b'POST /api/v1/session HTTP/1.1\r\nContent-Length: '+str(len(smuggled)).encode()+b'\r\n\r\n'+smuggled)==400
@@ -90,15 +90,15 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   slow.pop().close();overflow.settimeout(2);assert b' 200 ' in overflow.recv(256);overflow.close()
   for s in slow:s.close()
   time.sleep(.1)
-  status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'change-me-password'});assert status==200,(status,b);cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is True
+  status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'admin'});assert status==200,(status,b);cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is True
   resumed=json.loads(request('GET','/api/v1/session',cookie=cookie)[2]);assert resumed['authenticated'] is True and resumed['csrf']==csrf and resumed['default_password_warning'] is True
   assert request('GET','/api/v1/streams',cookie=cookie)[0]==200
   streams=json.loads(request('GET','/api/v1/streams',cookie=cookie)[2])['streams'];assert streams[0]['mime'].endswith('avc1.640032"') and streams[1]['mime'].endswith('avc1.640016"')
   denied=json.loads(request('PUT','/api/v1/network/mdns',{'hostname':'x'},cookie,'wrong')[2]);assert denied['error']['code']=='authentication_required'
   assert request('GET','/api/v1/status',cookie=cookie,origin='https://evil.invalid')[0]==403
-  assert request('POST','/api/v1/setup/password',{'old_password':'change-me-password','new_password':'x'*129},cookie,csrf)[0]==400
-  assert request('POST','/api/v1/setup/password',{'old_password':'change-me-password','new_password':'twelve-chars\n'},cookie,csrf)[0]==400
-  assert request('POST','/api/v1/setup/password',{'old_password':'change-me-password','new_password':'correct horse battery staple'},cookie,csrf)[0]==200
+  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'x'*129},cookie,csrf)[0]==400
+  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'twelve-chars\n'},cookie,csrf)[0]==400
+  assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'correct horse battery staple'},cookie,csrf)[0]==200
   user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert crypt_verify('correct horse battery staple',sh)
   status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'correct horse battery staple'});assert status==200;cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is False
   assert websocket_status(cookie,'jaud.v1')==403
