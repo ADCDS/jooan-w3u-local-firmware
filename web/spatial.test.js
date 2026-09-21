@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pick, direction, isBack } from './spatial.js';
+import { pick, direction, isBack, isSelect } from './spatial.js';
 
 /* pick() is pure geometry, so it needs nothing but rectangles. */
 const box = (x, y, w, h) => ({
@@ -60,4 +60,14 @@ test('key map covers arrows, legacy names and Android key codes', () => {
   assert.ok(isBack({ key: 'Escape' }));
   assert.ok(isBack({ key: 'Unidentified', keyCode: 4 }));    // Android BACK
   assert.ok(!isBack({ key: 'Enter' }));
+});
+
+test('isSelect reads OK from key and keyCode, never from the empty code', () => {
+  /* The Android TV WebView reports code:"" and keyCode 13 for the OK button;
+     a code-based test is dead there, which is what this guards. */
+  assert.ok(isSelect({ key: 'Enter', code: '', keyCode: 13 }));
+  assert.ok(isSelect({ key: 'Unidentified', code: '', keyCode: 23 }));
+  assert.ok(isSelect({ key: ' ', code: '', keyCode: 32 }));
+  assert.ok(!isSelect({ key: 'ArrowDown', code: '', keyCode: 40 }));
+  assert.ok(!isSelect({ key: 'Escape', code: 'Escape', keyCode: 27 }));
 });

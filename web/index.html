@@ -67,13 +67,15 @@
         <aside class="side">
           <div class="card">
             <h2>Jog</h2>
-            <div class="dpad">
-              <button data-ptz="up" class="u" aria-label="Tilt up">&uarr;</button>
-              <button data-ptz="left" class="l" aria-label="Pan left">&larr;</button>
-              <button data-ptz="stop" class="c" aria-label="Stop">&#9632;</button>
-              <button data-ptz="right" class="r" aria-label="Pan right">&rarr;</button>
-              <button data-ptz="down" class="d" aria-label="Tilt down">&darr;</button>
+            <div class="dpad" id="jog" tabindex="0" role="group" data-capture-arrows
+                 aria-label="Jog. Press OK, then use the arrows to move the camera.">
+              <button data-ptz="up" class="u" data-focusable="off" aria-label="Tilt up">&uarr;</button>
+              <button data-ptz="left" class="l" data-focusable="off" aria-label="Pan left">&larr;</button>
+              <button data-ptz="stop" class="c" data-focusable="off" aria-label="Stop">&#9632;</button>
+              <button data-ptz="right" class="r" data-focusable="off" aria-label="Pan right">&rarr;</button>
+              <button data-ptz="down" class="d" data-focusable="off" aria-label="Tilt down">&darr;</button>
             </div>
+            <p id="jog-hint" class="muted tv-only">Press OK, then use the arrows</p>
             <p id="ptz-state" class="muted">No lease</p>
           </div>
           <div class="card">
