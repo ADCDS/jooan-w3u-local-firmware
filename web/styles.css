@@ -193,7 +193,7 @@ output:empty{display:none}
    viewport while its <video> keeps playing. Moving the element would tear
    down and restart the MediaSource for no benefit. */
 #console[data-fs]{flex-direction:column}
-#console[data-fs] #rail,#console[data-fs] #chips,#console[data-fs] #pw-warning,
+#console[data-fs] #rail,#console[data-fs] #ssh-warning,
 #console[data-fs] .side,#console[data-fs] .zone:not(#zone-live){display:none}
 #console[data-fs] #zone-live{display:flex}
 #console[data-fs] .cams{gap:0}
