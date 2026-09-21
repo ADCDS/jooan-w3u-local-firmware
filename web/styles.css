@@ -88,6 +88,8 @@ output:empty{display:none}
   border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);text-decoration:none}
 .clip .act .danger{color:var(--crit);border-color:rgba(240,115,106,.45)}
 .clip .act svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.rec-player{margin-top:.6rem}
+.rec-player video{display:block;width:100%;max-height:44vh;background:#080d11;border:1px solid var(--line);border-radius:8px}
 .tl{position:relative;height:24px;border-radius:6px;background:var(--panel2);
   border:1px solid var(--line);overflow:hidden;margin-top:.5rem}
 .tl i{position:absolute;top:4px;bottom:4px;min-width:2px;background:var(--accent);border-radius:2px}

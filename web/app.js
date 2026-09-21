@@ -678,6 +678,7 @@ function formatDay(d) {
 }
 const ICON_DOWNLOAD = 'M12 4v10m0 0l-4-4m4 4l4-4M5 19h14';
 const ICON_TRASH = 'M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12';
+const ICON_PLAY = 'M8 5v14l11-7z';
 function iconEl(tag, path, label) {
   const el = document.createElement(tag);
   el.title = label;
@@ -701,6 +702,8 @@ function clipRow(day, span) {
   const act = document.createElement('span');
   act.className = 'act';
   const href = `/api/v1/recordings/file/${day}/${encodeURIComponent(cl.name)}`;
+  const play = iconEl('button', ICON_PLAY, 'Play');
+  play.onclick = () => playClip(day, cl.name, from);
   const dl = iconEl('a', ICON_DOWNLOAD, 'Download');
   dl.href = href;
   dl.setAttribute('download', `${day}-${cl.name}.avi`);
@@ -708,9 +711,22 @@ function clipRow(day, span) {
   del.className = 'danger';
   del.onclick = () => guard($('#rec-clip-confirm'), `Delete recording ${from}?`, 'Delete',
     () => api(href, { method: 'DELETE' }).then(() => loadRecordings()).catch(x => notice(x.message, 'crit')));
-  act.append(dl, del);
+  act.append(play, dl, del);
   row.append(rng, sz, act);
   return row;
+}
+/* The recorder writes AVI, which no browser plays, so the daemon rewrites the
+   clip as MP4 on the way out. A plain <video> element then supplies transport,
+   scrubbing and speed without shipping a player. Audio is dropped in the
+   rewrite: the recorder stores G.711, which browsers will not decode in MP4. */
+function playClip(day, name, label) {
+  const wrap = $('#rec-player-wrap');
+  const video = $('#rec-player');
+  wrap.classList.remove('hidden');
+  $('#rec-player-note').textContent = `${label} · video only, converted from the recorder's AVI`;
+  video.src = `/api/v1/recordings/play/${day}/${encodeURIComponent(name)}`;
+  video.play().catch(() => {});
+  wrap.scrollIntoView({ block: 'nearest' });
 }
 function renderTimeline(spans) {
   const tl = $('#rec-tl');
@@ -726,6 +742,8 @@ function renderTimeline(spans) {
   }));
 }
 async function loadClips(day) {
+  $('#rec-player-wrap').classList.add('hidden');
+  $('#rec-player').removeAttribute('src');
   if (!day) { $('#rec-clips').replaceChildren(); renderTimeline([]); return; }
   const clips = (await api('/api/v1/recordings/day/' + day)).clips || [];
   if (!clips.length) {

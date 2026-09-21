@@ -47,6 +47,7 @@ typedef struct {
     char origin[256];
     char host[256];
     char transfer_encoding[64];
+    char range[64];
     size_t content_length;
     unsigned char *body;
 } JoanRequest;
@@ -112,6 +113,13 @@ int joan_fmp4_fragment(const char *stream, uint32_t after,
 const char *joan_fmp4_status(const char *stream);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);
+typedef struct JoanRecMp4 JoanRecMp4;
+typedef int (*JoanRecSink)(void *ctx, const void *data, size_t len);
+JoanRecMp4 *joan_recmp4_open(const char *path);
+long joan_recmp4_length(const JoanRecMp4 *m);
+int joan_recmp4_write(JoanRecMp4 *m, JoanRecSink sink, void *ctx, long from, long to);
+void joan_recmp4_close(JoanRecMp4 *m);
+
 int joan_server_run(const JoanConfig *cfg);
 void joan_server_stop(void);
 
