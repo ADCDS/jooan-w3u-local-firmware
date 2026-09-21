@@ -169,6 +169,33 @@ jl_apply_allowed_routes() {
     done < "$JL_CONFIG/routes.list"
 }
 
+# Apply the committed Wi-Fi network from the supervisor rather than from a
+# background job in start.sh. OEM boot does not start wpa_supplicant until
+# about a minute in, so the hook cannot configure anything at slot start, and
+# a process parked waiting for it across that window does not reliably
+# survive OEM init. The supervisor is already long-lived and ticks every few
+# seconds, so it simply retries until wpa_supplicant answers, then applies
+# once. Attempts are capped so a network that never accepts us cannot thrash
+# the radio forever.
+jl_ensure_wifi() {
+    [ -f "$JL_CONFIG/wifi.json" ] || return 0
+    [ ! -f "$JL_RUN/wifi-applied" ] || return 0
+    jl_wifi_hook=$JL_RUN/slot-$1/hooks/wifi-apply.sh
+    [ -x "$jl_wifi_hook" ] || return 0
+    wpa_cli -iwlan0 ping 2>/dev/null | grep -q PONG || return 0
+    jl_wifi_tries=0
+    [ ! -f "$JL_RUN/wifi-attempts" ] ||
+        IFS= read -r jl_wifi_tries < "$JL_RUN/wifi-attempts" || :
+    case "$jl_wifi_tries" in ''|*[!0-9]*) jl_wifi_tries=0 ;; esac
+    [ "$jl_wifi_tries" -lt 5 ] || return 0
+    printf '%s\n' "$((jl_wifi_tries + 1))" > "$JL_RUN/wifi-attempts" || :
+    if jl_bounded_hook 60 "$jl_wifi_hook" "$JL_CONFIG/wifi.json"; then
+        : > "$JL_RUN/wifi-applied" || :
+    else
+        jl_log 'committed Wi-Fi network could not be applied'
+    fi
+}
+
 jl_local_network_policy() {
     jl_prune_default_routes
     jl_apply_allowed_routes

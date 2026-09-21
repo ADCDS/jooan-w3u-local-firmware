@@ -98,5 +98,8 @@ while :; do
     if [ -x "$JL_CONTROL/admin/ssh-start.sh" ]; then
         "$JL_CONTROL/admin/ssh-start.sh" "$jl_running" || :
     fi
+    if [ "$jl_running" != - ]; then
+        jl_ensure_wifi "$jl_running" || :
+    fi
     sleep 5
 done
