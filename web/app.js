@@ -25,6 +25,21 @@ function notice(message, kind) {
 function clearNotice() { $('#notice').classList.add('hidden'); }
 $('#notice-close').onclick = clearNotice;
 
+/* Every request here crosses a busy little camera, and some of them wake a
+   shell helper: a second or two of nothing is normal. Without a pressed and a
+   working state the only feedback for a press is silence, which reads as a
+   dead button -- so people press it again. Holding the control disabled also
+   stops the second press from opening a second session or a second upload. */
+async function busy(el, fn) {
+  if (!el) return fn();
+  el.disabled = true;
+  el.dataset.busy = '';
+  try { return await fn(); } finally {
+    delete el.dataset.busy;
+    el.disabled = false;
+  }
+}
+
 /* ---------- api ---------- */
 class ApiError extends Error {
   constructor(message, kind) { super(message); this.kind = kind; }
@@ -251,30 +266,34 @@ async function load() {
 }
 
 /* ---------- auth ---------- */
-$('#login-form').addEventListener('submit', async e => {
+$('#login-form').addEventListener('submit', e => {
   e.preventDefault();
-  try {
-    const body = JSON.stringify(Object.fromEntries(new FormData(e.target)));
-    const d = await api('/api/v1/session', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-    });
-    csrf = d.csrf;
-    clearNotice();
-    await load();
-  } catch (x) { notice(x.message, 'crit'); }
+  busy(e.submitter || $('#login-form button'), async () => {
+    try {
+      const body = JSON.stringify(Object.fromEntries(new FormData(e.target)));
+      const d = await api('/api/v1/session', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      });
+      csrf = d.csrf;
+      clearNotice();
+      await load();
+    } catch (x) { notice(x.message, 'crit'); }
+  });
 });
 
-$('#password-form').addEventListener('submit', async e => {
+$('#password-form').addEventListener('submit', e => {
   e.preventDefault();
-  try {
-    await api('/api/v1/setup/password', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
-    });
-    csrf = '';
-    show('#login');
-    notice('Password changed. Sign in again.');
-  } catch (x) { notice(x.message, 'crit'); }
+  busy(e.submitter || $('#password-form button'), async () => {
+    try {
+      await api('/api/v1/setup/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
+      });
+      csrf = '';
+      show('#login');
+      notice('Password changed. Sign in again.');
+    } catch (x) { notice(x.message, 'crit'); }
+  });
 });
 
 $('#change-password').onclick = () => show('#setup');
