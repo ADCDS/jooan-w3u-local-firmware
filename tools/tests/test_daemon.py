@@ -128,6 +128,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   tzresp=request('PUT','/api/v1/timezone',{'gmt_tz':'GMT-03:00','tz_name':'America/Sao_Paulo'},cookie,csrf);assert tzresp[0]==200 and json.loads(tzresp[2])['applies']=='on_restart' and json.loads(tzresp[2])['gmt_tz']=='GMT-03:00'
   assert request('PUT','/api/v1/timezone',{'gmt_tz':'GMT-03:00'},cookie,csrf)[0]==200
   assert request('PUT','/api/v1/timezone',{'gmt_tz':'GMT-3','tz_name':'America/Sao_Paulo'},cookie,csrf)[0]==400
+  assert request('PUT','/api/v1/timezone',{'gmt_tz':'GMT+99:99'},cookie,csrf)[0]==400
   assert request('PUT','/api/v1/timezone',{'gmt_tz':'GMT-03:00','tz_name':'Bad Zone!'},cookie,csrf)[0]==400
   assert request('PUT','/api/v1/timezone',{'tz_name':'America/Sao_Paulo'},cookie,csrf)[0]==400
   lease=json.loads(request('POST','/api/v1/ptz/lease',{},cookie,csrf)[2])['lease'];assert request('POST','/api/v1/ptz/move',{'lease':lease,'command':'left','duration_ms':250,'speed':3},cookie,csrf)[0]==200;assert request('POST','/api/v1/ptz/move',{'lease':lease,'command':'left','duration_ms':49,'speed':3},cookie,csrf)[0]==400

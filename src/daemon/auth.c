@@ -250,9 +250,14 @@ void joan_auth_logout(const JoanAuthz *auth)
 /* Re-issue this session's lifetime against the current clock. Setting the
    system time forward would otherwise leave every session's absolute expiry
    in the past, logging the caller out on their next request. */
-void joan_auth_restamp(const JoanAuthz *auth)
+/* Setting the camera clock moves wall time, and session expiries are absolute
+   wall-clock stamps, so a forward jump would strand every live session. Shift
+   all sessions by the same delta the clock moved: each keeps exactly the life
+   it had left, and the 30-minute absolute cap is preserved (a no-op time-set
+   shifts by ~0, so this cannot be replayed to renew a session indefinitely). */
+void joan_auth_shift(time_t delta)
 {
-    unsigned i; time_t now = time(NULL); pthread_mutex_lock(&lock);
-    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) sessions[i].expires = now + SESSION_SECONDS;
+    unsigned i; pthread_mutex_lock(&lock);
+    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used) sessions[i].expires += delta;
     pthread_mutex_unlock(&lock);
 }

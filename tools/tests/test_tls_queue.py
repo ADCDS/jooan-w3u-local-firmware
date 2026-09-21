@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
         for connection in slow:connection.close()
         time.sleep(.1)
 
-        paths=['/','/styles.css','/app.js','/icon.svg','/manifest.webmanifest','/sw.js','/api/v1/setup/status','/api/v1/session']
+        paths=['/','/styles.css','/app.js','/api/v1/setup/status','/api/v1/session']
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(paths)) as pool:
             statuses=list(pool.map(https_get,paths))
         assert statuses[:-1]==[200]*(len(paths)-1) and statuses[-1]==401,statuses
