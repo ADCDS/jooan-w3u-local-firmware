@@ -140,7 +140,6 @@ function closeGuard() {
 const FEATURE_LABELS = {
   https_identity: ['HTTPS identity', 'device key'],
   rtsp: ['RTSP', 'digest auth'],
-  firewall: ['Firewall', null],
   fmp4_main: ['Main stream', null],
   fmp4_sub: ['Sub stream', null],
   ptz: ['Pan / tilt', null],
@@ -160,7 +159,7 @@ function chip(label, value, tone) {
   return el;
 }
 
-const GLANCE = ['fmp4_main', 'fmp4_sub', 'firewall'];
+const GLANCE = ['fmp4_main', 'fmp4_sub'];
 
 function renderStatus(s) {
   const build = keys => keys.map(key => {
