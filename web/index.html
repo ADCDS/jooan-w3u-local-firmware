@@ -43,6 +43,7 @@
       <button data-zone="live" aria-current="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg><span>Live</span></button>
       <button data-zone="control"><svg viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/><circle cx="12" cy="12" r="2.6"/></svg><span>Control</span></button>
       <button data-zone="network"><svg viewBox="0 0 24 24"><path d="M2.5 9a15 15 0 0 1 19 0M6 12.8a10 10 0 0 1 12 0M9.5 16.5a5 5 0 0 1 5 0"/><circle cx="12" cy="20" r="1.1"/></svg><span>Network</span></button>
+      <button data-zone="recordings"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5V3h7l3 3M8 13h8M8 16.5h5"/></svg><span>Recordings</span></button>
       <button data-zone="system"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.1"/><circle cx="10" cy="17" r="2.1"/></svg><span>System</span></button>
     </nav>
 
@@ -149,6 +150,15 @@
             <button>Apply routes</button>
           </form>
           <output id="routes-result"></output>
+        </div>
+      </section>
+
+      <section id="zone-recordings" class="zone hidden" data-scrollport>
+        <div class="card">
+          <h2>Recordings</h2>
+          <label>Day<select id="rec-day"></select></label>
+          <div id="rec-clips" class="kv stack"></div>
+          <div id="rec-clip-confirm"></div>
         </div>
       </section>
 

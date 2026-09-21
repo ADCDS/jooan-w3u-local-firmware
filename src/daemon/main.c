@@ -21,6 +21,7 @@ int main(int argc,char**argv)
     copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
     copy_env(c.audio_socket,sizeof(c.audio_socket),"JOAN_AUDIO_WS_SOCKET","/run/joan/audio-ws.sock");
+    copy_env(c.sd_dir,sizeof(c.sd_dir),"JOAN_SD_DIR","/mnt/sd_card");
     c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.mdns_enabled=1;c.mdns_port=5353;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);
@@ -38,6 +39,9 @@ int main(int argc,char**argv)
     if(!c.port||c.port>65535||c.mqtt_port>65535||!c.rtsp_port||c.rtsp_port>65535||c.rtsp_proxy_port>65535||!c.mdns_port||c.mdns_port>65535){usage(argv[0]);return 2;}
     signal(SIGPIPE,SIG_IGN);
     signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);
+    /* The integration helper inherits this so its SD operations and the daemon's
+     * own recording download path resolve the same card mount. */
+    setenv("JL_SD_DIR",c.sd_dir,1);
     if(joan_auth_init(&c)){fprintf(stderr,"cannot initialize authentication state\n");return 1;}
     if(!c.plain_http&&joan_tls_ensure_identity(&c)){fprintf(stderr,"cannot initialize per-device ECDSA identity; refusing plaintext fallback\n");return 1;}
     if(c.plain_http)fprintf(stderr,"WARNING: explicit plaintext development mode; do not expose beyond a test namespace\n");

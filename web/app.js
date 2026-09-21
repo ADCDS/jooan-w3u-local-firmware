@@ -69,6 +69,7 @@ function requireLogin() {
   videoPlayers = [];
   if (audioClient) { unbindTalk?.(); audioClient.close().catch(() => {}); audioClient = null; }
   csrf = '';
+  recordingsLoaded = false;
   exitFullscreen(false);
   connection('warn', 'Signed out');
   show('#login');
@@ -630,6 +631,67 @@ $('#firmware-apply').onclick = () => {
     }).then(() => { $('#firmware-result').textContent = 'Applying. The camera is rebooting.'; })
       .catch(x => notice(x.message, 'crit')));
 };
+
+/* ---------- recordings (microSD) ----------
+   The camera's retained OEM media process records to the card on its own; this
+   zone curates that: it lists the day/clip files so they can be downloaded or
+   deleted. (Card-capacity readout and schedule configuration are follow-ups
+   gated on the persistent-size budget and on-card verification.) */
+let recordingsLoaded = false;
+function fmtSize(kb) {
+  kb = Number(kb) || 0;
+  if (kb >= 1048576) return (kb / 1048576).toFixed(1) + ' GB';
+  if (kb >= 1024) return Math.round(kb / 1024) + ' MB';
+  return kb + ' KB';
+}
+function clipTime(name) {
+  return /^\d{9,11}$/.test(name) ? new Date(Number(name) * 1000).toLocaleTimeString() : name;
+}
+function formatDay(d) {
+  if (!/^\d{8}$/.test(d)) return d;
+  return new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00`)
+    .toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function clipRow(day, cl) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const name = document.createElement('span');
+  name.textContent = `${clipTime(cl.name)} · ${fmtSize(Math.round((cl.size || 0) / 1024))}`;
+  const act = document.createElement('b');
+  const href = `/api/v1/recordings/file/${day}/${encodeURIComponent(cl.name)}`;
+  const dl = document.createElement('a');
+  dl.href = href; dl.className = 'link'; dl.textContent = 'Download'; dl.setAttribute('download', `${day}-${cl.name}.avi`);
+  const del = document.createElement('button');
+  del.className = 'link danger'; del.textContent = 'Delete';
+  del.onclick = () => guard($('#rec-clip-confirm'), `Delete recording ${clipTime(cl.name)}?`, 'Delete',
+    () => api(href, { method: 'DELETE' }).then(() => loadRecordings()).catch(x => notice(x.message, 'crit')));
+  act.append(dl, document.createTextNode(' '), del);
+  row.append(name, act);
+  return row;
+}
+async function loadClips(day) {
+  if (!day) { $('#rec-clips').replaceChildren(); return; }
+  const clips = (await api('/api/v1/recordings/day/' + day)).clips || [];
+  if (!clips.length) { $('#rec-clips').textContent = 'No recordings for this day.'; return; }
+  $('#rec-clips').replaceChildren(...clips.map(cl => clipRow(day, cl)));
+}
+async function loadRecordings() {
+  try {
+    const days = (await api('/api/v1/recordings/days')).days || [];
+    const sel = $('#rec-day');
+    if (!days.length) {
+      sel.replaceChildren(new Option('No recordings yet', ''));
+      $('#rec-clips').textContent = 'No recordings on the card.';
+    } else {
+      sel.replaceChildren(...days.map(d => new Option(
+        `${formatDay(d.day)} · ${fmtSize(d.size_kb)} · ${d.count} clips`, d.day)));
+      await loadClips(sel.value);
+    }
+    recordingsLoaded = true;
+  } catch (x) { notice(x.message, 'crit'); }
+}
+$('#rec-day').onchange = () => loadClips($('#rec-day').value).catch(x => notice(x.message, 'crit'));
+$('[data-zone="recordings"]').addEventListener('click', () => { if (!recordingsLoaded) loadRecordings(); });
 
 /* ---------- boot ---------- */
 async function resume() {
