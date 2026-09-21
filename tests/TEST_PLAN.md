@@ -147,7 +147,7 @@ logs, and a cold post-test recovery proving both OEM streams and management
 access. Persistent installation requires its separate rollback and pre-boot
 recovery gates.
 
-Promotion also requires main/sub PWA fMP4, direct RTSP, mic listening/PTT, PTZ
+Promotion also requires main/sub fMP4, direct RTSP, mic listening/PTT, PTZ
 jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
 capture, no-default-route enforcement, the steady 180 KiB/76 KiB contract, the
 single-runtime 180 KiB/56 KiB maintenance contract with SSH recovery, and

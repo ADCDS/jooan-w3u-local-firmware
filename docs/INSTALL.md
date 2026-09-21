@@ -1,6 +1,6 @@
 # Installation
 
-There is no supported tag yet. `0.1.0` is an engineering image until all
+`0.1.0` is a pre-release engineering image, not a supported tag, until all
 physical JA-A12 promotion gates pass. Installation writes only `/opt`; it does
 not replace the bootloader, kernel, rootfs, appfs, calibration, or identity.
 
@@ -85,7 +85,7 @@ routes; connected subnets and explicitly allowed RFC1918/ULA routes remain.
 After a cold reboot:
 
 1. verify HTTPS identity, warning state, login throttling, and session expiry;
-2. verify main/sub PWA fMP4 playback, both direct RTSP streams, and snapshot;
+2. verify main/sub fMP4 playback, both direct RTSP streams, and snapshot;
 3. verify mic listening and bounded press-to-talk;
 4. verify PTZ jog/stop, home, and preset save/recall/delete;
 5. verify SSH `admin` password synchronization and optional keys;

@@ -52,7 +52,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/streams` | `GET` | Enumerate main/sub RTSP and fMP4 resources |
 | `/api/v1/video/{main,sub}/init.mp4` | `GET` | fMP4 initialization segment |
 | `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | Next fMP4 fragment after sequence `N` |
-| `/api/v1/snapshot` | `GET` | JPEG snapshot through loopback-only OEM GoAhead |
+| `/api/v1/snapshot` | `GET` | Reserved — returns 501 until the loopback-only OEM GoAhead snapshot backend is enabled |
 | `/api/v1/ptz/lease` | `POST` | Acquire the short exclusive PTZ lease |
 | `/api/v1/ptz/move` | `POST` | Start a bounded directional move or jog |
 | `/api/v1/ptz/stop` | `POST` | Stop movement and release the lease |
