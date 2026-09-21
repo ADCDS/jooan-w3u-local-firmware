@@ -15,6 +15,16 @@
 
 static void nap_ms(long ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (ms % 1000) * 1000000L; while (nanosleep(&t, &t) && errno == EINTR) {} }
 
+/* Helper timeouts must not be measured on the wall clock: time-set moves it,
+ * and a forward jump would expire the deadline instantly, killing a helper that
+ * is working correctly and reporting the operation as failed. */
+static time_t mono_seconds(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) return ts.tv_sec;
+    return time(NULL);
+}
+
 int joan_stage_blob(const JoanConfig *cfg, const char *category,
                     const void *data, size_t len, char id[65], char path[512])
 {
@@ -32,7 +42,7 @@ int joan_run_helper(const JoanConfig *cfg, const char *operation,
 {
     int fds[2], status = 0; pid_t pid; unsigned char *buf; size_t used = 0;
     size_t cap = !strcmp(operation, "snapshot") ? 2u * 1024u * 1024u : 65536u;
-    time_t deadline = time(NULL) + timeout_sec;
+    time_t deadline = mono_seconds() + timeout_sec;
     if (!cfg->integration_helper[0] || !operation || pipe(fds)) return -1;
     buf = malloc(cap + 1); if (!buf) { close(fds[0]); close(fds[1]); return -1; }
     pid = fork();
@@ -48,7 +58,7 @@ int joan_run_helper(const JoanConfig *cfg, const char *operation,
         ssize_t n = read(fds[0], buf + used, cap - used);
         if (n > 0) used += (size_t)n;
         if (waitpid(pid, &status, WNOHANG) == pid) break;
-        if (time(NULL) >= deadline || used == cap) { kill(pid, SIGTERM); nap_ms(100); if (waitpid(pid, &status, WNOHANG) != pid) { kill(pid, SIGKILL); waitpid(pid, &status, 0); } status = -1; break; }
+        if (mono_seconds() >= deadline || used == cap) { kill(pid, SIGTERM); nap_ms(100); if (waitpid(pid, &status, WNOHANG) != pid) { kill(pid, SIGKILL); waitpid(pid, &status, 0); } status = -1; break; }
         nap_ms(20);
     }
     while (used < cap) { ssize_t n = read(fds[0], buf + used, cap - used); if (n <= 0) break; used += (size_t)n; }

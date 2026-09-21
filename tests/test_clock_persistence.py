@@ -71,15 +71,20 @@ class ClockPersistence(unittest.TestCase):
         self.assertIn("OK", r.stdout)
         self.assertNotIn("clock restored", r.stdout)
 
-    def test_time_set_helper_persists_immediately(self):
-        """PUT /api/v1/time must make the new clock durable without waiting for a tick."""
+    def test_time_set_helper_persists_before_moving_the_clock(self):
+        """PUT /api/v1/time must make the new clock durable without waiting for a tick.
+
+        The write has to happen *before* date -s: a large forward jump can expire
+        the caller's deadline instantly, so anything queued after the clock moves
+        may never run. Running unprivileged makes date -s fail, which is exactly
+        the case that catches the wrong order.
+        """
         epoch = "1790000000"
         env = {**os.environ, "JL_ROOT": str(self.root)}
-        # date -s needs privilege; the helper still persists even if it cannot set.
         subprocess.run(["sh", str(HELPER), "time-set", "-", epoch],
                        capture_output=True, text=True, env=env)
-        if self.state.exists():
-            self.assertEqual(self.state.read_text().strip(), epoch)
+        self.assertTrue(self.state.exists(), "time-set did not persist before setting the clock")
+        self.assertEqual(self.state.read_text().strip(), epoch)
 
 
 if __name__ == "__main__":
