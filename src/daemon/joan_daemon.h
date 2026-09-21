@@ -104,6 +104,9 @@ int joan_mdns_set_hostname(const JoanConfig *cfg, const char *hostname);
 const char *joan_mdns_status(void);
 
 int joan_tls_ensure_identity(const JoanConfig *cfg);
+int joan_tls_enroll_identity(const JoanConfig *cfg, const char *pem, size_t len,
+                             char *why, size_t why_len);
+int joan_tls_clear_identity(const JoanConfig *cfg);
 int joan_fmp4_start(const JoanConfig *cfg);
 int joan_fmp4_init_segment(const char *stream, unsigned char **data, size_t *len,
                            unsigned timeout_ms);
