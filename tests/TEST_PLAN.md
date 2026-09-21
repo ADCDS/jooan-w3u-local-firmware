@@ -70,9 +70,9 @@ UNPROVISIONED -> PROVISIONED -> SESSION_AUTHENTICATED
 
 Exercise every allowed transition and every forbidden edge. In particular:
 
-- the public initial `admin` / `change-me-password` remains valid until changed
-  and produces a persistent warning rather than forced setup;
-- warning state survives restart and clears only after password rotation;
+- the public initial `admin` / `admin` remains valid until changed, with
+  neither forced setup nor a warning banner;
+- the reported state survives restart and flips only after password rotation;
 - Web, RTSP, and SSH password records remain synchronized, with a documented
   early-`0.1` migration state when SSH cannot yet be derived;
 - password/token rotation revokes old sessions;

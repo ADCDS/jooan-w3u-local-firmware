@@ -62,7 +62,7 @@ HTTPS is the default. TCP/80 only redirects. Initial credentials are:
 
 ```text
 username: admin
-password: change-me-password
+password: admin
 ```
 
 The public initial password remains valid; setup is not forced. The UI/API

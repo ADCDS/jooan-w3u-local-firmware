@@ -13,7 +13,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BIN = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "src/daemon/joan-daemon"
 HELPER = ROOT / "tools/tests/fake-integration.sh"
-PASSWORD = "change-me-password"  # hygiene: allow-test-vector
+PASSWORD = "admin"  # hygiene: allow-test-vector
 REALM = "joan-rtsp"
 
 

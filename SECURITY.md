@@ -41,8 +41,9 @@ claim to make retained OEM code memory-safe or auditable.
 The following conditions are security requirements:
 
 - isolate the camera at the router/VLAN and deny Internet access;
-- sign in initially as `admin` / `change-me-password`; it remains valid until
-  changed, so do not ignore the persistent warning and rotate it promptly;
+- sign in initially as `admin` / `admin`; this is a publicly known value that
+  remains valid until changed, so rotate it before the camera carries traffic
+  you care about. The Web UI does not nag: nothing prompts you but this line;
 - use a unique per-device HTTPS key and certificate;
 - understand that SSH password authentication uses the same synchronized
   `admin` credential as HTTPS; optional Ed25519 keys supplement it;

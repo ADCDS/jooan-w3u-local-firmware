@@ -13,7 +13,7 @@
 #define SESSION_SECONDS (30u * 60u)
 #define SESSIONS 16
 #define BUCKETS 16
-#define DEFAULT_PASSWORD "change-me-password"
+#define DEFAULT_PASSWORD "admin"
 
 typedef struct { int used; char token[65], csrf[65]; time_t expires; int must_change; } Session;
 typedef struct { char remote[64]; time_t since; unsigned failures; } Bucket;

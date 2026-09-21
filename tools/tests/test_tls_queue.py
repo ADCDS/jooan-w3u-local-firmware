@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
             statuses=list(pool.map(https_get,paths))
         assert statuses[:-1]==[200]*(len(paths)-1) and statuses[-1]==401,statuses
 
-        body=b'{"username":"admin","password":"change-me-password"}'
+        body=b'{"username":"admin","password":"admin"}'
         headers=(b'POST /api/v1/session HTTP/1.1\r\n'
                  b'Host: 127.0.0.1:18443\r\n'
                  b'Origin: https://127.0.0.1:18443\r\n'

@@ -61,9 +61,9 @@ shape are not sufficient compatibility evidence. Read
 The target release surface is local and authenticated:
 
 - HTTP on TCP/80 redirects to per-device HTTPS on TCP/443;
-- the administrator is `admin` with initial password `change-me-password`;
-  the password remains valid until changed, and the Web UI keeps a prominent
-  warning visible while the public initial value is active;
+- the administrator is `admin` with initial password `admin`;
+  the password remains valid until changed, and the System zone reports whether
+  the initial value is still in use;
 - each camera generates its own self-signed HTTPS identity; release artifacts
   never contain a shared private key;
 - SSH on TCP/22 uses the same `admin` password as HTTPS; changing it updates
@@ -129,8 +129,8 @@ privately by that owner.
 4. Read [Recovery](docs/RECOVERY.md); this release writes only `/opt`, and a
    failed first runtime falls back to the OEM updater on the next boot.
 5. Follow [Installation](docs/INSTALL.md).
-6. Sign in as `admin` / `change-me-password`; change it promptly and verify the
-   persistent warning clears and SSH accepts the synchronized new password.
+6. Sign in as `admin` / `admin`; change it promptly and verify that System
+   reports the password as changed and SSH accepts the synchronized new one.
 
 Do not expose an unprovisioned or freshly rebooted camera directly to the
 Internet or to an untrusted LAN.
