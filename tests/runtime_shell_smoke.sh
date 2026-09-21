@@ -75,15 +75,15 @@ printf '%064d\n' 0 > "$fixture/archive.md5"
 if jl_verify_archive "$fixture/archive" "$fixture/archive.md5"; then exit 1; fi
 
 # Enforce final storage policy using pure test overrides, never a real partition.
-jl_wait_free_kb() { [ "$2" = 72 ]; }
-jl_tree_bytes() { printf '%s\n' 188416; }
+jl_wait_free_kb() { [ "$2" = 68 ]; }
+jl_tree_bytes() { printf '%s\n' 192512; }
 jl_check_storage
-jl_tree_bytes() { printf '%s\n' 188417; }
+jl_tree_bytes() { printf '%s\n' 192513; }
 if jl_check_storage 2>/dev/null; then exit 1; fi
 jl_wait_free_kb() { [ "$2" = 56 ]; }
-jl_tree_bytes() { printf '%s\n' 188416; }
+jl_tree_bytes() { printf '%s\n' 192512; }
 jl_check_maintenance_storage
-jl_tree_bytes() { printf '%s\n' 188417; }
+jl_tree_bytes() { printf '%s\n' 192513; }
 if jl_check_maintenance_storage 2>/dev/null; then exit 1; fi
 
 # Allowlisted private routes are installed through the pruned default gateway,

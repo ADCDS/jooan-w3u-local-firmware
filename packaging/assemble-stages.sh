@@ -61,7 +61,7 @@ find "$controller" "$runtime" -type f -name '*.sh' -print | while IFS= read -r s
 done
 find "$controller" "$runtime" -type f -name '*.sh' -exec chmod 755 {} \;
 
-# The persistent budget (184 KiB, /opt is mtd5 384 KiB JFFS2) has no room for
+# The persistent budget (188 KiB, /opt is mtd5 384 KiB JFFS2) has no room for
 # gzip -9. Zopfli emits a smaller, standard gzip stream the OEM busybox reads
 # with `tar -xzf` unchanged; the size gate depends on it, so it is required.
 # Deterministic output keeps ci/check_reproducible.py green.
