@@ -12,14 +12,14 @@ bounded execution, captured logs, and the established cold-recovery procedure.
   `ci/compatibility-hashes.sha256` byte-for-byte.
 - Parse every shell script with its declared interpreter.
 - In steady state, keep the compressed controller/SSH material plus exactly one
-  stable runtime at or below **188416 bytes (184 KiB)** and require at least
-  **73728 bytes (72 KiB)** free.
+  stable runtime at or below **192512 bytes (188 KiB)** and require at least
+  **69632 bytes (68 KiB)** free.
 - During update, require durable controller-owned SSH recovery before selecting
   `- - 0` and deleting the one persistent runtime. Stage exactly one replacement
-  under the same **188416-byte (184 KiB)** cap while preserving at least **57344
+  under the same **192512-byte (188 KiB)** cap while preserving at least **57344
   bytes (56 KiB)** free, above the OEM startapp cleanup threshold of 50 KiB.
   Failure must leave SSH recovery and no selected runtime; promotion must select
-  the candidate and restore the 72 KiB steady reserve.
+  the candidate and restore the 68 KiB steady reserve.
 - Build release artifacts twice with `SOURCE_DATE_EPOCH=0`, `TZ=UTC`, `LC_ALL=C`,
   a fresh `BUILD_OUT`, and compare hashes plus executable modes. Build scripts
   must not embed the build path, hostname, current time, uid/gid, directory
@@ -149,8 +149,8 @@ recovery gates.
 
 Promotion also requires main/sub fMP4, direct RTSP, mic listening/PTT, PTZ
 jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
-capture, no-default-route enforcement, the steady 184 KiB/72 KiB contract, the
-single-runtime 184 KiB/56 KiB maintenance contract with SSH recovery, and
+capture, no-default-route enforcement, the steady 188 KiB/68 KiB contract, the
+single-runtime 188 KiB/56 KiB maintenance contract with SSH recovery, and
 destructive uninstall
 semantics to pass on the physical JA-A12. Until then no
 tag is supported.

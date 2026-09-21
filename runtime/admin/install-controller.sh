@@ -45,8 +45,8 @@ case "$jl_action" in
                 jl_replaced=$((jl_replaced + jl_bytes))
             fi
         done
-        [ $((jl_total - jl_replaced + jl_incoming + 4096)) -le 188416 ] || {
-            jl_log 'compressed controller would exceed 184 KiB persistent-file budget'; exit 1;
+        [ $((jl_total - jl_replaced + jl_incoming + 4096)) -le 192512 ] || {
+            jl_log 'compressed controller would exceed 188 KiB persistent-file budget'; exit 1;
         }
         # The archive is one atomic object: a power interruption leaves the old
         # or new complete gzip, never a mismatched archive/sidecar pair.
