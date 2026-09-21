@@ -1,7 +1,7 @@
 'use strict';
 import { JooanAudioClient } from './audio-client.js';
 import { Fmp4Player } from './video-player.js';
-import { looksLikeTv, createNavigator } from './spatial.js';
+import { looksLikeTv, createNavigator, direction, isSelect } from './spatial.js';
 
 const $ = s => document.querySelector(s);
 const all = s => Array.from(document.querySelectorAll(s));
@@ -73,7 +73,17 @@ function setZone(zone) {
   for (const b of all('#rail button')) b.setAttribute('aria-current', String(b.dataset.zone === zone));
   for (const s of all('.zone')) s.classList.toggle('hidden', s.id !== 'zone-' + zone);
 }
-for (const b of all('#rail button')) b.onclick = () => setZone(b.dataset.zone);
+/* Picking a zone on a remote should land the ring IN the zone. Leaving it
+   parked on the rail is what made a freshly opened zone look unreachable: the
+   rail is how you got here, the content is what you came for. */
+function enterZone() {
+  if (!tvNav) return;
+  const first = tvNav.list().find(el => el.closest('.zone:not(.hidden)'));
+  if (first) tvNav.focus(first);
+}
+for (const b of all('#rail button')) {
+  b.onclick = () => { setZone(b.dataset.zone); enterZone(); };
+}
 
 /* ---------- full screen ---------- */
 function setFullscreen(which) {
@@ -445,14 +455,33 @@ for (const b of all('[data-ptz]')) {
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
     b.addEventListener(name, up);
   }
-  b.addEventListener('keydown', e => {
-    if ((e.code === 'Space' || e.code === 'Enter') && !e.repeat) down(e);
-  });
-  b.addEventListener('keyup', e => {
-    if (e.code === 'Space' || e.code === 'Enter') up(e);
-  });
+  b.addEventListener('keydown', e => { if (isSelect(e) && !e.repeat) down(e); });
+  b.addEventListener('keyup', e => { if (isSelect(e)) up(e); });
   b.addEventListener('blur', up);
 }
+
+/* On a remote the jog pad is ONE control, not five. Walking the ring onto each
+   arrow and pressing OK for every nudge is exactly the work a D-pad exists to
+   avoid, so the pad takes the arrows for itself: OK grabs it, the arrows drive
+   the camera, OK or Back lets go. Grabbing is what keeps it from being a trap
+   -- an ungrabbed pad passes the arrows back and the ring walks away normally. */
+let jogOn = false;
+function setJog(on) {
+  if (jogOn === on) return;
+  jogOn = on;
+  $('#jog').classList.toggle('jogging', on);
+  $('#jog-hint').textContent = on
+    ? 'Arrows move the camera · OK or Back to release'
+    : 'Press OK, then use the arrows';
+  if (!on) releasePtz();
+}
+$('#jog').addEventListener('keydown', e => {
+  if (!isSelect(e)) return;
+  e.preventDefault();
+  if (!e.repeat) setJog(!jogOn);
+});
+/* Losing the ring mid-press must not leave the motor running. */
+$('#jog').addEventListener('blur', () => setJog(false));
 
 $('#speed-chips').replaceChildren(...[1, 2, 3, 4, 5].map(n => {
   const b = document.createElement('button');
@@ -830,7 +859,13 @@ function initTvRemote() {
   document.documentElement.setAttribute('data-tv', '');
   tvNav = createNavigator({
     root: document.body,
+    onCapture: (el, dir) => {
+      if (el.id !== 'jog' || !jogOn) return false;
+      startPtz(dir);
+      return true;
+    },
     onBack: () => {
+      if (jogOn) { setJog(false); return true; }
       if (guardOpen()) { closeGuard(); return true; }
       if ($('#console').dataset.fs) { exitFullscreen(); return true; }
       if (!$('#setup').classList.contains('hidden')) { show('#console'); return true; }
@@ -838,6 +873,8 @@ function initTvRemote() {
       return false;
     },
   });
+  /* A held arrow repeats keydown; the motor stops on the release. */
+  document.addEventListener('keyup', e => { if (jogOn && direction(e)) releasePtz(); });
   tvNav.restore();
 }
 

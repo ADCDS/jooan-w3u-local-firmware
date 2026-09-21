@@ -129,6 +129,13 @@ output:empty{display:none}
   box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--focus)}
 [data-tv] .nav-focus{transform:scale(1.04);transition:transform .15s ease}
 @media (prefers-reduced-motion:reduce){[data-tv] .nav-focus{transform:none;transition:none}}
+/* On a remote the ring IS the cursor, so there must be exactly one. The
+   platform moves native focus on its own (the IME, a zone being revealed),
+   which leaves the browser's ring on one element and ours on another: two
+   cursors, and no way to tell which one OK will press. Ours wins. */
+[data-tv] :where(a,button,input,select,textarea,[tabindex]):focus-visible:not(.nav-focus){box-shadow:none}
+.tv-only{display:none}
+[data-tv] .tv-only{display:block}
 /* A 1080p TV reports a 960x540 CSS viewport at devicePixelRatio 2, so the panel
    already doubles every CSS pixel: 16px of text lands as 32 physical px, which
    is the 10-foot size. Scaling the root font on top of that double-counts and
@@ -184,6 +191,10 @@ output:empty{display:none}
 
 .dpad{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem}
 .dpad button{aspect-ratio:1;display:grid;place-items:center;padding:0}
+/* Holding the arrows: say so, because the pad now answers keys that are not
+   aimed at any one button. */
+.dpad.jogging{box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--accent)}
+.dpad.jogging button{border-color:var(--accent)}
 .dpad .u{grid-column:2;grid-row:1} .dpad .l{grid-column:1;grid-row:2}
 .dpad .c{grid-column:2;grid-row:2} .dpad .r{grid-column:3;grid-row:2}
 .dpad .d{grid-column:2;grid-row:3}

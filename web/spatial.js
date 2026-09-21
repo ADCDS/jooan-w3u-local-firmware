@@ -22,6 +22,14 @@ const CODES = { 19: 'up', 20: 'down', 21: 'left', 22: 'right' };
 export const direction = e => DIRS[e.key] || CODES[e.keyCode] || null;
 export const isBack = e => e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 4;
 
+/* OK/select. Do NOT read `e.code` here: the Android TV WebView reports it as
+   an empty string, so a `code === 'Enter'` test never fires on the one device
+   this is for. `key` is populated, and the keyCodes cover the WebViews that
+   send the Android DPAD_CENTER (23) instead of Enter (13). */
+export const isSelect = e =>
+  e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar' ||
+  e.keyCode === 13 || e.keyCode === 32 || e.keyCode === 23;
+
 const SEL = 'a[href],button,input,select,textarea,[tabindex],[data-focusable]';
 
 export function focusables(root) {
