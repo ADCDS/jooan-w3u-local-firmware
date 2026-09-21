@@ -80,12 +80,19 @@ jl_private_resolvers() {
 
 jl_prune_default_routes() {
     # Operate only on default routes. Connected and configured routes survive.
+    # Remember the last gateway seen before deleting it: the allowlisted
+    # private routes below are installed through it, and after the first
+    # prune there is no default route left to learn it from.
     route -n 2>/dev/null | awk '$1=="0.0.0.0" && $3=="0.0.0.0" {print $2, $8}' |
         while read -r jl_gateway jl_interface; do
             [ -n "$jl_interface" ] || continue
             if [ "$jl_gateway" = 0.0.0.0 ]; then
                 route del default dev "$jl_interface" 2>/dev/null || :
             else
+                printf '%s %s\n' "$jl_gateway" "$jl_interface" \
+                    > "$JL_RUN/default-gateway.new" 2>/dev/null &&
+                    mv -f "$JL_RUN/default-gateway.new" "$JL_RUN/default-gateway" \
+                        2>/dev/null || :
                 route del default gw "$jl_gateway" dev "$jl_interface" 2>/dev/null || :
             fi
         done
@@ -95,13 +102,51 @@ jl_prune_default_routes() {
             if [ "$jl_gateway" = :: ]; then
                 route -A inet6 del ::/0 dev "$jl_interface" 2>/dev/null || :
             else
+                printf '%s %s\n' "$jl_gateway" "$jl_interface" \
+                    > "$JL_RUN/default-gateway6.new" 2>/dev/null &&
+                    mv -f "$JL_RUN/default-gateway6.new" "$JL_RUN/default-gateway6" \
+                        2>/dev/null || :
                 route -A inet6 del ::/0 gw "$jl_gateway" dev "$jl_interface" 2>/dev/null || :
             fi
         done
 }
 
+# Install the administrator's allowlisted private routes through the gateway
+# the default route was pruned from. These are specific prefixes, never a
+# default route, so this cannot become an Internet path: the camera still has
+# no route to anything outside the allowlist. It only restores the return path
+# to management clients on a different local subnet than the camera, which a
+# router already has to forward deliberately.
+jl_apply_allowed_routes() {
+    [ -f "$JL_CONFIG/routes.list" ] || return 0
+    jl_route_gw= jl_route_if= jl_route_gw6= jl_route_if6=
+    if [ -f "$JL_RUN/default-gateway" ]; then
+        read -r jl_route_gw jl_route_if < "$JL_RUN/default-gateway" || :
+    fi
+    if [ -f "$JL_RUN/default-gateway6" ]; then
+        read -r jl_route_gw6 jl_route_if6 < "$JL_RUN/default-gateway6" || :
+    fi
+    while IFS= read -r jl_cidr; do
+        [ -n "$jl_cidr" ] || continue
+        case "$jl_cidr" in
+            */0) continue ;;
+            *:*)
+                [ -n "$jl_route_gw6" ] && [ -n "$jl_route_if6" ] || continue
+                ip -6 route replace "$jl_cidr" via "$jl_route_gw6" \
+                    dev "$jl_route_if6" 2>/dev/null || :
+                ;;
+            *)
+                [ -n "$jl_route_gw" ] && [ -n "$jl_route_if" ] || continue
+                ip route replace "$jl_cidr" via "$jl_route_gw" \
+                    dev "$jl_route_if" 2>/dev/null || :
+                ;;
+        esac
+    done < "$JL_CONFIG/routes.list"
+}
+
 jl_local_network_policy() {
     jl_prune_default_routes
+    jl_apply_allowed_routes
     for jl_resolver in /tmp/resolv.conf /etc/resolv.conf; do
         [ -f "$jl_resolver" ] && [ -w "$jl_resolver" ] || continue
         jl_dns_old=$(cat "$jl_resolver") || continue

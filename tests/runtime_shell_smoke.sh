@@ -32,6 +32,9 @@ jl_prune_default_routes
 [ "$(wc -l < "$fixture/route-actions")" = 2 ]
 grep -q '^del default gw 10.42.0.1 dev wlan0$' "$fixture/route-actions"
 grep -q '^-A inet6 del ::/0 gw fe80::1 dev wlan0$' "$fixture/route-actions"
+# The pruned gateway is remembered so allowlisted routes can still use it.
+[ "$(cat "$JL_RUN/default-gateway")" = '10.42.0.1 wlan0' ]
+[ "$(cat "$JL_RUN/default-gateway6")" = 'fe80::1 wlan0' ]
 
 # Fixture hashes are nonfunctional placeholders, never credentials for a device.
 printf '%s\n' 'root:x:0:0:root:/:/bin/sh' 'nobody:x:65534:65534::/:/bin/sh' > "$fixture/oem-passwd"
@@ -82,6 +85,27 @@ jl_tree_bytes() { printf '%s\n' 184320; }
 jl_check_maintenance_storage
 jl_tree_bytes() { printf '%s\n' 184321; }
 if jl_check_maintenance_storage 2>/dev/null; then exit 1; fi
+
+# Allowlisted private routes are installed through the pruned default gateway,
+# as specific prefixes only; a default route is never re-created.
+mkdir -p "$JL_CONFIG"
+printf '%s\n' '192.168.100.0/24' 'fd00:dead::/64' '0.0.0.0/0' > "$JL_CONFIG/routes.list"
+ip() { printf '%s\n' "$*" >> "$fixture/ip-actions"; }
+: > "$fixture/ip-actions"
+# The pruning above already recorded its gateway; with none remembered at all,
+# nothing may be installed.
+rm -f "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
+jl_apply_allowed_routes
+[ ! -s "$fixture/ip-actions" ]
+printf '%s %s\n' 192.168.20.1 wlan0 > "$JL_RUN/default-gateway"
+printf '%s %s\n' fe80::1 wlan0 > "$JL_RUN/default-gateway6"
+jl_apply_allowed_routes
+grep -q '^route replace 192.168.100.0/24 via 192.168.20.1 dev wlan0$' "$fixture/ip-actions"
+grep -q '^-6 route replace fd00:dead::/64 via fe80::1 dev wlan0$' "$fixture/ip-actions"
+! grep -q '0.0.0.0/0' "$fixture/ip-actions"
+[ "$(wc -l < "$fixture/ip-actions")" = 2 ]
+unset -f ip
+rm -f "$JL_CONFIG/routes.list" "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
 
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
 mkdir -p "$JL_ROOT/slots/A" "$JL_ROOT/slots/B"

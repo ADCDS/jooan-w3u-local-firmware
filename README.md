@@ -73,7 +73,10 @@ The target release surface is local and authenticated:
 - embedded DNS-SD advertises HTTPS, SSH, RTSP, and the camera service under a
   configurable `.local` hostname;
 - IPv4 and IPv6 default routes are removed and continuously pruned. Connected
-  local-subnet routes remain, so local clients work without an Internet route;
+  local-subnet routes remain, so local clients work without an Internet route.
+  Administrator-allowlisted RFC1918/ULA prefixes are reinstalled as specific
+  routes through the pruned gateway, so management clients on another local
+  subnet can still be answered without ever restoring a default route;
 - exact-binary `jooanipc` containment blocks vendor cloud/P2P egress.
 - the OEM speaker and motion-alarm playback paths stay muted; the amplifier is
   enabled only for a bounded, authenticated WebUI push-to-talk lease.
