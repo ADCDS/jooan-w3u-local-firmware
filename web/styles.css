@@ -97,7 +97,12 @@ output:empty{display:none}
 .legend{display:flex;gap:.8rem;align-items:center;margin:.35rem 0 0;font-size:.72rem;color:var(--muted);flex-wrap:wrap}
 .legend span{display:inline-flex;align-items:center;gap:.35rem}
 .legend i{width:.7rem;height:.7rem;border-radius:2px;background:var(--accent);flex:none}
-@media (max-width:900px){.browse{grid-template-columns:1fr}.days{max-height:none}}
+@media (max-width:1100px){.browse{grid-template-columns:1fr}.days{max-height:none}}
+[data-tv] .browse{grid-template-columns:1fr}
+[data-tv] .days{max-height:none}
+/* Nothing may exceed the viewport: a TV has no way to scroll sideways. */
+[data-tv] .clip{flex-wrap:wrap}
+[data-tv] .clip .rng{white-space:normal}
 .kv{display:flex;flex-direction:column;gap:.45rem}
 .kv .row{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;font-size:.82rem}
 .kv .row span{color:var(--muted);flex:none;white-space:nowrap}
@@ -124,9 +129,14 @@ output:empty{display:none}
   box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--focus)}
 [data-tv] .nav-focus{transform:scale(1.04);transition:transform .15s ease}
 @media (prefers-reduced-motion:reduce){[data-tv] .nav-focus{transform:none;transition:none}}
-[data-tv]{font-size:20px}
-[data-tv] main{padding:1.4rem}
-[data-tv] button{min-height:3rem}
+/* A 1080p TV reports a 960x540 CSS viewport at devicePixelRatio 2, so the panel
+   already doubles every CSS pixel: 16px of text lands as 32 physical px, which
+   is the 10-foot size. Scaling the root font on top of that double-counts and
+   is what made the console look zoomed in. Leave the type alone; spend the
+   budget on hit targets and on surviving overscan, which a TV really does cut. */
+[data-tv] main{padding:2.6vh 3.4vw}
+[data-tv] button,[data-tv] select,[data-tv] input{min-height:2.6rem}
+[data-tv] #rail{width:9.5rem}
 
 /* ---------- console shell ---------- */
 #console{flex:1;min-height:0;display:flex;gap:var(--pad)}
