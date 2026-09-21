@@ -198,7 +198,11 @@ case "$op" in
                 [ -f "$f" ] || continue
                 name=${f##*/}
                 case "$name" in *[!0-9]*) continue ;; esac
-                sz=$(wc -c < "$f" 2>/dev/null) || sz=0
+                # stat reads the size from the inode; busybox `wc -c` reads the
+                # whole file, which on a card full of clips takes minutes and
+                # holds a daemon worker the entire time.
+                sz=$(stat -c %s "$f" 2>/dev/null) || sz=
+                [ -n "$sz" ] || sz=$(wc -c < "$f" 2>/dev/null) || sz=0
                 [ "$first" = 1 ] || printf ','
                 printf '{"name":"%s","size":%s}' "$name" "${sz:-0}"
                 first=0
