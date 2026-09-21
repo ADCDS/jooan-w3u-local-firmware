@@ -155,6 +155,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     else if(!strncmp(r->path,"/api/v1/video/",14)){char video_path[sizeof(r->path)];snprintf(video_path,sizeof(video_path),"/api/video/%s",r->path+14);snprintf(r->path,sizeof(r->path),"%s",video_path);}
     else if(!strcmp(r->path,"/api/v1/status"))snprintf(r->path,sizeof(r->path),"/api/status");
     else if(!strcmp(r->path,"/api/v1/network/mdns"))snprintf(r->path,sizeof(r->path),"/api/mdns");
+    else if(!strcmp(r->path,"/api/v1/tls/identity"))snprintf(r->path,sizeof(r->path),"/api/tls-identity");
     else if(!strcmp(r->path,"/api/v1/network/routes"))snprintf(r->path,sizeof(r->path),"/api/routes");
     else if(!strcmp(r->path,"/api/v1/time"))snprintf(r->path,sizeof(r->path),"/api/time");
     else if(!strcmp(r->path,"/api/v1/timezone"))snprintf(r->path,sizeof(r->path),"/api/timezone");
@@ -209,6 +210,35 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/wifi/stage")&&!strcmp(r->method,"POST")){if(!r->body||!r->content_length)return json(c,400,"{\"error\":\"configuration required\"}");if(joan_stage_blob(&G,"wifi",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"wifi-stage",path,id);}
     if(!strcmp(r->path,"/api/wifi/commit")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"wifi-commit",NULL,id);}
     if(!strcmp(r->path,"/api/wifi/rollback")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"DELETE"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"wifi-rollback",NULL,id);}
+    /* An externally issued certificate, so phones and televisions can trust
+       this page without importing anything. The camera has no route off the
+       LAN and therefore cannot answer an ACME challenge itself; the bundle is
+       solved elsewhere (DNS-01) and handed over here. The listener parsed its
+       certificate once at startup, so the swap takes a restart. */
+    if(!strcmp(r->path,"/api/tls-identity")&&!strcmp(r->method,"GET")){
+        char subject[192]="-",issuer[192]="-",until[32]="-";int enrolled=0;
+        {char mp[512];FILE*mf;snprintf(mp,sizeof(mp),"%s/tls-enrolled",G.state_dir);mf=fopen(mp,"r");if(mf){fclose(mf);enrolled=1;}}
+        {char cp2[512];mbedtls_x509_crt id;snprintf(cp2,sizeof(cp2),"%s/tls-cert.pem",G.state_dir);
+         mbedtls_x509_crt_init(&id);
+         if(!mbedtls_x509_crt_parse_file(&id,cp2)){
+             mbedtls_x509_dn_gets(subject,sizeof(subject),&id.subject);
+             mbedtls_x509_dn_gets(issuer,sizeof(issuer),&id.issuer);
+             snprintf(until,sizeof(until),"%04d-%02d-%02dT%02d:%02d:%02dZ",id.valid_to.year,id.valid_to.mon,id.valid_to.day,id.valid_to.hour,id.valid_to.min,id.valid_to.sec);
+         }
+         mbedtls_x509_crt_free(&id);}
+        snprintf(body,sizeof(body),"{\"enrolled\":%s,\"subject\":\"%s\",\"issuer\":\"%s\",\"not_after\":\"%s\"}",enrolled?"true":"false",subject,issuer,until);
+        return json(c,200,body);}
+    if(!strcmp(r->path,"/api/tls-identity")&&!strcmp(r->method,"PUT")){
+        char why[128]="";
+        if(!r->content_length||!r->body)return error_json(c,400,"invalid_identity","send the key and certificate as one PEM bundle");
+        if(joan_tls_enroll_identity(&G,(const char*)r->body,r->content_length,why,sizeof(why)))
+            return error_json(c,400,"invalid_identity",why[0]?why:"identity rejected");
+        snprintf(body,sizeof(body),"{\"ok\":true,\"restart_required\":true}");
+        return json(c,200,body);}
+    if(!strcmp(r->path,"/api/tls-identity")&&!strcmp(r->method,"DELETE")){
+        if(joan_tls_clear_identity(&G))return error_json(c,500,"identity_generation_failed","could not return to a generated identity");
+        snprintf(body,sizeof(body),"{\"ok\":true,\"enrolled\":false,\"restart_required\":true}");
+        return json(c,200,body);}
     if(!strcmp(r->path,"/api/mdns")&&!strcmp(r->method,"GET")){joan_mdns_get_hostname(&G,x);snprintf(body,sizeof(body),"{\"hostname\":\"%s\",\"address\":\"%s.local\",\"status\":\"%s\"}",x,x,joan_mdns_status());return json(c,200,body);}
     if(!strcmp(r->path,"/api/mdns")&&(!strcmp(r->method,"PUT")||!strcmp(r->method,"POST"))){if(json_field(r->body,r->content_length,"hostname",x,sizeof(x))||joan_mdns_set_hostname(&G,x))return error_json(c,400,"invalid_hostname","hostname must be a 1-63 character DNS label");if(!G.plain_http&&joan_tls_ensure_identity(&G))return error_json(c,500,"identity_generation_failed","could not prepare identity for hostname");joan_mdns_get_configured_hostname(&G,x);snprintf(body,sizeof(body),"{\"ok\":true,\"hostname\":\"%s\",\"address\":\"%s.local\",\"restart_required\":true}",x,x);return json(c,200,body);}
     if(!strcmp(r->path,"/api/routes")&&!strcmp(r->method,"GET")){unsigned char*out=NULL;size_t n=0;if(joan_run_helper(&G,"routes-list",NULL,NULL,&out,&n,5)||!n||(out[0]!='['&&out[0]!='{')){free(out);return error_json(c,502,"routes_unavailable","route policy unavailable");}response(c,200,"application/json; charset=utf-8",out,n,NULL);free(out);return 0;}
