@@ -120,13 +120,15 @@ case "$op" in
         # id is the UTC epoch; the daemon has already range-checked it, but keep
         # the helper defensive since it runs privileged.
         case "$id" in ''|*[!0-9]*) exit 2 ;; esac
-        date -s "@$id" >/dev/null 2>&1 || exit 1
-        # No RTC: persist at once so this client-set time survives a reboot.
+        # No RTC: persist so this client-set time survives a reboot. Written
+        # BEFORE the clock moves -- a large forward jump can expire the caller's
+        # deadline instantly, so work queued after date -s may never run.
         mkdir -p "$root/state" 2>/dev/null || :
         if printf '%s\n' "$id" > /tmp/jl-set-time.$$ 2>/dev/null; then
             mv -f /tmp/jl-set-time.$$ "$root/state/last-time" 2>/dev/null ||
                 rm -f /tmp/jl-set-time.$$
         fi
+        date -s "@$id" >/dev/null 2>&1 || exit 1
         ;;
     timezone-set)
         # id is a "GMT+HH:MM" offset; the daemon validated it, re-checked here
