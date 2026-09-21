@@ -140,6 +140,69 @@ case "$op" in
         echo 'snapshot backend unavailable with OEM GoAhead disabled' >&2
         exit 69
         ;;
+    recordings-days)
+        # OEM recorder day folders: JOOAN_RECORD/YYYYMMDD.
+        sd=${JL_SD_DIR:-/mnt/sd_card}
+        base=$sd/JOOAN_RECORD
+        printf '{"days":['
+        first=1
+        if [ -d "$base" ]; then
+            for d in "$base"/*/; do
+                [ -d "$d" ] || continue
+                day=${d%/}; day=${day##*/}   # no basename on busybox
+                case "$day" in
+                    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+                    *) continue ;;
+                esac
+                kb=$(du -sk "$d" 2>/dev/null | awk '{print $1}') || kb=0
+                # count epoch clips (busybox find lacks -type; skip .index/.log)
+                n=0; for cf in "$d"*; do [ -f "$cf" ] || continue; case "${cf##*/}" in *[!0-9]*) continue ;; esac; n=$((n+1)); done
+                [ "$first" = 1 ] || printf ','
+                printf '{"day":"%s","size_kb":%s,"count":%s}' "$day" "${kb:-0}" "${n:-0}"
+                first=0
+            done
+        fi
+        printf ']}\n'
+        ;;
+    recordings-list)
+        # id = YYYYMMDD; list epoch clips (not .index/.log sidecars).
+        sd=${JL_SD_DIR:-/mnt/sd_card}
+        case "$id" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+            *) exit 2 ;;
+        esac
+        dir=$sd/JOOAN_RECORD/$id
+        printf '{"day":"%s","clips":[' "$id"
+        first=1
+        if [ -d "$dir" ]; then
+            for f in "$dir"/*; do
+                [ -f "$f" ] || continue
+                name=${f##*/}
+                case "$name" in *[!0-9]*) continue ;; esac
+                sz=$(wc -c < "$f" 2>/dev/null) || sz=0
+                [ "$first" = 1 ] || printf ','
+                printf '{"name":"%s","size":%s}' "$name" "${sz:-0}"
+                first=0
+            done
+        fi
+        printf ']}\n'
+        ;;
+    recordings-delete)
+        # id = "YYYYMMDD" (day) or "YYYYMMDD/<clip>" (file). Strictly validated
+        # so nothing outside JOOAN_RECORD is ever removed.
+        sd=${JL_SD_DIR:-/mnt/sd_card}
+        base=$sd/JOOAN_RECORD
+        case "$id" in
+            *[!0-9A-Za-z._/-]*|*..*|/*|*/) exit 2 ;;
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) rm -rf "$base/$id" ;;
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/[0-9]*)
+                [ -f "$base/$id" ] || exit 2
+                rm -f "$base/$id" "$base/$id.index" ;;  # + its .index sidecar
+            *) exit 2 ;;
+        esac
+        sync
+        printf '{"ok":true}\n'
+        ;;
     ptz-jog|ptz-move)
         [ -f "$path" ] || exit 2
         parsed=$(sed -n 's/^{"command":"\(up\|down\|left\|right\)","duration_ms":\([0-9][0-9]*\),"speed":\([0-9][0-9]*\)}$/\1 \2 \3/p' "$path")

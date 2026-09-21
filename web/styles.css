@@ -36,7 +36,8 @@ button.primary{background:var(--accent);color:var(--accent-ink);border-color:tra
 button.danger{color:var(--crit);border-color:rgba(240,115,106,.5)}
 button.ghost{background:transparent}
 button.wide{width:100%}
-button.link{background:none;border:0;color:var(--accent);padding:0;min-height:0;text-decoration:underline}
+button.link,a.link{background:none;border:0;color:var(--accent);padding:0;min-height:0;text-decoration:underline;cursor:pointer}
+a.link.danger,button.link.danger{color:var(--crit)}
 button:disabled{opacity:.45;cursor:not-allowed}
 label{display:grid;gap:.3rem;margin:.6rem 0;color:var(--muted);font-size:.8rem}
 input,textarea{background:#0d161c}
