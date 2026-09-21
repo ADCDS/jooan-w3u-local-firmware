@@ -131,7 +131,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | **Video** | |
 | Live view, dual sensor — main 2304×1296 + sub 640×360 | ✓ fMP4 in the WebUI, per-sensor full screen |
 | Direct RTSP for NVR / VLC clients | ✓ both streams, Digest auth (OEM RTSP kept loopback-only) |
-| JPEG snapshot | ✓ `/api/v1/snapshot` |
+| JPEG snapshot | ✗ (`/api/v1/snapshot` returns 501 — the loopback-only OEM GoAhead backend is disabled) |
 | Video flip / mirror | ✗ |
 | Digital zoom | ✗ |
 | OSD timestamp / logo overlay | ~ time and time-zone are set; overlay on/off toggles not exposed |
@@ -177,7 +177,7 @@ Beyond the OEM app, the retrofit adds per-device **HTTPS**, **SSH**
 
 ## Status and limitations
 
-The implemented software target includes per-device HTTPS; a Web UI/PWA with
+The implemented software target includes per-device HTTPS; a Web UI with
 main/sub fragmented-MP4 playback; camera-microphone listening and press-to-talk;
 PTZ jog/stop, home, and preset controls; transactional Wi-Fi; password-synchronized
 SSH with optional keys; embedded DNS-SD; signed, sequence-gated updates; and
