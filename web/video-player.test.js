@@ -72,7 +72,7 @@ window.fetch=async url=>{
 player=new Fmp4Player(liveVideo,stream);
 await player.start();
 player.buffer.buffered={length:1,start:()=>0,end:()=>6};
-await flush(()=>liveVideo.currentTime===5);
+await flush(()=>liveVideo.currentTime===5.3);
 player.close();
-assert.equal(liveVideo.currentTime,5);
+assert.equal(liveVideo.currentTime,5.3);
 console.log('video-player recovery, gaps and live-edge: PASS');

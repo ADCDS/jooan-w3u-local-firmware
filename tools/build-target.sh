@@ -111,8 +111,13 @@ rm -rf "$drop_stage"
 mkdir -p "$drop_stage/bin"
 cp "$dropbear/dropbearmulti" "$drop_stage/bin/dropbear"
 ln -f "$drop_stage/bin/dropbear" "$drop_stage/bin/dropbearkey"
+# Recovery is persistent on the 384 KiB JFFS2 partition. Apply the same
+# deterministic zopfli gzip compression already required for runtime archives.
+recovery_tar=$build/dropbear-recovery.tar
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -C "$drop_stage" -cf - . | gzip -9n > "$target/shared/dropbear.tar.gz"
+    -C "$drop_stage" -cf "$recovery_tar" .
+zopfli --i25 --gzip -c "$recovery_tar" > "$target/shared/dropbear.tar.gz"
+rm -f "$recovery_tar"
 
 (cd "$target/shared" && sha256sum libjooan_guard.so | awk '{print $1}' > guard.sha256)
 (cd "$target/shared" && sha256sum dropbear.tar.gz | awk '{print $1}' > dropbear.sha256)
