@@ -46,13 +46,14 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, and helper status |
 | `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
+| `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, Ethernet link/speed and cumulative interface counters |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
 | `/api/v1/tls/identity` | `GET`, `PUT`, `DELETE` | Report, enroll or discard the HTTPS certificate. `PUT` takes one PEM bundle (private key plus chain, any order) and is how a camera gets a certificate that phones and televisions already trust; `DELETE` returns to a generated self-signed identity. Both need a restart to take effect. |
 | `/api/v1/time` | `PUT` | Set the camera clock from the client (UTC epoch seconds, as a JSON string) |
 | `/api/v1/timezone` | `PUT` | Set the stored time zone (`gmt_tz`, a `"GMT-03:00"`-style offset). The burned-in OSD overlay adopts it on the next camera restart. |
 | `/api/v1/streams` | `GET` | Enumerate main/sub RTSP and fMP4 resources |
 | `/api/v1/video/{main,sub}/init.mp4` | `GET` | fMP4 initialization segment |
-| `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | Next fMP4 fragment after sequence `N` |
+| `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | With `N=0`, bootstrap at the newest complete GOP; otherwise return the next contiguous fragment. A stale/missing GOP or changed RTSP timeline returns 409 and requires a fresh init segment. |
 | `/api/v1/snapshot` | `GET` | Reserved — returns 501 until the loopback-only OEM GoAhead snapshot backend is enabled |
 | `/api/v1/ptz/lease` | `POST` | Acquire the short exclusive PTZ lease |
 | `/api/v1/ptz/move` | `POST` | Start a bounded directional move or jog |
@@ -106,6 +107,26 @@ a trusted reflector, while direct address access does not.
 Wi-Fi replacement is transactional: POST stages/applies a candidate, PUT
 commits it after reconnect/health, and DELETE rolls it back. The generic image
 contains no SSID or passphrase and preserves the existing OEM Wi-Fi setting.
+
+Authenticated `GET /api/v1/network/quality` is read-only and sampled on demand
+(the Network UI refreshes on entry or on pressing Refresh; there is no polling).
+Example response:
+
+```json
+{"wifi":{"associated":true,"ssid":"Family Room WiFi","signal_dbm":-48,"rate_mbps":72.2,"rx_bytes":"123456","tx_bytes":"234567","rx_packets":"1400","tx_packets":"1500"},"ethernet":{"link":false,"speed_mbps":null,"rx_bytes":"0","tx_bytes":"0","rx_packets":"0","tx_packets":"0"}}
+```
+
+`associated` and `link` are booleans or `null` when status is unavailable.
+SSID is emitted only for a completed association, capped at 64 characters and
+sanitized to a limited printable subset (`?` substitutes unsupported bytes).
+`signal_dbm`, `rate_mbps` and `speed_mbps` are numbers or `null` if absent;
+Wi-Fi signal/rate are null when not associated, Ethernet speed is null when down.
+Counters are decimal strings (to avoid JavaScript integer precision loss), or
+`null` when unreadable; they are cumulative since boot and can wrap/reset.
+Only fixed `wlan0` and `eth0` are inspected. No BSSID/MAC, IP, gateway,
+passphrase, PSK, account credentials, or unfiltered tool output is returned.
+The endpoint requires an administrator session and responds with 502
+`integration_failed` if its integration helper fails.
 
 ## Signed updates
 

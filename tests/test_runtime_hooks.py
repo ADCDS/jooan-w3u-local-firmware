@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,78 @@ def executable(path: Path, contents: str) -> None:
 
 
 class RuntimeHookTests(unittest.TestCase):
+    def _network_quality(self, root: Path, status: str, radio: str) -> dict:
+        sysfs = root / "sys" / "class" / "net"
+        for interface in ("wlan0", "eth0"):
+            statistics = sysfs / interface / "statistics"
+            statistics.mkdir(parents=True, exist_ok=True)
+            for field, value in (("rx_bytes", "123456"), ("tx_bytes", "12"),
+                                 ("rx_packets", "45"), ("tx_packets", "67")):
+                counter = statistics / field
+                if not counter.exists():
+                    counter.write_text(value + "\n", encoding="utf-8")
+        for field, value in (("carrier", "1"), ("speed", "100")):
+            path = sysfs / "eth0" / field
+            if not path.exists():
+                path.write_text(value + "\n", encoding="utf-8")
+        fake_bin = root / "bin"
+        fake_bin.mkdir(exist_ok=True)
+        executable(fake_bin / "wpa_cli", "#!/bin/sh\n"
+                   "[ \"$1\" = -iwlan0 ] && [ \"$2\" = status ] || exit 2\n"
+                   "printf '%s\\n' \"$FAKE_WPA_STATUS\"\n")
+        executable(fake_bin / "iwconfig", "#!/bin/sh\n"
+                   "[ \"$1\" = wlan0 ] || exit 2\n"
+                   "printf '%s\\n' \"$FAKE_RADIO\"\n")
+        env = os.environ | {"JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin",
+                            "JL_NET_SYSFS": str(sysfs),
+                            "JL_NET_WIRELESS": str(root / "wireless"),
+                            "FAKE_WPA_STATUS": status, "FAKE_RADIO": radio}
+        result = subprocess.run(
+            [str(REPOSITORY / "runtime/slot/hooks/integration-helper.sh"), "network-quality"],
+            env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        return json.loads(result.stdout)
+
+    def test_network_quality_reports_sanitized_association_and_counters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            data = self._network_quality(
+                Path(temporary),
+                'wpa_state=COMPLETED\nssid=Guest "Network" ; $(touch /tmp/nope)\n'
+                'bssid=aa:bb:cc:dd:ee:ff\npsk=never-expose-this',
+                'wlan0 IEEE 802.11 Bit Rate=72.2 Mb/s  Access Point: AA:BB:CC\n'
+                ' Link Quality=55/70 Signal level=-48 dBm',
+            )
+            self.assertEqual(data["wifi"]["associated"], True)
+            self.assertEqual(data["wifi"]["ssid"], "Guest ?Network? ? ??touch ?tmp?nope?")
+            self.assertEqual(data["wifi"]["signal_dbm"], -48)
+            self.assertEqual(data["wifi"]["rate_mbps"], 72.2)
+            self.assertEqual(data["wifi"]["rx_bytes"], "123456")
+            self.assertEqual(data["ethernet"]["link"], True)
+            self.assertEqual(data["ethernet"]["speed_mbps"], 100)
+            self.assertEqual(data["ethernet"]["tx_packets"], "67")
+            self.assertNotIn("never-expose-this", json.dumps(data))
+            self.assertNotIn("aa:bb:cc:dd:ee:ff", json.dumps(data))
+
+    def test_network_quality_unknown_and_unassociated_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = self._network_quality(root, "wpa_state=SCANNING\nssid=old", "")
+            self.assertFalse(data["wifi"]["associated"])
+            self.assertIsNone(data["wifi"]["ssid"])
+            self.assertIsNone(data["wifi"]["signal_dbm"])
+            self.assertIsNone(data["wifi"]["rate_mbps"])
+            (root / "sys/class/net/eth0/carrier").write_text("0\n", encoding="utf-8")
+            (root / "sys/class/net/wlan0/statistics/rx_bytes").write_text(
+                "oops\n", encoding="utf-8"
+            )
+            data = self._network_quality(root, "", "")
+            self.assertIsNone(data["wifi"]["associated"])
+            self.assertIsNone(data["wifi"]["rx_bytes"])
+            self.assertFalse(data["ethernet"]["link"])
+            self.assertIsNone(data["ethernet"]["speed_mbps"])
+
     def test_speaker_is_muted_before_oem_media_can_start(self) -> None:
         hook = (REPOSITORY / "runtime/boot/local.rc").read_text(encoding="utf-8")
         mute = hook.index("JL_SPEAKER_GPIO=63")

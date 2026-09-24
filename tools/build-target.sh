@@ -100,7 +100,11 @@ if [ ! -f "$dropbear/Makefile" ]; then
         --disable-zlib --disable-syslog --disable-lastlog --disable-utmp \
         --disable-utmpx --disable-wtmp --disable-wtmpx)
 fi
-make -C "$dropbear" -j1 PROGRAMS='dropbear dropbearkey' MULTI=1
+# An extracted toolchain may have moved since Dropbear was configured; do not
+# let a cached Makefile retain its former absolute compiler path.
+make -C "$dropbear" -j1 PROGRAMS='dropbear dropbearkey' MULTI=1 \
+    CC="$cc -muclibc" AR="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-gcc-ar" \
+    RANLIB="$TOOLCHAIN_ROOT/bin/mips-linux-gnu-gcc-ranlib"
 "$strip" "$dropbear/dropbearmulti"
 drop_stage=$build/dropbear-stage
 rm -rf "$drop_stage"

@@ -104,7 +104,11 @@ function enterZone() {
   if (first) tvNav.focus(first);
 }
 for (const b of all('#rail button')) {
-  b.onclick = () => { setZone(b.dataset.zone); enterZone(); };
+  b.onclick = () => {
+    setZone(b.dataset.zone);
+    if (b.dataset.zone === 'network') loadNetworkQuality();
+    enterZone();
+  };
 }
 
 /* ---------- full screen ---------- */
@@ -421,6 +425,47 @@ $('#logout').onclick = () => busy($('#logout'), async () => {
 });
 
 /* ---------- network ---------- */
+/* Never interpolate network/SSID values as HTML. No credential or address is
+   supplied by the quality endpoint, and all unavailable fields stay visible. */
+function networkQualityField(section, label, value) {
+  const row = document.createElement('div');
+  row.className = 'kv-row';
+  const key = document.createElement('span'); key.textContent = label;
+  const display = document.createElement('b'); display.textContent = value ?? 'Unknown';
+  row.append(key, display);
+  section.append(row);
+}
+async function loadNetworkQuality() {
+  const report = $('#network-quality-report');
+  report.textContent = 'Checking network quality…';
+  try {
+    const data = await api('/api/v1/network/quality');
+    report.replaceChildren();
+    for (const [title, item, stateLabel, state] of [
+      ['Wi-Fi', data.wifi || {}, 'Association', data.wifi?.associated === true ? 'Connected' : data.wifi?.associated === false ? 'Disconnected' : null],
+      ['Ethernet', data.ethernet || {}, 'Link', data.ethernet?.link === true ? 'Up' : data.ethernet?.link === false ? 'Down' : null],
+    ]) {
+      const section = document.createElement('div');
+      const heading = document.createElement('h3'); heading.textContent = title;
+      section.append(heading);
+      networkQualityField(section, stateLabel, state);
+      if (title === 'Wi-Fi') {
+        networkQualityField(section, 'SSID', item.ssid);
+        networkQualityField(section, 'Signal', item.signal_dbm == null ? null : `${item.signal_dbm} dBm`);
+        networkQualityField(section, 'Rate', item.rate_mbps == null ? null : `${item.rate_mbps} Mb/s`);
+      } else networkQualityField(section, 'Speed', item.speed_mbps == null ? null : `${item.speed_mbps} Mb/s`);
+      for (const [key, label] of [['rx_bytes', 'Received bytes'], ['tx_bytes', 'Sent bytes'],
+        ['rx_packets', 'Received packets'], ['tx_packets', 'Sent packets']]) {
+        networkQualityField(section, label, item[key]);
+      }
+      report.append(section);
+    }
+  } catch (error) {
+    report.textContent = `Network quality unavailable: ${error.message}`;
+  }
+}
+$('#network-quality-refresh').onclick = () => busy($('#network-quality-refresh'), loadNetworkQuality);
+
 $('#wifi-form').addEventListener('submit', async e => {
   e.preventDefault();
   try {
