@@ -1,0 +1,35 @@
+# Loopback-only RTSP-to-WebRTC proof of concept. The placeholder URL is
+# deliberately not a credential; render a private copy outside this repository.
+logLevel: info
+rtsp: true
+rtspAddress: 127.0.0.1:18554
+rtspTransports: [tcp]
+rtmp: false
+hls: false
+srt: false
+moq: false
+api: false
+metrics: false
+pprof: false
+webrtc: true
+webrtcAddress: 127.0.0.1:18889
+webrtcLocalUDPAddress: 127.0.0.1:18189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+authInternalUsers:
+  - user: any
+    pass:
+    ips: [127.0.0.1, "::1"]
+    permissions:
+      - action: publish
+        path: copy-sub
+      - action: publish
+        path: copy-main
+      - action: read
+        path: copy-sub
+      - action: read
+        path: copy-main
+paths:
+  copy-sub:
+  copy-main:
