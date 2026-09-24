@@ -86,7 +86,81 @@ private_routes_json() {
     printf ']}\n'
 }
 
+# Fixed interface names only: never interpolate request data into a command or
+# pathname. Missing utilities/driver fields are represented as JSON null.
+net_counter() {
+    value=
+    [ -r "$1" ] && IFS= read -r value < "$1" || :
+    case "$value" in ''|*[!0-9]*|?????????????????????*) printf null ;; *)
+        # Decimal strings are intentionally quoted (a JS Number loses precision).
+        printf '"%s"' "$value" ;; esac
+}
+network_quality() {
+    LC_ALL=C
+    export LC_ALL
+    net_sys=${JL_NET_SYSFS:-/sys/class/net}
+    net_wireless=${JL_NET_WIRELESS:-/proc/net/wireless}
+    # Only status (never get_network/list_network) is queried: those other
+    # commands can return the PSK. Permit SSID only when associated, convert
+    # non-printable and JSON-significant characters to ?, and cap its length.
+    status=$(wpa_cli -iwlan0 status 2>/dev/null || :)
+    wifi_state=$(printf '%s\n' "$status" | awk -F= '$1=="wpa_state"{print $2;exit}')
+    wifi_ssid=null
+    if [ "$wifi_state" = COMPLETED ]; then
+        wifi_associated=true
+        wifi_ssid=$(printf '%s\n' "$status" | awk '
+            /^ssid=/ { s=substr($0,6,64); for(i=1;i<=length(s);i++) {
+                c=substr(s,i,1)
+                if (c !~ /^[A-Za-z0-9 .,_-]$/) c="?"
+                out=out c
+            } if (length(out)) printf "\"%s\"",out; exit }')
+        [ -n "$wifi_ssid" ] || wifi_ssid=null
+    elif [ -n "$wifi_state" ]; then
+        wifi_associated=false
+    else
+        wifi_associated=null
+    fi
+    # iwconfig is optional on OEM builds. Parse only the rate and dBm signal,
+    # never its ESSID, access-point MAC, IP address, or encryption metadata.
+    radio=$(iwconfig wlan0 2>/dev/null | awk '
+        /Signal level=/ {s=$0;sub(/^.*Signal level=/,"",s);split(s,a," ");if(a[1] ~ /^-[0-9]+$/) sig=a[1]}
+        /Bit Rate=/ {s=$0;sub(/^.*Bit Rate=/,"",s);split(s,a," ");if(a[1] ~ /^[0-9]+([.][0-9]+)?$/ && a[2]=="Mb/s")rate=a[1]}
+        END {printf "%s:%s",sig,rate}')
+    net_signal=${radio%%:*}
+    net_rate=${radio#*:}
+    # /proc/net/wireless reports dBm on many drivers; invalid/missing data
+    # stays unknown rather than pretending a positive quality is a dBm value.
+    if [ -z "$net_signal" ] && [ -r "$net_wireless" ]; then
+        net_signal=$(awk '$1=="wlan0:" {v=$4;sub(/[.]$/,"",v);if(v ~ /^-[0-9]+$/)print v;exit}' "$net_wireless" 2>/dev/null || :)
+    fi
+    case "$net_signal" in -[0-9]* ) case "${net_signal#-}" in *[!0-9]*|'') net_signal=null ;; esac ;; *) net_signal=null ;; esac
+    [ "${#net_signal}" -le 4 ] || net_signal=null
+    [ "$net_signal" = null ] || net_signal=$(awk -v n="$net_signal" 'BEGIN {if(n+0<0)printf "%d",n+0;else printf "null"}')
+    case "$net_rate" in ''|*[!0-9.]*|*.*.*|.*|*.) net_rate=null ;; esac
+    if [ "$net_rate" != null ]; then
+        if [ "${#net_rate}" -le 8 ]; then
+            net_rate=$(awk -v n="$net_rate" 'BEGIN {if(n+0>0)printf "%.3f",n+0;else printf "null"}')
+        else net_rate=null; fi
+    fi
+    [ "$wifi_associated" = true ] || { wifi_ssid=null; net_signal=null; net_rate=null; }
+    carrier=
+    [ -r "$net_sys/eth0/carrier" ] && IFS= read -r carrier < "$net_sys/eth0/carrier" || :
+    case "$carrier" in 1) link=true ;; 0) link=false ;; *) link=null ;; esac
+    speed=
+    [ "$link" = true ] && [ -r "$net_sys/eth0/speed" ] && IFS= read -r speed < "$net_sys/eth0/speed" || :
+    case "$speed" in ''|*[!0-9]*|???????*) speed=null ;; esac
+    [ "$speed" = null ] || speed=$(awk -v n="$speed" 'BEGIN {if(n+0>0)printf "%d",n+0;else printf "null"}')
+    printf '{"wifi":{"associated":%s,"ssid":%s,"signal_dbm":%s,"rate_mbps":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s},' \
+        "$wifi_associated" "$wifi_ssid" "$net_signal" "$net_rate" \
+        "$(net_counter "$net_sys/wlan0/statistics/rx_bytes")" "$(net_counter "$net_sys/wlan0/statistics/tx_bytes")" \
+        "$(net_counter "$net_sys/wlan0/statistics/rx_packets")" "$(net_counter "$net_sys/wlan0/statistics/tx_packets")"
+    printf '"ethernet":{"link":%s,"speed_mbps":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s}}\n' \
+        "$link" "$speed" "$(net_counter "$net_sys/eth0/statistics/rx_bytes")" "$(net_counter "$net_sys/eth0/statistics/tx_bytes")" \
+        "$(net_counter "$net_sys/eth0/statistics/rx_packets")" "$(net_counter "$net_sys/eth0/statistics/tx_packets")"
+}
+
 case "$op" in
+    network-quality) network_quality ;;
     wifi-stage) exec "$control/admin/wifi-transaction.sh" apply "$path" ;;
     wifi-commit) exec "$control/admin/wifi-transaction.sh" commit ;;
     wifi-rollback) exec "$control/admin/wifi-transaction.sh" rollback ;;

@@ -118,6 +118,11 @@
 
       <section id="zone-network" class="zone hidden" data-scrollport>
         <div class="card">
+          <div class="section-head"><h2>Network quality</h2><button id="network-quality-refresh" type="button" class="btn-sm">Refresh</button></div>
+          <p class="muted">Live association, link and cumulative interface counters. Unknown values mean the driver did not report them.</p>
+          <div id="network-quality-report" role="status" aria-live="polite">Open Network to load quality.</div>
+        </div>
+        <div class="card">
           <h2>Wi-Fi</h2>
           <form id="wifi-form">
             <label>SSID<input name="ssid" autocomplete="off" required></label>

@@ -77,21 +77,31 @@ export class Fmp4Player {
       try {
         const separator = this.stream.fragment.includes('?') ? '&' : '?';
         const part = await this.fetch(`${this.stream.fragment}${separator}after=${this.sequence}`);
-        if (!part.sequence || part.sequence <= this.sequence) throw new Error('stale fragment');
+        if (!part.sequence || part.sequence <= this.sequence ||
+            (this.sequence && part.sequence !== this.sequence + 1)) throw new Error('stale or missing fragment');
         await this.append(part.bytes, generation);
         this.sequence = part.sequence;
         this.failures = 0;
         if (this.buffer.buffered.length) {
           const end = this.buffer.buffered.end(this.buffer.buffered.length - 1);
-          if (end - this.video.currentTime > 8) this.video.currentTime = Math.max(0, end - 2);
+          // Start at the live edge and recover if the tab, network or decoder
+          // fell behind. Waiting for eight seconds of lag already feels stuck.
+          if (this.video.currentTime < end - 3 ||
+              this.video.currentTime < this.buffer.buffered.start(0))
+            this.video.currentTime = Math.max(this.buffer.buffered.start(0), end - 1);
           if (!this.buffer.updating && this.buffer.buffered.start(0) < end - 30) {
             this.buffer.remove(0, end - 10);
             await new Promise(resolve => this.buffer.addEventListener('updateend', resolve, { once: true }));
           }
         }
-      } catch (_) {
+      } catch (error) {
         if (this.closed || generation !== this.generation) return;
-        if (++this.failures >= 3) {
+        if (error.message === 'authentication required') return;
+        // A 409 is a server-side GOP gap/RTSP restart. Retrying the old MSE
+        // timeline cannot decode a new epoch; initialize at the live edge.
+        const discontinuity = error.message === 'video HTTP 409' || error.message === 'stale or missing fragment';
+        this.failures++;
+        if (discontinuity || this.failures >= 2) {
           const next = ++this.generation;
           try {
             await this.initialize(next);
