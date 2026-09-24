@@ -170,6 +170,21 @@ static void reset_stream(Stream*s)
     s->gop_len=s->sample_count=0;s->last_timestamp=0;s->decode_time=0;s->have_keyframe=s->have_timestamp=0;
 }
 
+/* A damaged RTP access unit needs a new IDR and fresh MSE timeline, not a
+ * storm of DESCRIBE/PLAY reconnects against the fragile OEM RTSP listener. */
+static void reset_timeline(Stream*s)
+{
+    unsigned i;
+    pthread_mutex_lock(&s->lock);
+    for(i=0;i<RING;i++){free(s->ring[i].data);memset(&s->ring[i],0,sizeof(s->ring[i]));}
+    s->ring_next=0;s->ring_bytes=0;s->sequence+=RING+1;
+    pthread_cond_broadcast(&s->changed);
+    pthread_mutex_unlock(&s->lock);
+    s->access_len=s->access_idr=0;
+    s->gop_len=s->sample_count=0;s->decode_time=0;
+    s->last_timestamp=0;s->have_timestamp=s->have_keyframe=0;
+}
+
 static int run_stream(Stream*s)
 {
     int fd=-1;struct sockaddr_in a;char url[256],control[512],reply[16384],session[128]="",extra[512],password[320],password_path[512];unsigned char packet[MAX_NAL+64],fu[MAX_NAL],*secret=NULL;size_t fu_len=0,secret_len=0;uint32_t fu_ts=0;uint16_t previous_rtp_seq=0;int have_rtp_seq=0;Digest digest;
@@ -179,16 +194,16 @@ static int run_stream(Stream*s)
     snprintf(extra,sizeof(extra),"Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");if(rtsp_request(fd,2,"SETUP",control,extra,password,&digest,reply,sizeof(reply)))goto fail;{char*sp=strcasestr(reply,"Session:");if(!sp)goto fail;sp+=8;while(*sp==' ')sp++;size_t z=strcspn(sp,";\r\n");if(z>=sizeof(session))goto fail;memcpy(session,sp,z);session[z]=0;}snprintf(extra,sizeof(extra),"Session: %s\r\n",session);if(rtsp_request(fd,3,"PLAY",url,extra,password,&digest,reply,sizeof(reply)))goto fail;
     if(s->sps_len&&s->pps_len&&!s->init)build_init(s);
     pthread_mutex_lock(&s->lock);snprintf(s->status,sizeof(s->status),"connected");pthread_cond_broadcast(&s->changed);pthread_mutex_unlock(&s->lock);
-    for(;;){unsigned char ch,channel;uint16_t plen;size_t off;uint32_t ts;int marker;unsigned type;if(recv(fd,&ch,1,MSG_WAITALL)!=1)goto fail;if(ch!='$')continue;if(recv(fd,packet,3,MSG_WAITALL)!=3)goto fail;channel=packet[0];plen=((uint16_t)packet[1]<<8)|packet[2];if(recv(fd,packet,plen,MSG_WAITALL)!=(ssize_t)plen)goto fail;if(channel!=0)continue;if(plen<12||(packet[0]&0xc0)!=0x80)continue;{uint16_t current=((uint16_t)packet[2]<<8)|packet[3];if(have_rtp_seq&&(uint16_t)(previous_rtp_seq+1)!=current)goto fail;previous_rtp_seq=current;have_rtp_seq=1;}off=12+(packet[0]&15u)*4u;if(packet[0]&0x10){if(off+4>plen)continue;off+=4+(((size_t)packet[off+2]<<8)|packet[off+3])*4;}if(off>=plen)continue;marker=(packet[1]&0x80)!=0;ts=((uint32_t)packet[4]<<24)|((uint32_t)packet[5]<<16)|((uint32_t)packet[6]<<8)|packet[7];type=packet[off]&31u;
+    for(;;){unsigned char ch,channel;uint16_t plen;size_t off;uint32_t ts;int marker;unsigned type;if(recv(fd,&ch,1,MSG_WAITALL)!=1)goto fail;if(ch!='$')continue;if(recv(fd,packet,3,MSG_WAITALL)!=3)goto fail;channel=packet[0];plen=((uint16_t)packet[1]<<8)|packet[2];if(recv(fd,packet,plen,MSG_WAITALL)!=(ssize_t)plen)goto fail;if(channel!=0)continue;if(plen<12||(packet[0]&0xc0)!=0x80)continue;{uint16_t current=((uint16_t)packet[2]<<8)|packet[3];if(have_rtp_seq&&(uint16_t)(previous_rtp_seq+1)!=current){reset_timeline(s);fu_len=0;}previous_rtp_seq=current;have_rtp_seq=1;}off=12+(packet[0]&15u)*4u;if(packet[0]&0x10){if(off+4>plen)continue;off+=4+(((size_t)packet[off+2]<<8)|packet[off+3])*4;}if(off>=plen)continue;marker=(packet[1]&0x80)!=0;ts=((uint32_t)packet[4]<<24)|((uint32_t)packet[5]<<16)|((uint32_t)packet[6]<<8)|packet[7];type=packet[off]&31u;
         if(type>=1&&type<=23){if(append_nal(s,packet+off,plen-off))goto fail;}
         else if(type==24){size_t p=off+1;while(p+2<=plen){size_t z=((size_t)packet[p]<<8)|packet[p+1];p+=2;if(!z||p+z>plen)break;if(append_nal(s,packet+p,z))goto fail;p+=z;}}
         else if(type==28&&off+2<plen){unsigned start=packet[off+1]&0x80,end=packet[off+1]&0x40;if(start){fu_len=1;fu[0]=(packet[off]&0xe0)|(packet[off+1]&0x1f);fu_ts=ts;}if(fu_len&&fu_ts==ts&&fu_len+plen-off-2<=sizeof(fu)){memcpy(fu+fu_len,packet+off+2,plen-off-2);fu_len+=plen-off-2;if(end){if(append_nal(s,fu,fu_len))goto fail;fu_len=0;}}else fu_len=0;}
         if(marker){if(s->have_keyframe&&s->have_timestamp&&
             (!((uint32_t)(ts-s->last_timestamp))||
              (uint32_t)(ts-s->last_timestamp)>RTP_TIMESCALE)){
-            /* OEM sometimes replays an older AU/IDR despite monotonic RTP
-             * sequence numbers. Reconnect and wait for a clean keyframe. */
-            goto fail;
+            /* The OEM may replay an older AU; keep the RTSP session, but
+             * invalidate dependent video until its next real IDR. */
+            reset_timeline(s);fu_len=0;continue;
         }else finish_access(s,ts);}
     }
 fail:memset(password,0,sizeof(password));if(fd>=0)close(fd);return-1;
