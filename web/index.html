@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="description" content="Private local control, video, networking, and updates for this camera.">
   <title>Jooan Local Camera</title>
   <meta name="theme-color" content="#0e1519">
   <link rel="stylesheet" href="/styles.css">
@@ -11,8 +10,8 @@
 <body>
 <main>
   <section id="login" class="card narrow">
-    <h2>Administrator sign in</h2>
-    <p>Initial access uses <code>admin</code> / <code>admin</code>. Change it from System once you are signed in.</p>
+    <h2>Sign in</h2>
+    <p>Initial login: admin / admin. Change it in System.</p>
     <form id="login-form">
       <label>User<input name="username" value="admin" autocomplete="username"></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
@@ -23,7 +22,7 @@
 
   <section id="setup" class="card narrow hidden">
     <h2>Change administrator password</h2>
-    <p>Shared with SSH and RTSP. Any length; a long one is still the better idea.</p>
+    <p>Shared with SSH and RTSP; use a long password.</p>
     <form id="password-form">
       <input type="hidden" name="username" value="admin" autocomplete="username">
       <label>Current password<input name="old_password" type="password" autocomplete="current-password" required></label>
@@ -112,14 +111,14 @@
         <div class="card">
           <h2>Talkback</h2>
           <button id="audio-connect-2" class="wide">Listen</button>
-          <p class="muted">Microphone playback pauses while talking to prevent feedback.</p>
+          <p class="muted">Listening pauses while talking.</p>
         </div>
       </section>
 
       <section id="zone-network" class="zone hidden" data-scrollport>
         <div class="card">
           <div class="section-head"><h2>Network quality</h2><button id="network-quality-refresh" type="button" class="btn-sm">Refresh</button></div>
-          <p class="muted">Live association, link and cumulative interface counters. Unknown values mean the driver did not report them.</p>
+          <p class="muted">Live link and counters; unknown means not reported.</p>
           <div id="network-quality-report" role="status" aria-live="polite">Open Network to load quality.</div>
         </div>
         <div class="card">
@@ -146,7 +145,7 @@
         </div>
         <div class="card">
           <h2>Approved routes</h2>
-          <p class="muted">Only private RFC1918 or ULA networks are accepted. Default and public routes are rejected.</p>
+          <p class="muted">Private RFC1918/ULA routes only; no default route.</p>
           <form id="routes-form">
             <label>Approved CIDRs<textarea name="cidrs" rows="2" placeholder="10.42.0.0/24, fd00::/64"></textarea></label>
             <button>Apply routes</button>

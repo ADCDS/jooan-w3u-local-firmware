@@ -53,7 +53,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/timezone` | `PUT` | Set the stored time zone (`gmt_tz`, a `"GMT-03:00"`-style offset). The burned-in OSD overlay adopts it on the next camera restart. |
 | `/api/v1/streams` | `GET` | Enumerate main/sub RTSP and fMP4 resources |
 | `/api/v1/video/{main,sub}/init.mp4` | `GET` | fMP4 initialization segment |
-| `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | With `N=0`, bootstrap at the newest complete GOP; otherwise return the next contiguous fragment. A stale/missing GOP or changed RTSP timeline returns 409 and requires a fresh init segment. |
+| `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | With `N=0`, return a decodable IDR-anchored bootstrap (ordered short fragments through the live edge, sequence header of the last included chunk); otherwise return the next contiguous ~1-second fragment. An unavailable anchor, stale/missing fragment or changed RTSP timeline returns 409 and requires a fresh init segment. |
 | `/api/v1/snapshot` | `GET` | Reserved — returns 501 until the loopback-only OEM GoAhead snapshot backend is enabled |
 | `/api/v1/ptz/lease` | `POST` | Acquire the short exclusive PTZ lease |
 | `/api/v1/ptz/move` | `POST` | Start a bounded directional move or jog |

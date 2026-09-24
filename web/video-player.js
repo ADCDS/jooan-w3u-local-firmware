@@ -11,6 +11,7 @@ export class Fmp4Player {
     this.generation = 0;
     this.closed = false;
     this.objectUrl = '';
+    this.startedPlayback = false;
   }
 
   async start() {
@@ -25,6 +26,7 @@ export class Fmp4Player {
     this.disposeMedia();
     this.sequence = 0;
     this.failures = 0;
+    this.startedPlayback = false;
     const media = new MediaSource();
     this.media = media;
     this.objectUrl = URL.createObjectURL(media);
@@ -86,9 +88,11 @@ export class Fmp4Player {
           const end = this.buffer.buffered.end(this.buffer.buffered.length - 1);
           // Start at the live edge and recover if the tab, network or decoder
           // fell behind. Waiting for eight seconds of lag already feels stuck.
-          if (this.video.currentTime < end - 3 ||
-              this.video.currentTime < this.buffer.buffered.start(0))
-            this.video.currentTime = Math.max(this.buffer.buffered.start(0), end - 1);
+          if (!this.startedPlayback || this.video.currentTime < end - 3 ||
+              this.video.currentTime < this.buffer.buffered.start(0)) {
+            this.video.currentTime = Math.max(this.buffer.buffered.start(0), end - 0.7);
+            this.startedPlayback = true;
+          }
           if (!this.buffer.updating && this.buffer.buffered.start(0) < end - 30) {
             this.buffer.remove(0, end - 10);
             await new Promise(resolve => this.buffer.addEventListener('updateend', resolve, { once: true }));
