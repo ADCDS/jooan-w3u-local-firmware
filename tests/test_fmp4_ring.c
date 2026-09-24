@@ -75,6 +75,13 @@ int main(void)
      assert(append_nal(s,pframe,sizeof(pframe))==0);finish_access(s,18000);
      assert(s->ring[0].keyframe==1); /* the new IDR chunk is independently decodable */
      assert(s->decode_time==15000);
+     assert(accept_access_timestamp(s,18000)==0); /* duplicate */
+     assert(accept_access_timestamp(s,12000)==0); /* recent replay */
+     assert(accept_access_timestamp(s,15000)==0); /* advancing old pictures */
+     assert(accept_access_timestamp(s,18000)==0); /* duplicate catches up */
+     assert(accept_access_timestamp(s,21000)==1); /* next live picture */
+     assert(accept_access_timestamp(s,0)==0);     /* short backward jump */
+     assert(accept_access_timestamp(s,300000u)==-1); /* large clock jump */
      reset_stream(s);
     }
     /* Ninety 15fps AUs represent the OEM's six-second GOP. The first IDR

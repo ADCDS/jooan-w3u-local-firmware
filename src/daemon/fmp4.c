@@ -37,6 +37,8 @@ typedef struct {
     unsigned char *gop;size_t gop_len,gop_cap;Sample samples[MAX_SAMPLES];size_t sample_count;
     uint64_t decode_time;uint32_t last_timestamp,sequence;
     int have_keyframe,have_timestamp;
+    uint32_t frame_duration,replayed_until;
+    int replaying;
     Fragment ring[RING];unsigned ring_next;size_t ring_bytes;
 } Stream;
 
@@ -116,6 +118,7 @@ static void finish_access(Stream*s,uint32_t timestamp)
         s->access_len=s->access_idr=0;s->last_timestamp=timestamp;
         return;
     }
+    if(s->have_timestamp)s->frame_duration=duration;
     /* The next AU supplies the previous sample's duration (RTP timestamps
      * denote starts, not ends). This also finalizes the GOP's last sample. */
     if(s->sample_count)s->samples[s->sample_count-1].duration=duration;
@@ -167,7 +170,7 @@ static void reset_stream(Stream*s)
     pthread_cond_broadcast(&s->changed);
     pthread_mutex_unlock(&s->lock);
     s->sps_len=s->pps_len=0;s->access_len=0;s->access_idr=0;
-    s->gop_len=s->sample_count=0;s->last_timestamp=0;s->decode_time=0;s->have_keyframe=s->have_timestamp=0;
+    s->gop_len=s->sample_count=0;s->last_timestamp=s->frame_duration=s->replayed_until=0;s->decode_time=0;s->replaying=0;s->have_keyframe=s->have_timestamp=0;
 }
 
 /* A damaged RTP access unit needs a new IDR and fresh MSE timeline, not a
@@ -182,7 +185,31 @@ static void reset_timeline(Stream*s)
     pthread_mutex_unlock(&s->lock);
     s->access_len=s->access_idr=0;
     s->gop_len=s->sample_count=0;s->decode_time=0;
-    s->last_timestamp=0;s->have_timestamp=s->have_keyframe=0;
+    s->last_timestamp=0;s->frame_duration=s->replayed_until=0;s->replaying=0;s->have_timestamp=s->have_keyframe=0;
+}
+
+/* Return 1 only when the OEM RTP clock advances to a new access unit.
+ * Its video server also repeats old timestamped pictures with new RTP packet
+ * numbers; they are not a valid new sample and must not poison an MSE timeline. */
+static int accept_access_timestamp(Stream*s,uint32_t timestamp)
+{
+    uint32_t delta,backward;
+    if(!s->have_keyframe||!s->have_timestamp)return 1;
+    if(s->replaying&&
+        (int32_t)(timestamp-s->replayed_until)<=0)return 0;
+    delta=timestamp-s->last_timestamp;
+    if(delta&&delta<=RTP_TIMESCALE){
+        s->replaying=0;
+        return 1;
+    }
+    backward=s->last_timestamp-timestamp;
+    if(backward<=RTP_TIMESCALE&&s->frame_duration){
+        /* A short OEM replay need not tear down the decoder timeline. Drop
+         * those pictures until their timestamps pass our last live AU. */
+        s->replayed_until=s->last_timestamp;s->replaying=1;
+        return 0;
+    }
+    return -1;
 }
 
 static int run_stream(Stream*s)
@@ -198,14 +225,18 @@ static int run_stream(Stream*s)
         if(type>=1&&type<=23){if(append_nal(s,packet+off,plen-off))goto fail;}
         else if(type==24){size_t p=off+1;while(p+2<=plen){size_t z=((size_t)packet[p]<<8)|packet[p+1];p+=2;if(!z||p+z>plen)break;if(append_nal(s,packet+p,z))goto fail;p+=z;}}
         else if(type==28&&off+2<plen){unsigned start=packet[off+1]&0x80,end=packet[off+1]&0x40;if(start){fu_len=1;fu[0]=(packet[off]&0xe0)|(packet[off+1]&0x1f);fu_ts=ts;}if(fu_len&&fu_ts==ts&&fu_len+plen-off-2<=sizeof(fu)){memcpy(fu+fu_len,packet+off+2,plen-off-2);fu_len+=plen-off-2;if(end){if(append_nal(s,fu,fu_len))goto fail;fu_len=0;}}else fu_len=0;}
-        if(marker){if(s->have_keyframe&&s->have_timestamp&&
-            (!((uint32_t)(ts-s->last_timestamp))||
-             (uint32_t)(ts-s->last_timestamp)>RTP_TIMESCALE)){
-            /* The OEM may replay an older AU; keep the RTSP session, but
-             * invalidate dependent video until its next real IDR. */
-            fprintf(stderr,"fmp4 %s timestamp discontinuity %u -> %u\n",s->id,s->last_timestamp,ts);
-            reset_timeline(s);fu_len=0;continue;
-        }else finish_access(s,ts);}
+        if(marker){
+            int accepted=accept_access_timestamp(s,ts);
+            if(accepted<=0){
+                s->access_len=s->access_idr=0;fu_len=0;
+                if(accepted<0){
+                    fprintf(stderr,"fmp4 %s timestamp discontinuity %u -> %u\n",s->id,s->last_timestamp,ts);
+                    reset_timeline(s);
+                }
+                continue;
+            }
+            finish_access(s,ts);
+        }
     }
 fail:memset(password,0,sizeof(password));if(fd>=0)close(fd);return-1;
 }
