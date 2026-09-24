@@ -29,7 +29,10 @@ bounded_sha() {
     hash_file=$1 hash_output=/tmp/jooan-sha.$$
     "$sha" "$hash_file" > "$hash_output" 2>/dev/null &
     hash_pid=$!
-    ( sleep 30; kill -TERM "$hash_pid" 2>/dev/null || : ) \
+    # The retained 6 MiB OEM media binary can take longer than 30 s to hash
+    # on a fully loaded single-core T23. Keep the watchdog bounded, but allow
+    # enough time for slow flash reads without accepting an unchecked image.
+    ( sleep 120; kill -TERM "$hash_pid" 2>/dev/null || : ) \
         </dev/null >/dev/null 2>&1 &
     timer_pid=$!
     if wait "$hash_pid"; then hash_rc=0; else hash_rc=$?; fi
