@@ -95,7 +95,10 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   resumed=json.loads(request('GET','/api/v1/session',cookie=cookie)[2]);assert resumed['authenticated'] is True and resumed['csrf']==csrf and resumed['default_password_warning'] is True
   assert request('GET','/api/v1/streams',cookie=cookie)[0]==200
   streams=json.loads(request('GET','/api/v1/streams',cookie=cookie)[2])['streams'];assert streams[0]['mime'].endswith('avc1.640032"') and streams[1]['mime'].endswith('avc1.640016"')
-  denied=json.loads(request('PUT','/api/v1/network/mdns',{'hostname':'x'},cookie,'wrong')[2]);assert denied['error']['code']=='authentication_required'
+  denied_status,_,denied_body=request('PUT','/api/v1/network/mdns',{'hostname':'x'},cookie,'wrong');denied=json.loads(denied_body);assert denied_status==403 and denied['error']['code']=='csrf_rejected'
+  missing_status,_,missing_body=request('PUT','/api/v1/network/mdns',{'hostname':'x'},cookie);assert missing_status==403 and json.loads(missing_body)['error']['code']=='csrf_rejected'
+  assert request('GET','/api/v1/session',cookie=cookie)[0]==200
+  assert request('PUT','/api/v1/network/mdns',{'hostname':'still-valid'},cookie,csrf)[0]==200
   assert request('GET','/api/v1/status',cookie=cookie,origin='https://evil.invalid')[0]==403
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'x'*129},cookie,csrf)[0]==400
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'twelve-chars\n'},cookie,csrf)[0]==400

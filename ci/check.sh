@@ -10,6 +10,9 @@ ci/check_shell_syntax.sh
 python3 ci/check_target_applets.py
 python3 ci/check_persistent_size.py
 python3 -m unittest discover -s tests -p 'test_*.py'
+cc -O2 -pthread -Wall -Wextra -Werror -ffunction-sections -fdata-sections -Wl,--gc-sections -o /tmp/jooan-auth-clock-test tests/test_auth_clock.c
+/tmp/jooan-auth-clock-test
+node web/app-auth-race.test.js
 node web/ptz-steps.test.js
 node web/video-player.test.js
 node web/spatial.test.js

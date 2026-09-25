@@ -20,6 +20,13 @@ typedef struct { char remote[64]; time_t since; unsigned failures; } Bucket;
 static Session sessions[SESSIONS];
 static Bucket buckets[BUCKETS];
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* Session lifetimes are elapsed time, not camera wall time: setting the
+ * clock must not transiently invalidate a cookie in another HTTP worker. */
+static time_t auth_now(void)
+{
+    struct timespec t;
+    return clock_gettime(CLOCK_MONOTONIC, &t) == 0 ? t.tv_sec : time(NULL);
+}
 
 static void auth_path(const JoanConfig *cfg, char out[512]) { snprintf(out, 512, "%s/auth.db", cfg->state_dir); }
 
@@ -177,7 +184,7 @@ static Bucket *bucket_for(const char *remote, time_t now)
 int joan_auth_login(const JoanConfig *cfg, const char *remote,
                     const char *user, const char *password, JoanAuthz *out)
 {
-    Bucket *b; Session *s = NULL; unsigned i; time_t now = time(NULL); int must = 0;
+    Bucket *b; Session *s = NULL; unsigned i; time_t now = auth_now(); int must = 0;
     unsigned char random[32];
     memset(out, 0, sizeof(*out));
     pthread_mutex_lock(&lock);
@@ -215,11 +222,16 @@ static int cookie_token(const char *cookie, char out[65])
 
 int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out)
 {
-    char token[65]; unsigned i; time_t now = time(NULL);
+    char token[65]; unsigned i; time_t now = auth_now();
     memset(out, 0, sizeof(*out)); if (cookie_token(req->cookie, token)) return -1;
     pthread_mutex_lock(&lock);
     for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && sessions[i].expires >= now && joan_ct_equal(token, sessions[i].token, 64)) {
-        if (require_csrf && (!req->csrf[0] || !joan_ct_equal(req->csrf, sessions[i].csrf, 64))) break;
+        if (require_csrf && (!req->csrf[0] || !joan_ct_equal(req->csrf, sessions[i].csrf, 64))) {
+            pthread_mutex_unlock(&lock); return -2;
+        }
+        /* A live camera viewer is active use: renew the idle timeout without
+         * extending a session from a mere clock correction. */
+        sessions[i].expires = now + SESSION_SECONDS;
         out->authenticated = 1; out->must_change = sessions[i].must_change;
         memcpy(out->token, sessions[i].token, sizeof(out->token)); memcpy(out->csrf, sessions[i].csrf, sizeof(out->csrf));
         pthread_mutex_unlock(&lock); return 0;
@@ -249,20 +261,5 @@ void joan_auth_logout(const JoanAuthz *auth)
 {
     unsigned i; pthread_mutex_lock(&lock);
     for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) memset(&sessions[i], 0, sizeof(sessions[i]));
-    pthread_mutex_unlock(&lock);
-}
-
-/* Re-issue this session's lifetime against the current clock. Setting the
-   system time forward would otherwise leave every session's absolute expiry
-   in the past, logging the caller out on their next request. */
-/* Setting the camera clock moves wall time, and session expiries are absolute
-   wall-clock stamps, so a forward jump would strand every live session. Shift
-   all sessions by the same delta the clock moved: each keeps exactly the life
-   it had left, and the 30-minute absolute cap is preserved (a no-op time-set
-   shifts by ~0, so this cannot be replayed to renew a session indefinitely). */
-void joan_auth_shift(time_t delta)
-{
-    unsigned i; pthread_mutex_lock(&lock);
-    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used) sessions[i].expires += delta;
     pthread_mutex_unlock(&lock);
 }
