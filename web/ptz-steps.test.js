@@ -38,7 +38,7 @@ const gate = () => { let done; return { promise: new Promise(resolve => { done =
   const second = control.nudge('right');
   assert.equal(await second, false, 'overlapping nudge must be ignored');
   const stop = control.stop();
-  move.done({ ok: true });
+  move.done({ ok: true, stopped: true });
   await stop;
   await first;
   assert.deepEqual(calls.map(x => x[0]), ['/api/v1/ptz/lease', '/api/v1/ptz/move', '/api/v1/ptz/stop']);
@@ -52,12 +52,13 @@ const gate = () => { let done; return { promise: new Promise(resolve => { done =
   const control = new PtzSteps({ request: async (path, body) => {
     calls.push([path, body]);
     if (path.endsWith('/lease')) return { lease: 'C' };
+    if (path.endsWith('/move')) return { ok: true, stopped: true };
     return {};
   }, video: () => ({ readyState: 4, paused: false, getVideoPlaybackQuality: () => ({ totalVideoFrames: 10 }) }),
   state: () => {}, inputs: () => {}, settled: async () => false });
   control.setMode('coarse');
   assert.equal(await control.nudge('down'), false);
   assert.deepEqual(calls[1][1], { lease: 'C', command: 'down', duration_ms: 350, speed: 3 });
-  assert.equal(calls.at(-1)[0], '/api/v1/ptz/stop');
+  assert.equal(calls.at(-1)[0], '/api/v1/ptz/move');
 }
 console.log('PTZ step controller races and bounded nudge modes: PASS');
