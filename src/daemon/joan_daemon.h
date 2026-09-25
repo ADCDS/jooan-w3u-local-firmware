@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.7"
+#define JOAN_VERSION "0.2.8"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
