@@ -210,33 +210,41 @@ int joan_auth_login(const JoanConfig *cfg, const char *remote,
     pthread_mutex_unlock(&lock); memset(random, 0, sizeof(random)); return 0;
 }
 
-static int cookie_token(const char *cookie, char out[65])
+/* Return the next 64-character joan_session value after *at. A browser can
+ * hold stale and fresh copies (host and parent-domain cookies); try each. */
+static int cookie_token(const char **at, const char *start, char out[65])
 {
-    const char *p = strstr(cookie ? cookie : "", "joan_session="); size_t n;
-    if (!p) return -1;
-    p += 13;
-    n = strcspn(p, "; \r\n");
-    if (n != 64) return -1;
-    memcpy(out, p, n); out[n] = 0; return 0;
+    const char *p = *at; size_t n;
+    while ((p = strstr(p, "joan_session=")) != NULL) {
+        int boundary = p == start || p[-1] == ' ' || p[-1] == ';';
+        p += 13; n = strcspn(p, "; \r\n");
+        if (boundary && n == 64) { memcpy(out, p, n); out[n] = 0; *at = p + n; return 0; }
+    }
+    return -1;
 }
 
+/* Pick the live session among joan_session candidates. A valid session
+ * whose CSRF also matches wins; otherwise a valid-cookie/CSRF mismatch is
+ * reported as -2 so a stale sibling cookie cannot hide a CSRF error. */
 int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out)
 {
     char token[65]; unsigned i; time_t now = auth_now();
-    memset(out, 0, sizeof(*out)); if (cookie_token(req->cookie, token)) return -1;
+    const char *start = req->cookie, *at = start; int live_without_csrf = 0;
+    memset(out, 0, sizeof(*out));
     pthread_mutex_lock(&lock);
-    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && sessions[i].expires >= now && joan_ct_equal(token, sessions[i].token, 64)) {
-        if (require_csrf && (!req->csrf[0] || !joan_ct_equal(req->csrf, sessions[i].csrf, 64))) {
-            pthread_mutex_unlock(&lock); return -2;
+    while (!cookie_token(&at, start, token)) {
+        for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && sessions[i].expires >= now && joan_ct_equal(token, sessions[i].token, 64)) {
+            if (require_csrf && (!req->csrf[0] || !joan_ct_equal(req->csrf, sessions[i].csrf, 64))) { live_without_csrf = 1; break; }
+            /* A live camera viewer is active use: renew the idle timeout
+             * without extending a session from a mere clock correction. */
+            sessions[i].expires = now + SESSION_SECONDS;
+            out->authenticated = 1; out->must_change = sessions[i].must_change;
+            memcpy(out->token, sessions[i].token, sizeof(out->token)); memcpy(out->csrf, sessions[i].csrf, sizeof(out->csrf));
+            pthread_mutex_unlock(&lock); return 0;
         }
-        /* A live camera viewer is active use: renew the idle timeout without
-         * extending a session from a mere clock correction. */
-        sessions[i].expires = now + SESSION_SECONDS;
-        out->authenticated = 1; out->must_change = sessions[i].must_change;
-        memcpy(out->token, sessions[i].token, sizeof(out->token)); memcpy(out->csrf, sessions[i].csrf, sizeof(out->csrf));
-        pthread_mutex_unlock(&lock); return 0;
     }
-    pthread_mutex_unlock(&lock); return -1;
+    pthread_mutex_unlock(&lock);
+    return live_without_csrf ? -2 : -1;
 }
 
 int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
