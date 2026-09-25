@@ -27,9 +27,9 @@ static void add(Stream *s, unsigned seq, time_t when)
 }
 static int fetch(Stream *s, uint32_t after, unsigned *seq)
 {
-    unsigned char *data=NULL;size_t len=0;uint32_t n=0;
-    int rc=joan_fmp4_fragment(s->id,after,&data,&len,&n,1);
-    if(!rc){assert(len>=1 && data[0]>0);*seq=n;free(data);}
+    unsigned char *data=NULL;size_t len=0;uint32_t n=0,first=0;
+    int rc=joan_fmp4_fragment(s->id,after,&data,&len,&first,&n,1);
+    if(!rc){assert(len>=1 && data[0]>0 && (after?first==after+1:first>0 && first<=n));*seq=n;free(data);}
     return rc;
 }
 int main(void)
@@ -38,13 +38,30 @@ int main(void)
     snprintf(s->status,sizeof(s->status),"connected");
     for(i=1;i<=7;i++)add(s,i,now);
     assert(fetch(s,0,&seq)==0 && seq==7); /* newest IDR is decodable */
-    assert(fetch(s,4,&seq)==0 && seq==5); /* continuity in ring */
-    assert(fetch(s,2,&seq)==0 && seq==3); /* retained history */
+    assert(fetch(s,4,&seq)==0 && seq==7); /* contiguous catch-up batches through live edge */
+    assert(fetch(s,2,&seq)==0 && seq==6); /* at most four delta fragments per request */
+    {unsigned char *bytes=NULL;size_t size=0;uint32_t first=0,last=0;
+     assert(joan_fmp4_fragment("main",4,&bytes,&size,&first,&last,1)==0);
+     assert(first==5 && last==7 && size==3 && bytes[0]==5 && bytes[2]==7);free(bytes);}
+    /* A slow HTTPS consumer may request an old but intact fragment. Freshness
+     * applies to the newest producer fragment, not the first in the batch. */
+    for(i=1;i<=6;i++)s->ring[i-1].published=now-9;
+    assert(fetch(s,2,&seq)==0 && seq==6);
+    s->ring[6].published=now-9;
+    assert(fetch(s,2,&seq)==-2);          /* the producer itself is stale */
+    for(i=1;i<=7;i++)s->ring[i-1].published=now;
+    free(s->ring[2].data);s->ring[2].data=NULL;s->ring[2].len=0;
+    assert(fetch(s,2,&seq)==-2);          /* missing first fragment really is a gap */
+    s->ring[2].data=malloc(1);assert(s->ring[2].data);s->ring[2].data[0]=3;s->ring[2].len=1;
+    /* An interior missing chunk must not be silently concatenated. */
+    free(s->ring[4].data);s->ring[4].data=NULL;s->ring[4].len=0;
+    assert(fetch(s,2,&seq)==-2);
+    s->ring[4].data=malloc(1);assert(s->ring[4].data);s->ring[4].data[0]=5;s->ring[4].len=1;
     /* Bootstrap concatenates the most recent IDR and all dependent chunks. */
     s->ring[6].keyframe=0;
-    {unsigned char *bytes=NULL;size_t len=0;uint32_t last=0;
-     assert(joan_fmp4_fragment("main",0,&bytes,&len,&last,1)==0);
-     assert(last==7 && len==7 && bytes[0]==1 && bytes[6]==7);free(bytes);}
+    {unsigned char *bytes=NULL;size_t len=0;uint32_t first=0,last=0;
+     assert(joan_fmp4_fragment("main",0,&bytes,&len,&first,&last,1)==0);
+     assert(first==1 && last==7 && len==7 && bytes[0]==1 && bytes[6]==7);free(bytes);}
     s->ring[0].keyframe=0;/* no retained IDR: bootstrap cannot decode */
     assert(fetch(s,0,&seq)!=0);
     s->ring[6].keyframe=1;
@@ -76,6 +93,9 @@ int main(void)
      assert(s->ring[0].keyframe==1); /* the new IDR chunk is independently decodable */
      assert(s->decode_time==15000);
      assert(accept_access_timestamp(s,18000)==0); /* duplicate */
+     s->frame_duration=0;
+     assert(accept_access_timestamp(s,18000)==0); /* duplicate before first duration */
+     s->frame_duration=3000;
      assert(accept_access_timestamp(s,12000)==0); /* recent replay */
      assert(accept_access_timestamp(s,15000)==0); /* advancing old pictures */
      assert(accept_access_timestamp(s,18000)==0); /* duplicate catches up */
@@ -88,7 +108,7 @@ int main(void)
      * chunk is emitted on the next AU, while all later deltas flush in about
      * one-second chunks rather than waiting for the next IDR. */
     {const unsigned char idr[]={0x65},pframe[]={0x41};unsigned char *boot=NULL;
-     size_t boot_len=0;uint32_t boot_seq=0;unsigned previous=0;
+     size_t boot_len=0;uint32_t boot_first=0,boot_seq=0;unsigned previous=0;
      s->sps_len=4;s->pps_len=1;memcpy(s->sps,"\x67\x64\x00\x32",4);s->pps[0]=0x68;
      assert(build_init(s)==0);snprintf(s->status,sizeof(s->status),"connected");
      previous=s->sequence;
@@ -98,7 +118,8 @@ int main(void)
          if(i==1)assert(s->ring[0].keyframe&&s->sequence==previous+1);
      }
      assert(s->sequence-previous>=6 && s->sequence-previous<=9);
-     assert(joan_fmp4_fragment("main",0,&boot,&boot_len,&boot_seq,1)==0);
+     assert(joan_fmp4_fragment("main",0,&boot,&boot_len,&boot_first,&boot_seq,1)==0);
+     assert(boot_first==s->ring[0].sequence);
      assert(boot_seq==s->sequence && boot_len>300);
      assert(boot[4]=='m' && boot[5]=='o' && boot[6]=='o' && boot[7]=='f');
      previous=0;

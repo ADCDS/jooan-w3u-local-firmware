@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.8"
+#define JOAN_VERSION "0.2.9"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -111,8 +111,8 @@ int joan_fmp4_start(const JoanConfig *cfg);
 int joan_fmp4_init_segment(const char *stream, unsigned char **data, size_t *len,
                            unsigned timeout_ms);
 int joan_fmp4_fragment(const char *stream, uint32_t after,
-                       unsigned char **data, size_t *len, uint32_t *sequence,
-                       unsigned timeout_ms);
+                       unsigned char **data, size_t *len, uint32_t *first,
+                       uint32_t *sequence, unsigned timeout_ms);
 const char *joan_fmp4_status(const char *stream);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);

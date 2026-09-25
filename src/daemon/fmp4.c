@@ -100,8 +100,8 @@ static int publish_gop(Stream*s)
     {int keyframe=s->samples[0].flags==0x02000000;
     moof=box(&b,"moof");mfhd=box(&b,"mfhd");u32(&b,0);u32(&b,s->sequence+1);endbox(&b,mfhd);traf=box(&b,"traf");tfhd=box(&b,"tfhd");u32(&b,0x020000);u32(&b,1);endbox(&b,tfhd);tfdt=box(&b,"tfdt");u32(&b,0x01000000);u64(&b,s->decode_time);endbox(&b,tfdt);trun=box(&b,"trun");u32(&b,0x00000701);u32(&b,(uint32_t)s->sample_count);offset_pos=b.n;u32(&b,0);for(i=0;i<s->sample_count;i++){u32(&b,s->samples[i].duration);u32(&b,s->samples[i].size);u32(&b,s->samples[i].flags);next_decode_time+=s->samples[i].duration;}endbox(&b,trun);endbox(&b,traf);endbox(&b,moof);data_offset=(uint32_t)b.n+8;if(b.cap&&offset_pos+4<=b.n){b.p[offset_pos]=data_offset>>24;b.p[offset_pos+1]=data_offset>>16;b.p[offset_pos+2]=data_offset>>8;b.p[offset_pos+3]=data_offset;}mdat=box(&b,"mdat");put(&b,s->gop,s->gop_len);endbox(&b,mdat);
     if(!b.p||!b.cap||b.n<16||b.n>MAX_GOP+4096){free(b.p);return-1;}
-    s->decode_time=next_decode_time;s->sequence++;
-    pthread_mutex_lock(&s->lock);f=&s->ring[s->ring_next++%RING];s->ring_bytes-=f->len;free(f->data);f->data=b.p;f->len=b.n;f->sequence=s->sequence;f->published=time(NULL);f->keyframe=keyframe;s->ring_bytes+=f->len;
+    s->decode_time=next_decode_time;
+    pthread_mutex_lock(&s->lock);s->sequence++;f=&s->ring[s->ring_next++%RING];s->ring_bytes-=f->len;free(f->data);f->data=b.p;f->len=b.n;f->sequence=s->sequence;f->published=time(NULL);f->keyframe=keyframe;s->ring_bytes+=f->len;
     /* Bound retention on the camera's small RAM. */
     while(s->ring_bytes>RING_MAX_BYTES){unsigned j,oldest=0;for(j=1;j<RING;j++)if(s->ring[j].data&&(!s->ring[oldest].data||s->ring[j].sequence<s->ring[oldest].sequence))oldest=j;s->ring_bytes-=s->ring[oldest].len;free(s->ring[oldest].data);memset(&s->ring[oldest],0,sizeof(s->ring[oldest]));}
     pthread_cond_broadcast(&s->changed);pthread_mutex_unlock(&s->lock);
@@ -203,6 +203,7 @@ static int accept_access_timestamp(Stream*s,uint32_t timestamp)
         return 1;
     }
     backward=s->last_timestamp-timestamp;
+    if(!backward)return 0; /* duplicated first IDR is not a clock reset */
     if(backward<=RTP_TIMESCALE&&s->frame_duration){
         /* A short OEM replay need not tear down the decoder timeline. Drop
          * those pictures until their timestamps pass our last live AU. */
@@ -247,43 +248,53 @@ static Stream*find_stream(const char*id){size_t i;for(i=0;i<2;i++)if(!strcmp(id,
 static struct timespec wait_deadline(unsigned ms){struct timespec t;clock_gettime(CLOCK_REALTIME,&t);t.tv_sec+=ms/1000;t.tv_nsec+=(long)(ms%1000)*1000000L;if(t.tv_nsec>=1000000000L){t.tv_sec++;t.tv_nsec-=1000000000L;}return t;}
 static int timedwait(Stream*s,const struct timespec*deadline){return pthread_cond_timedwait(&s->changed,&s->lock,deadline);}
 int joan_fmp4_init_segment(const char*id,unsigned char**data,size_t*len,unsigned timeout){Stream*s=find_stream(id);struct timespec deadline=wait_deadline(timeout);if(!s||!data||!len)return-1;pthread_mutex_lock(&s->lock);while(!s->init_len&&!timedwait(s,&deadline)){}if(!s->init_len||strcmp(s->status,"connected")){pthread_mutex_unlock(&s->lock);return-1;}*data=malloc(s->init_len);if(!*data){pthread_mutex_unlock(&s->lock);return-1;}memcpy(*data,s->init,s->init_len);*len=s->init_len;pthread_mutex_unlock(&s->lock);return 0;}
-int joan_fmp4_fragment(const char*id,uint32_t after,unsigned char**data,size_t*len,uint32_t*seq,unsigned timeout)
+int joan_fmp4_fragment(const char*id,uint32_t after,unsigned char**data,size_t*len,uint32_t*first,uint32_t*seq,unsigned timeout)
 {
-    Stream*s=find_stream(id);Fragment*best,*anchor;unsigned i,j;int rc=-1;
+    Stream*s=find_stream(id);Fragment*oldest,*newest,*anchor;unsigned i,j;int rc=-1;
     struct timespec deadline=wait_deadline(timeout);
-    if(!s||!data||!len||!seq)return-1;
+    if(!s||!data||!len||!first||!seq)return-1;
     pthread_mutex_lock(&s->lock);
     for(;;){
-        best=NULL;anchor=NULL;
+        oldest=NULL;newest=NULL;anchor=NULL;
         for(i=0;i<RING;i++){
             Fragment*f=&s->ring[i];
             if(!f->data)continue;
-            if(f->sequence>after&&(!best||(after?f->sequence<best->sequence:f->sequence>best->sequence)))best=f;
+            if(f->sequence>after&&(!oldest||f->sequence<oldest->sequence))oldest=f;
+            if(!newest||f->sequence>newest->sequence)newest=f;
             if(!after&&f->keyframe&&(!anchor||f->sequence>anchor->sequence))anchor=f;
         }
-        if(best){
-                if(strcmp(s->status,"connected")||time(NULL)-best->published>4){rc=-2;break;}
-            if(after){
-                if(best->sequence!=after+1){rc=-2;break;}
-                *data=malloc(best->len);if(!*data)break;
-                memcpy(*data,best->data,best->len);*len=best->len;*seq=best->sequence;rc=0;break;
-            }
-            if(anchor&&anchor->sequence<=best->sequence){
-                size_t total=0,offset=0;unsigned count=best->sequence-anchor->sequence+1;
-                if(count>RING){rc=-2;break;}
+        if(oldest){
+            /* A retained next fragment is valid even if it is >4s old; only
+             * the producer's newest fragment must be fresh. Otherwise slow
+             * HTTPS consumers get false discontinuities while catching up. */
+            if(strcmp(s->status,"connected")||!newest||time(NULL)-newest->published>4){rc=-2;break;}
+            if(after&&oldest->sequence!=after+1){rc=-2;break;}
+            if(!after&&!anchor){rc=-2;break;}
+            {
+                uint32_t start=after?after+1:anchor->sequence;
+                unsigned count=newest->sequence-start+1,send=count;
+                size_t total=0,offset=0;
+                if(!count||count>RING){rc=-2;break;}
+                /* Live catch-up batches must not multiply large GOP copies by
+                 * eight simultaneous HTTP workers on this 38 MiB camera.
+                 * Always serve the first fragment even if it exceeds 256 KiB. */
+                if(after&&send>4)send=4;
                 for(j=0;j<count;j++){
-                    Fragment*f=NULL;for(i=0;i<RING;i++)if(s->ring[i].data&&s->ring[i].sequence==anchor->sequence+j){f=&s->ring[i];break;}
-                    if(!f||f->len>RING_MAX_BYTES-total){total=0;break;}total+=f->len;
+                    Fragment*f=NULL;
+                    for(i=0;i<RING;i++)if(s->ring[i].data&&s->ring[i].sequence==start+j){f=&s->ring[i];break;}
+                    if(!f){rc=-2;break;}
+                    if(j<send){
+                        if(f->len>RING_MAX_BYTES-total){rc=-2;break;}
+                        if(after&&j&&f->len>262144u-total)send=j;
+                        else total+=f->len;
+                    }
                 }
-                if(total){
-                    *data=malloc(total);if(!*data)break;
-                    for(j=0;j<count;j++)for(i=0;i<RING;i++)if(s->ring[i].data&&s->ring[i].sequence==anchor->sequence+j){memcpy(*data+offset,s->ring[i].data,s->ring[i].len);offset+=s->ring[i].len;break;}
-                    *len=total;*seq=best->sequence;rc=0;break;
-                }
+                if(rc==-2)break;
+                if(!total){rc=-2;break;}
+                *data=malloc(total);if(!*data)break;
+                for(j=0;j<send;j++)for(i=0;i<RING;i++)if(s->ring[i].data&&s->ring[i].sequence==start+j){memcpy(*data+offset,s->ring[i].data,s->ring[i].len);offset+=s->ring[i].len;break;}
+                *len=total;*first=start;*seq=start+send-1;rc=0;break;
             }
-            /* Refuse an incomplete GOP. A new request can bootstrap on the
-             * next IDR rather than blocking an HTTP worker indefinitely. */
-            rc=-2;break;
         }
         if(after&&s->sequence>after&&s->sequence-after>RING){rc=-2;break;}
         if(after&&s->sequence<after&&s->sequence){rc=-2;break;}
