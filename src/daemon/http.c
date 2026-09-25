@@ -56,7 +56,12 @@ static void cache_cert_names(const mbedtls_x509_crt *id)
         n++;
     }
 }
+/* One physical command order shared by lease, move, Stop and expiry. */
 static pthread_mutex_t ptz_lock=PTHREAD_MUTEX_INITIALIZER;
+static int ptz_stop_uncertain;
+static uint64_t ptz_preset_expires;
+static uint64_t ptz_stop_retry_ms;
+static uint64_t ptz_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000u+(uint64_t)t.tv_nsec/1000000u;}
 #ifndef JOAN_NO_TLS
 static pthread_mutex_t tls_rng_lock=PTHREAD_MUTEX_INITIALIZER;
 #endif
@@ -69,7 +74,7 @@ static int server_stopping;
 #ifndef JOAN_NO_TLS
 static int locked_rng(void*ctx,unsigned char*out,size_t len){int rc;pthread_mutex_lock(&tls_rng_lock);rc=mbedtls_ctr_drbg_random(ctx,out,len);pthread_mutex_unlock(&tls_rng_lock);return rc;}
 #endif
-static char ptz_lease[65]; static time_t ptz_expires;
+static char ptz_lease[65]; static uint64_t ptz_expires;
 
 #ifndef JOAN_NO_TLS
 static int tls_wait(int fd,short events){struct pollfd p;int r;p.fd=fd;p.events=events;p.revents=0;do r=poll(&p,1,10000);while(r<0&&errno==EINTR);return r>0&&(p.revents&events)?0:-1;}
@@ -105,14 +110,42 @@ static int host_ok(const char*host){char name[256],label[64],*colon;struct in_ad
 static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r->origin[0])return required?0:1;if(!host_ok(r->host))return 0;snprintf(expected,sizeof(expected),"%s://%s",G.plain_http?"http":"https",r->host);return !strcmp(r->origin,expected);}
 static int authorized(Conn*c,JoanRequest*r,JoanAuthz*a,int csrf){if(!origin_ok(r,0))return error_json(c,403,"origin_rejected","request origin is not this camera"),-1;if(joan_auth_request(r,csrf,a))return error_json(c,401,"authentication_required","authentication required"),-1;return 0;}
 static int helper_json(Conn*c,const char*op,const char*path,const char*id){unsigned char*out=NULL;size_t n=0;char esc[4096],body[4352];unsigned timeout=!strcmp(op,"firmware-verify")?60u:!strcmp(op,"wifi-stage")?65u:15u;int rc=joan_run_helper(&G,op,path,id,&out,&n,timeout);if(rc){free(out);return error_json(c,502,"integration_failed","local integration operation failed");}if(!strcmp(op,"ssh-list")){if(n>1800)n=1800;json_escape(out?out:(unsigned char*)"",n,esc,sizeof(esc));snprintf(body,sizeof(body),"{\"ok\":true,\"authorized_keys\":\"%s\"}",esc);}else snprintf(body,sizeof(body),"{\"ok\":true,\"id\":\"%s\"}",id?id:"");free(out);return json(c,200,body);}
-static int mqtt_accepted(Conn*c,unsigned command,const char*payload){char operation[65],body[192];int rc=joan_mqtt_request(command,payload,operation);if(rc==-2)return error_json(c,409,"operation_pending","an operation with this command is already pending");if(rc)return error_json(c,503,"mqtt_unavailable","OEM command channel is unavailable");snprintf(body,sizeof(body),"{\"accepted\":true,\"operation\":\"%s\",\"status\":\"/api/v1/operations/%s\"}",operation,operation);return json(c,202,body);}
+static int mqtt_accepted(Conn*c,unsigned command,const char*payload){char operation[65],body[192];int rc;
+    if(command==66491){
+        pthread_mutex_lock(&ptz_lock);
+        if(ptz_stop_uncertain||ptz_lease[0]||ptz_preset_expires>ptz_monotonic_ms()){
+            pthread_mutex_unlock(&ptz_lock);
+            return error_json(c,409,"ptz_busy","another camera move is pending");
+        }
+        rc=joan_mqtt_request(command,payload,operation);
+        if(!rc)ptz_preset_expires=ptz_monotonic_ms()+20000;
+        pthread_mutex_unlock(&ptz_lock);
+    }else rc=joan_mqtt_request(command,payload,operation);
+    if(rc==-2)return error_json(c,409,"operation_pending","an operation with this command is already pending");
+    if(rc)return error_json(c,503,"mqtt_unavailable","OEM command channel is unavailable");
+    snprintf(body,sizeof(body),"{\"accepted\":true,\"operation\":\"%s\",\"status\":\"/api/v1/operations/%s\"}",operation,operation);
+    return json(c,202,body);
+}
 static int private_routes(const char*input,char*out,size_t cap){char copy[1024],*save=NULL,*item;size_t used=0;if(!input||strlen(input)>=sizeof(copy))return-1;snprintf(copy,sizeof(copy),"%s",input);for(item=strtok_r(copy,", ", &save);item;item=strtok_r(NULL,", ",&save)){char*slash=strchr(item,'/');unsigned prefix;struct in_addr a4;struct in6_addr a6;int ok=0;if(!slash)return-1;*slash++=0;prefix=(unsigned)strtoul(slash,NULL,10);if(inet_pton(AF_INET,item,&a4)==1&&prefix>=8&&prefix<=32){uint32_t a=ntohl(a4.s_addr);ok=((a>>24)==10)||((a>>20)==0xac1)||((a>>16)==0xc0a8);}else if(inet_pton(AF_INET6,item,&a6)==1&&prefix>=7&&prefix<=128)ok=(a6.s6_addr[0]&0xfe)==0xfc;if(!ok)return-1;{int n=snprintf(out+used,cap-used,"%s/%u\n",item,prefix);if(n<=0||(size_t)n>=cap-used)return-1;used+=(size_t)n;}}return used?0:-1;}
 static unsigned release_sequence(void){unsigned char*raw=NULL;size_t i,n=0;uint64_t value=0;if(!G.release_sequence_path[0]||joan_read_file(G.release_sequence_path,&raw,&n,32)||!n)goto done;if(raw[n-1]=='\n')n--;if(!n)goto done;for(i=0;i<n;i++){if(raw[i]<'0'||raw[i]>'9'){value=0;goto done;}value=value*10u+(unsigned)(raw[i]-'0');if(value>0xffffffffu){value=0;goto done;}}done:free(raw);return(unsigned)value;}
 
+static int ptz_stop_locked(void)
+{
+    int rc=joan_run_helper(&G,"ptz-stop",NULL,NULL,NULL,NULL,3);
+    if(rc){ptz_stop_uncertain=1;ptz_lease[0]=0;ptz_expires=0;ptz_stop_retry_ms=ptz_monotonic_ms()+1000;}
+    else {ptz_stop_uncertain=0;ptz_lease[0]=0;ptz_expires=0;}
+    return rc;
+}
 static void *ptz_expiry_loop(void *unused)
 {
     (void)unused;
-    for(;;){int stop=0;struct timespec delay={0,250000000L};nanosleep(&delay,NULL);pthread_mutex_lock(&ptz_lock);if(ptz_lease[0]&&ptz_expires<=time(NULL)){ptz_lease[0]=0;ptz_expires=0;stop=1;}pthread_mutex_unlock(&ptz_lock);if(stop)joan_run_helper(&G,"ptz-stop",NULL,NULL,NULL,NULL,3);}
+    for(;;){struct timespec delay={0,250000000L};nanosleep(&delay,NULL);
+        pthread_mutex_lock(&ptz_lock);
+        if((ptz_lease[0]&&ptz_expires<=ptz_monotonic_ms())||
+            (ptz_stop_uncertain&&ptz_monotonic_ms()>=ptz_stop_retry_ms))
+            (void)ptz_stop_locked();
+        pthread_mutex_unlock(&ptz_lock);
+    }
     return NULL;
 }
 
@@ -271,10 +304,9 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"GET"))return helper_json(c,"ssh-list",NULL,NULL);
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"POST")){if(!r->body||r->content_length>16384)return json(c,400,"{\"error\":\"invalid key\"}");if(joan_stage_blob(&G,"ssh-key",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"ssh-add",path,id);}
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"DELETE")){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"ssh-delete",NULL,id);}
-    if(!strcmp(r->path,"/api/ptz/lease")&&!strcmp(r->method,"POST")){unsigned char rnd[32];pthread_mutex_lock(&ptz_lock);if(ptz_lease[0]&&ptz_expires>time(NULL)){pthread_mutex_unlock(&ptz_lock);return error_json(c,409,"ptz_busy","PTZ is leased");}if(joan_random(rnd,sizeof(rnd))){pthread_mutex_unlock(&ptz_lock);return error_json(c,500,"random_failed","could not create lease");}joan_hex(rnd,sizeof(rnd),ptz_lease);ptz_expires=time(NULL)+2;snprintf(body,sizeof(body),"{\"lease\":\"%s\",\"expires_in\":2}",ptz_lease);pthread_mutex_unlock(&ptz_lock);return json(c,201,body);}
-    if(!strcmp(r->path,"/api/ptz/move")&&!strcmp(r->method,"POST")){unsigned duration,speed;char canonical[512];if(json_field(r->body,r->content_length,"lease",x,sizeof(x))||json_field(r->body,r->content_length,"command",y,sizeof(y))||json_uint(r->body,r->content_length,"duration_ms",&duration)||json_uint(r->body,r->content_length,"speed",&speed))return error_json(c,400,"invalid_ptz_jog","lease, command, duration_ms and speed are required");if((strcmp(y,"up")&&strcmp(y,"down")&&strcmp(y,"left")&&strcmp(y,"right"))||duration<50||duration>1000||speed<1||speed>5)return error_json(c,400,"invalid_ptz_jog","direction, duration or speed is out of range");pthread_mutex_lock(&ptz_lock);if(ptz_expires<time(NULL)||strcmp(x,ptz_lease)){pthread_mutex_unlock(&ptz_lock);return error_json(c,403,"invalid_lease","invalid PTZ lease");}ptz_expires=time(NULL)+(duration+1999)/1000;pthread_mutex_unlock(&ptz_lock);snprintf(canonical,sizeof(canonical),"{\"command\":\"%s\",\"duration_ms\":%u,\"speed\":%u}\n",y,duration,speed);if(joan_stage_blob(&G,"ptz",canonical,strlen(canonical),id,path))return error_json(c,500,"stage_failed","could not stage PTZ jog");return helper_json(c,"ptz-jog",path,id);}
-    if(!strcmp(r->path,"/api/ptz/release")&&!strcmp(r->method,"POST")){int stop=0;if(json_field(r->body,r->content_length,"lease",x,sizeof(x)))return json(c,400,"{\"error\":\"lease required\"}");pthread_mutex_lock(&ptz_lock);if(!strcmp(x,ptz_lease)){ptz_lease[0]=0;ptz_expires=0;stop=1;}pthread_mutex_unlock(&ptz_lock);return stop?helper_json(c,"ptz-stop",NULL,NULL):json(c,403,"{\"error\":\"invalid lease\"}");}
-    if(!strcmp(r->path,"/api/ptz/stop")&&!strcmp(r->method,"POST")){if(json_field(r->body,r->content_length,"lease",x,sizeof(x)))return json(c,400,"{\"error\":\"lease required\"}");pthread_mutex_lock(&ptz_lock);if(strcmp(x,ptz_lease)){pthread_mutex_unlock(&ptz_lock);return json(c,403,"{\"error\":\"invalid lease\"}");}ptz_lease[0]=0;ptz_expires=0;pthread_mutex_unlock(&ptz_lock);return helper_json(c,"ptz-stop",NULL,NULL);}
+    if(!strcmp(r->path,"/api/ptz/lease")&&!strcmp(r->method,"POST")){unsigned char rnd[32];pthread_mutex_lock(&ptz_lock);if(ptz_stop_uncertain){pthread_mutex_unlock(&ptz_lock);return error_json(c,503,"ptz_stop_uncertain","camera motion has not been confirmed stopped");}if(ptz_preset_expires>ptz_monotonic_ms()){pthread_mutex_unlock(&ptz_lock);return error_json(c,409,"ptz_busy","preset travel is pending");}if(ptz_lease[0]){if(ptz_expires>ptz_monotonic_ms()){pthread_mutex_unlock(&ptz_lock);return error_json(c,409,"ptz_busy","PTZ is leased");}if(ptz_stop_locked()){pthread_mutex_unlock(&ptz_lock);return error_json(c,503,"ptz_stop_uncertain","camera stop has not been confirmed");}}if(joan_random(rnd,sizeof(rnd))){pthread_mutex_unlock(&ptz_lock);return error_json(c,500,"random_failed","could not create lease");}joan_hex(rnd,sizeof(rnd),ptz_lease);ptz_expires=ptz_monotonic_ms()+2000;snprintf(body,sizeof(body),"{\"lease\":\"%s\",\"expires_in\":2}",ptz_lease);pthread_mutex_unlock(&ptz_lock);return json(c,201,body);}
+    if(!strcmp(r->path,"/api/ptz/move")&&!strcmp(r->method,"POST")){unsigned duration,speed;char canonical[512];if(json_field(r->body,r->content_length,"lease",x,sizeof(x))||json_field(r->body,r->content_length,"command",y,sizeof(y))||json_uint(r->body,r->content_length,"duration_ms",&duration)||json_uint(r->body,r->content_length,"speed",&speed))return error_json(c,400,"invalid_ptz_jog","lease, command, duration_ms and speed are required");if((strcmp(y,"up")&&strcmp(y,"down")&&strcmp(y,"left")&&strcmp(y,"right"))||duration<50||duration>1000||speed<1||speed>5)return error_json(c,400,"invalid_ptz_jog","direction, duration or speed is out of range");pthread_mutex_lock(&ptz_lock);if(ptz_stop_uncertain||ptz_expires<=ptz_monotonic_ms()||strcmp(x,ptz_lease)){pthread_mutex_unlock(&ptz_lock);return error_json(c,403,"invalid_lease","PTZ lease expired or stop pending");}snprintf(canonical,sizeof(canonical),"{\"command\":\"%s\",\"duration_ms\":%u,\"speed\":%u}\n",y,duration,speed);if(joan_stage_blob(&G,"ptz",canonical,strlen(canonical),id,path)){pthread_mutex_unlock(&ptz_lock);return error_json(c,500,"stage_failed","could not stage PTZ jog");}if(joan_run_helper(&G,"ptz-jog",path,id,NULL,NULL,3)){ptz_stop_uncertain=1;ptz_stop_retry_ms=ptz_monotonic_ms();pthread_mutex_unlock(&ptz_lock);return error_json(c,502,"ptz_move_uncertain","move failed; stop confirmation pending");}ptz_expires=ptz_monotonic_ms()+2000;pthread_mutex_unlock(&ptz_lock);return json(c,200,"{\"ok\":true}");}
+    if((!strcmp(r->path,"/api/ptz/release")||!strcmp(r->path,"/api/ptz/stop"))&&!strcmp(r->method,"POST")){int rc;if(json_field(r->body,r->content_length,"lease",x,sizeof(x)))return error_json(c,400,"invalid_lease","lease required");pthread_mutex_lock(&ptz_lock);if(strcmp(x,ptz_lease)||!ptz_lease[0]){pthread_mutex_unlock(&ptz_lock);return error_json(c,403,"invalid_lease","invalid PTZ lease");}rc=ptz_stop_locked();pthread_mutex_unlock(&ptz_lock);return rc?error_json(c,502,"ptz_stop_uncertain","camera stop has not been confirmed"):json(c,200,"{\"ok\":true}");}
     if(!strcmp(r->path,"/api/ptz/home")&&!strcmp(r->method,"POST")){char action[16]="list",command[512];unsigned token;(void)json_field(r->body,r->content_length,"action",action,sizeof(action));if(!strcmp(action,"set")){snprintf(command,sizeof(command),"{\"cmd\":66485,\"cmd_type\":\"request\",\"name\":\"__home__\",\"mot_index\":0}");return mqtt_accepted(c,66485,command);}if(!strcmp(action,"goto")){if(json_uint(r->body,r->content_length,"token",&token))return error_json(c,400,"invalid_preset","numeric home preset token is required");snprintf(command,sizeof(command),"{\"cmd\":66491,\"cmd_type\":\"request\",\"coordinateID\":%u,\"mot_index\":0}",token);return mqtt_accepted(c,66491,command);}return mqtt_accepted(c,66486,"{\"cmd\":66486,\"cmd_type\":\"request\",\"mot_index\":0}");}
     if(!strcmp(r->path,"/api/ptz/presets")&&!strcmp(r->method,"GET"))return mqtt_accepted(c,66486,"{\"cmd\":66486,\"cmd_type\":\"request\"}");
     if(!strcmp(r->path,"/api/ptz/presets")&&!strcmp(r->method,"POST")){char command[768],escaped[384];unsigned token;if(json_field(r->body,r->content_length,"name",x,sizeof(x))||!x[0]||strlen(x)>64)return error_json(c,400,"invalid_preset","preset name is required");json_escape((unsigned char*)x,strlen(x),escaped,sizeof(escaped));if(!json_uint(r->body,r->content_length,"token",&token)){snprintf(command,sizeof(command),"{\"cmd\":66489,\"cmd_type\":\"request\",\"coordinateID\":%u,\"name\":\"%s\",\"mot_index\":0}",token,escaped);return mqtt_accepted(c,66489,command);}snprintf(command,sizeof(command),"{\"cmd\":66485,\"cmd_type\":\"request\",\"name\":\"%s\",\"mot_index\":0}",escaped);return mqtt_accepted(c,66485,command);}

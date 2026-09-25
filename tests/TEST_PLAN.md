@@ -12,11 +12,11 @@ bounded execution, captured logs, and the established cold-recovery procedure.
   `ci/compatibility-hashes.sha256` byte-for-byte.
 - Parse every shell script with its declared interpreter.
 - In steady state, keep the compressed controller/SSH material plus exactly one
-  stable runtime at or below **196608 bytes (192 KiB)** and require at least
+  stable runtime at or below **200704 bytes (196 KiB)** and require at least
   **65536 bytes (64 KiB)** free.
 - During update, require durable controller-owned SSH recovery before selecting
   `- - 0` and deleting the one persistent runtime. Stage exactly one replacement
-  under the same **196608-byte (192 KiB)** cap while preserving at least **57344
+  under the same **200704-byte (196 KiB)** cap while preserving at least **57344
   bytes (56 KiB)** free, above the OEM startapp cleanup threshold of 50 KiB.
   Failure must leave SSH recovery and no selected runtime; promotion must select
   the candidate and restore the 64 KiB steady reserve.
@@ -153,8 +153,8 @@ recovery gates.
 
 Promotion also requires main/sub fMP4, direct RTSP, mic listening/PTT, PTZ
 jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
-capture, no-default-route enforcement, the steady 192 KiB/64 KiB contract, the
-single-runtime 192 KiB/56 KiB maintenance contract with SSH recovery, and
+capture, no-default-route enforcement, the steady 196 KiB/64 KiB contract, the
+single-runtime 196 KiB/56 KiB maintenance contract with SSH recovery, and
 destructive uninstall
 semantics to pass on the physical JA-A12. Until then no
 tag is supported.

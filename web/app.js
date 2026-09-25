@@ -1,13 +1,13 @@
 'use strict';
 import { JooanAudioClient } from './audio-client.js';
 import { Fmp4Player } from './video-player.js';
-import { looksLikeTv, createNavigator, direction, isSelect } from './spatial.js';
+import { PtzSteps } from './ptz-steps.js';
+import { looksLikeTv, createNavigator, isSelect } from './spatial.js';
 
 const $ = s => document.querySelector(s);
 const all = s => Array.from(document.querySelectorAll(s));
 
 let csrf = '', wifiId = '', firmwareId = '';
-let ptzLease = '', ptzHeld = false, ptzStopping = false, jogDir = '';
 let audioClient = null, unbindTalk = null;
 let videoPlayers = [];
 let streams = [];
@@ -526,115 +526,54 @@ $('#ssh-form').addEventListener('submit', async e => {
 });
 
 /* ---------- ptz ---------- */
-let jogSpeed = 3;
-/* Moving a camera is a live, repeated action, so its failures must not behave
-   like events. They used to raise a toast per key press -- a stack of
-   "PTZ is leased" and "local integration operation failed" that named internal
-   machinery, said nothing a viewer could act on, and buried the screen the
-   moment you held a direction. Say it once, in words, on the line under the
-   pad where you are already looking. */
-const PTZ_TROUBLE = {
-  ptz_busy: 'Something else is moving the camera right now.',
-  invalid_lease: 'Lost the camera; press again.',
-  invalid_ptz_jog: 'That move is outside what the camera accepts.',
-};
-function ptzTrouble(x) {
-  /* A stale lease is normal -- it expires on its own -- and the next press
-     re-takes one, so drop it quietly rather than reporting it. */
-  if (x.code === 'invalid_lease' || x.code === 'ptz_busy') ptzLease = '';
-  if (x.kind === 'auth') return;           /* the session dialog already says so */
-  $('#ptz-state').textContent = x.kind === 'offline'
-    ? 'The camera is not answering.'
-    : PTZ_TROUBLE[x.code] || 'The camera did not take the move.';
-}
-
-async function ptz(command) {
-  if (!ptzLease) ptzLease = (await api('/api/v1/ptz/lease', { method: 'POST' })).lease;
-  if (command === 'stop') {
-    await api('/api/v1/ptz/stop', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lease: ptzLease }),
-    });
-    ptzLease = '';
-  } else {
-    await api('/api/v1/ptz/move', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lease: ptzLease, command, duration_ms: 500, speed: jogSpeed }),
-    });
-  }
-  $('#ptz-state').textContent = ptzLease ? `Moving ${command}` : 'Stopped';
-}
-function releasePtz() {
-  ptzHeld = false;
-  jogDir = '';
-  if (!ptzLease || ptzStopping) return;
-  ptzStopping = true;
-  ptz('stop').catch(x => { ptzLease = ''; ptzTrouble(x); })
-    .finally(() => { ptzStopping = false; });
-}
-function startPtz(command) {
-  ptzHeld = true;
-  ptz(command).then(() => { if (!ptzHeld) releasePtz(); })
-    .catch(x => { ptzLease = ''; ptzTrouble(x); });
-}
-
-/* Pointer AND keyboard. A D-pad OK press emits keydown/keyup and a click;
-   browsers do not synthesise pointer events for it, which is why the previous
-   pointer-only binding left pan/tilt dead on a remote. `blur` is the deadman:
-   a control that loses focus mid-press must not leave the motor running. */
-for (const b of all('[data-ptz]')) {
-  const command = b.dataset.ptz;
-  if (command === 'stop') { b.onclick = releasePtz; continue; }
-  const down = e => {
-    e.preventDefault();
-    if (e.pointerId !== undefined) {
-      try { b.setPointerCapture?.(e.pointerId); } catch (_) { /* synthetic pointer */ }
+const ptzSteps = new PtzSteps({
+  request: (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}) }),
+  video: () => $('#console').dataset.fs === 'sub' ? $('#video-sub') : $('#video-main'),
+  state: text => { $('#ptz-state').textContent = text; },
+  canMove: () => !presetMotion,
+  inputs: busy => { for (const b of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #preset-set, #preset-delete, #ptz-home')) b.disabled = busy || presetMotion; },
+  settled: async (video, before, valid) => {
+    if (!video || before == null || document.hidden) return false;
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const deadline = performance.now() + 4500;
+    while (valid() && !document.hidden && performance.now() < deadline) {
+      if (video.getVideoPlaybackQuality?.().totalVideoFrames > before + 2) return true;
+      await new Promise(resolve => setTimeout(resolve, 150));
     }
-    startPtz(command);
-  };
-  const up = e => { e.preventDefault?.(); releasePtz(); };
-  b.addEventListener('pointerdown', down);
-  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    b.addEventListener(name, up);
-  }
-  b.addEventListener('keydown', e => { if (isSelect(e) && !e.repeat) down(e); });
-  b.addEventListener('keyup', e => { if (isSelect(e)) up(e); });
-  b.addEventListener('blur', up);
-}
+    return false;
+  },
+});
 
-/* On a remote the jog pad is ONE control, not five. Walking the ring onto each
-   arrow and pressing OK for every nudge is exactly the work a D-pad exists to
-   avoid, so the pad takes the arrows for itself: OK grabs it, the arrows drive
-   the camera, OK or Back lets go. Grabbing is what keeps it from being a trap
-   -- an ungrabbed pad passes the arrows back and the ring walks away normally. */
+for (const b of all('[data-ptz]')) {
+  if (b.dataset.ptz === 'stop') b.onclick = () => ptzSteps.stop().catch(() => {});
+  else b.onclick = () => ptzSteps.nudge(b.dataset.ptz);
+  b.addEventListener('keydown', e => { if (isSelect(e)) e.stopPropagation(); });
+}
 let jogOn = false;
 function setJog(on) {
   if (jogOn === on) return;
   jogOn = on;
   $('#jog').classList.toggle('jogging', on);
-  $('#jog-hint').textContent = on
-    ? 'Arrows move the camera · OK or Back to release'
-    : 'Press OK, then use the arrows';
-  if (!on) releasePtz();
+  $('#jog-hint').textContent = on ? 'Tap an arrow once · Back to leave' : 'Press OK, then tap an arrow';
 }
 $('#jog').addEventListener('keydown', e => {
-  if (!isSelect(e)) return;
+  if (e.target !== $('#jog') || !tvNav || !isSelect(e)) return;
   e.preventDefault();
   if (!e.repeat) setJog(!jogOn);
 });
-/* Losing the ring mid-press must not leave the motor running. */
 $('#jog').addEventListener('blur', () => setJog(false));
-
-$('#speed-chips').replaceChildren(...[1, 2, 3, 4, 5].map(n => {
-  const b = document.createElement('button');
-  b.textContent = String(n);
-  if (n === jogSpeed) b.classList.add('primary');
-  b.onclick = () => {
-    jogSpeed = n;
-    for (const other of all('#speed-chips button')) other.classList.toggle('primary', other === b);
-  };
-  return b;
-}));
+window.addEventListener('blur', () => { if (ptzSteps.busy || ptzSteps.lease) ptzSteps.stop().catch(() => {}); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && (ptzSteps.busy || ptzSteps.lease)) ptzSteps.stop().catch(() => {}); });
+$('#jog-mode').addEventListener('click', e => {
+  const b = e.target.closest('[data-step]');
+  if (!b || ptzSteps.busy) return;
+  ptzSteps.setMode(b.dataset.step);
+  for (const item of all('#jog-mode [data-step]')) {
+    item.classList.toggle('primary', item === b);
+    item.setAttribute('aria-pressed', String(item === b));
+  }
+});
 
 async function operation(accepted) {
   for (let i = 0; i < 65; i++) {
@@ -647,6 +586,17 @@ async function operation(accepted) {
 
 let presets = [];
 let selectedPreset = null;
+let presetMotion = false;
+async function runPresetMotion(task) {
+  if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
+  presetMotion = true;
+  for (const button of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #ptz-home, #preset-set, #preset-delete')) button.disabled = true;
+  try { return await task(); }
+  finally {
+    presetMotion = false;
+    for (const button of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #ptz-home, #preset-set, #preset-delete')) button.disabled = ptzSteps.busy || ptzSteps.uncertain;
+  }
+}
 async function loadPresets() {
   const response = await operation(await api('/api/v1/ptz/presets'));
   presets = response.ptz_coordinate || response.presets || [];
@@ -656,22 +606,24 @@ async function loadPresets() {
     b.textContent = item.name || token;
     b.dataset.preset = token;
     if (token === selectedPreset) b.classList.add('primary');
+    b.disabled = presetMotion || ptzSteps.busy || ptzSteps.uncertain;
     b.onclick = () => {
+      if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
       selectedPreset = token;
       for (const other of all('#preset-chips button')) {
         other.classList.toggle('primary', other === b);
       }
-      api('/api/v1/ptz/presets', {
+      runPresetMotion(() => api('/api/v1/ptz/presets', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: Number(token) }),
-      }).then(operation).catch(x => notice(x.message, 'crit'));
+      }).then(operation)).catch(x => notice(x.message, 'crit'));
     };
     return b;
   }));
   return presets;
 }
 
-$('#ptz-home').onclick = async () => {
+$('#ptz-home').onclick = () => runPresetMotion(async () => {
   try {
     const list = await loadPresets();
     const home = list.find(x => x.name === '__home__');
@@ -688,9 +640,10 @@ $('#ptz-home').onclick = async () => {
     }
     notice('Home operation completed');
   } catch (x) { notice(x.message, 'crit'); }
-};
+}).catch(x => notice(x.message, 'crit'));
 
 $('#preset-set').onclick = async () => {
+  if (ptzSteps.busy || ptzSteps.uncertain) return;
   try {
     const name = window.prompt('Preset name');
     if (!name) return;
@@ -703,6 +656,7 @@ $('#preset-set').onclick = async () => {
 };
 
 $('#preset-delete').onclick = () => {
+  if (ptzSteps.busy || ptzSteps.uncertain) return;
   if (!selectedPreset) { notice('Choose a preset first.'); return; }
   /* Snapshot the target: the guard box is non-modal, so the selection can
      change before the operator confirms — delete exactly what the dialog names. */
@@ -1012,11 +966,9 @@ function initTvRemote() {
   document.documentElement.setAttribute('data-tv', '');
   tvNav = createNavigator({
     root: document.body,
-    onCapture: (el, dir) => {
+    onCapture: (el, dir, event) => {
       if (el.id !== 'jog' || !jogOn) return false;
-      /* A held arrow repeats keydown several times a second; one press is one
-         move, and the release stops it. */
-      if (dir !== jogDir) { jogDir = dir; startPtz(dir); }
+      if (!event.repeat && !ptzSteps.busy) ptzSteps.nudge(dir);
       return true;
     },
     /* Back walks back up, one step per press: release the jog, close what is
@@ -1025,7 +977,7 @@ function initTvRemote() {
        anywhere in the Live zone -- so Back on the jog quit the app instead of
        stepping out of it, which reads as the remote firing at random. */
     onBack: () => {
-      if (jogOn) { setJog(false); return true; }
+      if (jogOn) { if (ptzSteps.lease) ptzSteps.stop().catch(() => {}); setJog(false); return true; }
       if (guardOpen()) { closeGuard(); return true; }
       if ($('#console').dataset.fs) { exitFullscreen(); return true; }
       if (!$('#setup').classList.contains('hidden')) { show('#console'); return true; }
@@ -1042,8 +994,6 @@ function initTvRemote() {
       return false;
     },
   });
-  /* A held arrow repeats keydown; the motor stops on the release. */
-  document.addEventListener('keyup', e => { if (jogOn && direction(e)) releasePtz(); });
   tvNav.restore();
 }
 

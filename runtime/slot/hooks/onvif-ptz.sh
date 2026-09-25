@@ -17,13 +17,18 @@ post() {
     soap_action=$1
     expected=$2
     length=$(wc -c < "$request" | tr -d ' ')
+    # Build a complete local request before opening the socket. Do not leave a
+    # producer | nc pipeline able to outlive a timed-out helper and move late.
+    wire=$run/onvif-ptz.$$.wire
+    trap 'rm -f "$request" "$response" "$wire"' EXIT HUP INT TERM
     {
         printf 'POST /onvif/Ptz HTTP/1.0\r\n'
         printf 'Host: 127.0.0.1:%s\r\n' "$port"
         printf 'Content-Type: application/soap+xml; charset=utf-8; action="http://www.onvif.org/ver20/ptz/wsdl/%s"\r\n' "$soap_action"
         printf 'Content-Length: %s\r\nConnection: close\r\n\r\n' "$length"
         cat "$request"
-    } | nc -w2 127.0.0.1 "$port" > "$response"
+    } > "$wire"
+    nc -w2 127.0.0.1 "$port" < "$wire" > "$response"
     grep -q '^HTTP/1\.[01] 200 ' "$response"
     ! grep -q '<env:Fault>' "$response"
     grep -q "<tptz:${expected}Response" "$response"

@@ -245,7 +245,7 @@ output:empty{display:none}
   .cam.main{flex:none;aspect-ratio:16/9}
   .cam.sub{width:62%}
   .side{width:auto;overflow:visible}
-  .desktop-only{display:none}
+  .side .grid2{grid-template-columns:1fr}
   .cam .cap{max-width:calc(100% - 8rem)}
   #view{overflow-y:auto}
   /* Clear the bottom rail: a toast covering the navigation is worse than the

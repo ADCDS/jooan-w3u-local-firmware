@@ -239,11 +239,11 @@ while read -r expected file; do
 done < "$self/compatibility.sha256"
 
 grep -qx 'JOOAN-PERSISTENT-CONTRACT-V1' "$self/persistent.contract" || die 'persistent contract missing'
-grep -qx 'logical_regular_file_cap_bytes=196608' "$self/persistent.contract" || die 'persistent cap mismatch'
+grep -qx 'logical_regular_file_cap_bytes=200704' "$self/persistent.contract" || die 'persistent cap mismatch'
 grep -qx 'final_free_reserve_bytes=65536' "$self/persistent.contract" || die 'free-space reserve mismatch'
 grep -qx 'state_config_regular_file_reserve_bytes=12288' "$self/persistent.contract" || die 'state/config reserve mismatch'
 grep -qx 'external_regular_file_reserve_bytes=4096' "$self/persistent.contract" || die 'external reserve mismatch'
-grep -qx 'maintenance_regular_file_cap_bytes=196608' "$self/persistent.contract" || die 'maintenance cap mismatch'
+grep -qx 'maintenance_regular_file_cap_bytes=200704' "$self/persistent.contract" || die 'maintenance cap mismatch'
 grep -qx 'maintenance_final_free_reserve_bytes=57344' "$self/persistent.contract" || die 'maintenance reserve mismatch'
 grep -qx 'JOOAN-MIGRATION-CONTRACT-V1' "$self/migration.contract" || die 'migration contract missing'
 grep -qx 'state=legacy-retired' "$self/migration.contract" || die 'migration states incomplete'

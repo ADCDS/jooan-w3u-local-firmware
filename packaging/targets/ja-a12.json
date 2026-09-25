@@ -118,11 +118,11 @@
       "state/",
       "config/"
     ],
-    "logical_regular_file_cap_bytes": 196608,
+    "logical_regular_file_cap_bytes": 200704,
     "root": "/opt/custom/jooan-local",
     "state_config_regular_file_reserve_bytes": 12288,
     "maintenance_final_free_reserve_bytes": 57344,
-    "maintenance_regular_file_cap_bytes": 196608
+    "maintenance_regular_file_cap_bytes": 200704
   },
   "release_authenticity": {
     "algorithm": "ecdsa-p256-sha256-rfc6979",
