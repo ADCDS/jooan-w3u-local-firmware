@@ -30,6 +30,8 @@ button,input,select,textarea{font:inherit;border-radius:8px;border:1px solid var
   padding:.6rem .75rem;background:var(--panel2);color:var(--ink);min-height:44px}
 button{cursor:pointer;font-weight:600}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+#preset-chips button.pending{border-color:var(--accent);border-style:dashed}
+#preset-chips button.chosen:not(.primary){box-shadow:inset 0 0 0 1px var(--muted)}
 button.danger{color:var(--crit);border-color:rgba(240,115,106,.5)}
 button.ghost{background:transparent}
 button.wide{width:100%}

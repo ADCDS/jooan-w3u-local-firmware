@@ -116,14 +116,17 @@ static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r-
 static int authorized(Conn*c,JoanRequest*r,JoanAuthz*a,int csrf){int rc;if(!origin_ok(r,0))return error_json(c,403,"origin_rejected","request origin is not this camera"),-1;rc=joan_auth_request(r,csrf,a);if(rc==-2)return error_json(c,403,"csrf_rejected","request token missing or invalid"),-1;if(rc)return error_json(c,401,"authentication_required","authentication required"),-1;return 0;}
 static int helper_json(Conn*c,const char*op,const char*path,const char*id){unsigned char*out=NULL;size_t n=0;char esc[4096],body[4352];unsigned timeout=!strcmp(op,"firmware-verify")?60u:!strcmp(op,"wifi-stage")?65u:15u;int rc=joan_run_helper(&G,op,path,id,&out,&n,timeout);if(rc){free(out);return error_json(c,502,"integration_failed","local integration operation failed");}if(!strcmp(op,"ssh-list")){if(n>1800)n=1800;json_escape(out?out:(unsigned char*)"",n,esc,sizeof(esc));snprintf(body,sizeof(body),"{\"ok\":true,\"authorized_keys\":\"%s\"}",esc);}else snprintf(body,sizeof(body),"{\"ok\":true,\"id\":\"%s\"}",id?id:"");free(out);return json(c,200,body);}
 static int mqtt_accepted(Conn*c,unsigned command,const char*payload){char operation[65],body[192];int rc;
-    if(command==66491){
+    /* 66491 goto; 66485/66489 save/update record the live step counter and
+     * 66490 deletes: none may run while the head is still travelling, or a
+     * preset is saved mid-move. Only a goto opens the travel window. */
+    if(command==66491||command==66485||command==66489||command==66490){
         pthread_mutex_lock(&ptz_lock);
         if(ptz_stop_uncertain||ptz_lease[0]||ptz_preset_expires>ptz_monotonic_ms()){
             pthread_mutex_unlock(&ptz_lock);
             return error_json(c,409,"ptz_busy","another camera move is pending");
         }
         rc=joan_mqtt_request(command,payload,operation);
-        if(!rc)ptz_preset_expires=ptz_monotonic_ms()+20000;
+        if(!rc&&command==66491)ptz_preset_expires=ptz_monotonic_ms()+20000;
         pthread_mutex_unlock(&ptz_lock);
     }else rc=joan_mqtt_request(command,payload,operation);
     if(rc==-2)return error_json(c,409,"operation_pending","an operation with this command is already pending");
