@@ -22,4 +22,5 @@ ci/check_guard.sh
 python3 tests/run_optional_vectors.py audio --schema-only
 ci/check_audio.sh
 ci/check_rtsp_proxy.sh
+ci/check_cookie_header.sh
 python3 ci/check_reproducible.py

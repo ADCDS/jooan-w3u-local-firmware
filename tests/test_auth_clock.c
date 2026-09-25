@@ -40,6 +40,14 @@ int main(void)
     assert(joan_auth_request(&request,1,&out)==-2);
     assert(joan_auth_request(&request,0,&out)==0);
     strcpy(request.csrf,sessions[0].csrf);
+    /* A stale parent-domain copy before the live cookie must not hide it. */
+    snprintf(request.cookie,sizeof(request.cookie),
+             "joan_session=%064d; joan_session=%s",0,sessions[0].token);
+    assert(joan_auth_request(&request,1,&out)==0);
+    /* A cookie merely ending in joan_session= is not the session cookie. */
+    snprintf(request.cookie,sizeof(request.cookie),"xjoan_session=%s",sessions[0].token);
+    assert(joan_auth_request(&request,0,&out)==-1);
+    snprintf(request.cookie,sizeof(request.cookie),"joan_session=%s",sessions[0].token);
     fake_mono+=SESSION_SECONDS+1;
     assert(joan_auth_request(&request,1,&out)==-1);
     puts("auth monotonic expiry, clock jump and CSRF separation: PASS");
