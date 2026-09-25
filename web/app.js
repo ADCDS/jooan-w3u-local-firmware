@@ -45,9 +45,39 @@ class ApiError extends Error {
   constructor(message, kind, code) { super(message); this.kind = kind; this.code = code; }
 }
 
+/* A 401 on one camera route is not proof the cookie expired. In particular,
+   never let an old response sign out a newer login. */
+let authEpoch = 0, sessionCheck = null;
+async function verifySession(epoch) {
+  if (epoch !== authEpoch || !csrf) return;
+  if (sessionCheck?.epoch === epoch) return sessionCheck.promise;
+  const promise = (async () => {
+    try {
+      const response = await fetch('/api/v1/session', {
+        headers: { Accept: 'application/json' }, cache: 'no-store',
+      });
+      if (epoch !== authEpoch || !csrf) return;
+      if (response.status === 401) requireLogin(epoch);
+      else if (response.ok) {
+        const session = await response.json();
+        if (epoch === authEpoch && session.csrf) csrf = session.csrf;
+      }
+      /* Offline/other errors are inconclusive: keep the current session. */
+    } catch (_) { /* verification unavailable; do not sign out */ }
+  })();
+  sessionCheck = { epoch, promise };
+  try { await promise; } finally { if (sessionCheck?.promise === promise) sessionCheck = null; }
+}
+
 async function api(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const isLogin = path === '/api/v1/session' && method === 'POST';
+  const isSession = path === '/api/v1/session';
+  if (method !== 'GET' && method !== 'HEAD' && !isLogin && !csrf)
+    throw new ApiError('Sign in before changing camera settings.', 'auth');
+  const epoch = authEpoch;
   options.headers = Object.assign({ Accept: 'application/json' }, options.headers || {});
-  if (csrf && options.method && options.method !== 'GET') options.headers['X-CSRF-Token'] = csrf;
+  if (method !== 'GET' && method !== 'HEAD' && !isLogin) options.headers['X-CSRF-Token'] = csrf;
   let response;
   try {
     response = await fetch(path, options);
@@ -57,9 +87,9 @@ async function api(path, options = {}) {
   const type = response.headers.get('content-type') || '';
   const data = response.status === 204 ? null
     : type.includes('json') ? await response.json() : await response.text();
+  if (!isSession && epoch !== authEpoch) throw new ApiError('Session changed. Please try again.', 'auth');
   if (!response.ok) {
-    const isLogin = path === '/api/v1/session' && options.method === 'POST';
-    if (response.status === 401 && !isLogin) requireLogin();
+    if (response.status === 401 && !isLogin && !(isSession && method === 'GET')) await verifySession(epoch);
     throw new ApiError(data?.error?.message || data?.error || data || `HTTP ${response.status}`,
       response.status === 401 ? 'auth' : 'api', data?.error?.code);
   }
@@ -71,8 +101,10 @@ function show(id) {
   $(id).classList.remove('hidden');
 }
 
-let replaying = false;
-function requireLogin() {
+let autoSignInPromise = null;
+function requireLogin(epoch = authEpoch, force = false) {
+  if (epoch !== authEpoch || (!csrf && !force)) return;
+  ++authEpoch;
   videoPlayers.forEach(p => p.close());
   videoPlayers = [];
   if (audioClient) { unbindTalk?.(); audioClient.close().catch(() => {}); audioClient = null; }
@@ -82,12 +114,9 @@ function requireLogin() {
   show('#login');
   /* A session that expired behind your back should not make a TV user spell
      the password out again. Once, and never from inside its own failure. */
-  if (!replaying && readSaved()?.password) {
-    replaying = true;
-    autoSignIn().finally(() => { replaying = false; });
-  }
+  if (!autoSignInPromise && readSaved()?.password) void autoSignIn();
 }
-window.addEventListener('joan-auth-required', requireLogin);
+window.addEventListener('joan-auth-required', () => { void verifySession(authEpoch); });
 
 /* ---------- zones ---------- */
 function setZone(zone) {
@@ -229,14 +258,16 @@ function renderStatus(s) {
 
 /* ---------- load ---------- */
 async function loadStatus() {
+  const epoch = authEpoch;
   const s = await api('/api/v1/status');
+  if (epoch !== authEpoch || !csrf) return null;
   renderStatus(s);
   show('#console');
   return s;
 }
 
 async function load() {
-  await loadStatus();
+  if (!await loadStatus()) return;
   const [streamList, mdns] = await Promise.all([
     api('/api/v1/streams'), api('/api/v1/network/mdns'),
   ]);
@@ -296,16 +327,26 @@ const readSaved = () => {
 const forgetSaved = () => { try { localStorage.removeItem(SAVED); } catch (_) { /* private mode */ } };
 
 async function signIn(credential, remember) {
-  const d = await api('/api/v1/session', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(credential),
-  });
-  csrf = d.csrf;
-  if (remember) {
-    try { localStorage.setItem(SAVED, JSON.stringify(credential)); } catch (_) { /* private mode */ }
+  const epoch = ++authEpoch;
+  csrf = '';
+  try {
+    const d = await api('/api/v1/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(credential),
+    });
+    if (epoch !== authEpoch) return false;
+    if (!d.csrf) throw new ApiError('Sign in did not return a security token.', 'auth');
+    csrf = d.csrf;
+    if (remember) {
+      try { localStorage.setItem(SAVED, JSON.stringify(credential)); } catch (_) { /* private mode */ }
+    }
+    clearNotice();
+    await load();
+    return true;
+  } catch (x) {
+    if (epoch !== authEpoch) return false; // an older login must not affect the new one
+    throw x;
   }
-  clearNotice();
-  await load();
 }
 
 $('#login-form').addEventListener('submit', e => {
@@ -319,20 +360,29 @@ $('#login-form').addEventListener('submit', e => {
 
 /* A saved credential that no longer works is worse than none: it would fail
    on every load and strand you behind a form you cannot see. Drop it and show
-   the form instead. */
-async function autoSignIn() {
+   the form instead. Coalesce boot and expired-session replay. */
+function autoSignIn() {
+  if (autoSignInPromise) return autoSignInPromise;
   const saved = readSaved();
-  if (!saved?.password) return false;
-  $('#remember').checked = true;
-  try {
-    await busy($('#login-form button'), () => signIn(saved, false));
-    return true;
-  } catch (x) {
-    forgetSaved();
-    $('#remember').checked = false;
-    notice(x.kind === 'offline' ? x.message : 'The saved password no longer works.', 'warn');
-    return false;
-  }
+  if (!saved?.password) return Promise.resolve(false);
+  const run = (async () => {
+    $('#remember').checked = true;
+    const epoch = authEpoch + 1;
+    try {
+      return await busy($('#login-form button'), () => signIn(saved, false));
+    } catch (x) {
+      if (authEpoch !== epoch) return false;
+      if (x.kind === 'auth' && !csrf) {
+        forgetSaved();
+        $('#remember').checked = false;
+      }
+      notice(x.kind === 'auth' && !csrf ? 'The saved password no longer works.' : x.message, 'warn');
+      return false;
+    }
+  })();
+  autoSignInPromise = run;
+  void run.finally(() => { if (autoSignInPromise === run) autoSignInPromise = null; });
+  return run;
 }
 
 
@@ -345,7 +395,13 @@ $('#password-form').addEventListener('submit', e => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
       });
+      ++authEpoch;
       csrf = '';
+      videoPlayers.forEach(p => p.close());
+      videoPlayers = [];
+      if (audioClient) { unbindTalk?.(); audioClient.close().catch(() => {}); audioClient = null; }
+      forgetSaved(); // saved credentials contain the old password
+      $('#remember').checked = false;
       show('#login');
       notice('Password changed. Sign in again.');
     } catch (x) { notice(x.message, 'crit'); }
@@ -357,8 +413,8 @@ $('#change-password').onclick = () => show('#setup');
 /* ---------- camera time ---------- */
 /* The camera has no RTC and no NTP route, so its clock defaults years off,
    which shows in the burned-in OSD overlay and any recording metadata. Push
-   this device's clock (true UTC) so it keeps correct time. The session is
-   re-stamped server-side, so setting the clock does not sign the operator out. */
+   this device's clock (true UTC) so it keeps correct time. Idle sessions use
+   a monotonic server clock, unaffected by setting the wall clock. */
 function tickLocalTime() { const el = $('#time-local'); if (el) el.textContent = new Date().toLocaleString(); }
 setInterval(tickLocalTime, 1000); tickLocalTime();
 async function setCameraTime(epochSeconds) {
@@ -367,8 +423,6 @@ async function setCameraTime(epochSeconds) {
     body: JSON.stringify({ epoch: String(epochSeconds) }),
   });
   $('#time-camera').textContent = new Date(d.epoch * 1000).toLocaleString();
-  $('#time-result').textContent = 'Camera clock set; live video reloads.';
-  load().catch(() => {});
 }
 /* Seed the manual field with the current local time as a starting point. */
 function seedManualTime() {
@@ -396,32 +450,44 @@ async function setCameraTimezone() {
     body: JSON.stringify({ gmt_tz: browserTimeZone() }),
   });
 }
-$('#time-sync').onclick = async () => {
+/* One time write at a time; refresh the stream only after all selected writes.
+   A failed write must not trigger a reload that races the next PUT. */
+let timeBusy = false;
+async function writeCameraTime(epoch, zone) {
+  if (timeBusy) return;
+  timeBusy = true;
+  $('#time-sync').disabled = $('#time-set-manual').disabled = true;
   try {
-    await setCameraTime(Math.floor(Date.now() / 1000));
-    const d = await setCameraTimezone();
-    $('#time-result').textContent =
-      `Clock synced; time zone ${d.gmt_tz} saved. The overlay updates after a restart.`;
+    await setCameraTime(epoch);
+    if (zone) {
+      const d = await setCameraTimezone();
+      $('#time-result').textContent =
+        `Clock synced; time zone ${d.gmt_tz} saved. The overlay updates after a restart.`;
+    } else $('#time-result').textContent = 'Camera clock set; live video reloads.';
+    await load();
   } catch (x) { notice(x.message, 'crit'); }
-};
-$('#time-set-manual').onclick = async () => {
+  finally {
+    timeBusy = false;
+    $('#time-sync').disabled = $('#time-set-manual').disabled = false;
+  }
+}
+$('#time-sync').onclick = () => writeCameraTime(Math.floor(Date.now() / 1000), true);
+$('#time-set-manual').onclick = () => {
   const v = $('#time-manual').value;
   if (!v) { notice('Choose a date and time first.'); return; }
   const epoch = Math.floor(new Date(v).getTime() / 1000);
   if (!Number.isFinite(epoch)) { notice('That date and time could not be read.'); return; }
-  try { await setCameraTime(epoch); }
-  catch (x) { notice(x.message, 'crit'); }
+  return writeCameraTime(epoch, false);
 };
 $('#goto-password').onclick = () => show('#setup');
 $('#setup-cancel').onclick = () => show('#console');
 $('#refresh').onclick = () => load().catch(x => notice(x.message, 'crit'));
 $('#logout').onclick = () => busy($('#logout'), async () => {
-  /* Forget first, and before requireLogin: signing out has to mean it, and
-     requireLogin replays a saved credential the moment it finds one. */
+  /* Forget before requireLogin: signing out must never replay saved credentials. */
   forgetSaved();
+  const epoch = ++authEpoch; // fence in-flight checks and logins before sign-out
   try { await api('/api/v1/session', { method: 'DELETE' }); } catch (_) { /* ending anyway */ }
-  csrf = '';
-  requireLogin();
+  requireLogin(epoch, true);
 });
 
 /* ---------- network ---------- */
@@ -999,18 +1065,23 @@ function initTvRemote() {
 
 /* ---------- boot ---------- */
 async function resume() {
+  const epoch = authEpoch;
   const session = await api('/api/v1/session');
+  if (epoch !== authEpoch) return;
+  if (!session.csrf) throw new ApiError('Session did not return a security token.', 'auth');
   csrf = session.csrf;
   await load();
 }
 setZone('live');
 initTvRemote();
-resume().catch(async x => {
+const bootEpoch = authEpoch;
+resume().catch(x => {
+  if (authEpoch !== bootEpoch || csrf) return; // another sign-in won the race
   if (x.kind === 'offline') { notice(x.message, 'crit'); show('#login'); return; }
   /* Show the form first: a slow camera should not leave a blank screen while
      the saved credential is replayed. */
   show('#login');
-  await autoSignIn();
+  void autoSignIn();
 });
 /* Retire any service worker installed by an earlier build; it cached index.html
    and app.js and would keep serving the pre-update UI after a firmware upgrade. */
