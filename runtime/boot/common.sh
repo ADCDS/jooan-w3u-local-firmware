@@ -413,3 +413,23 @@ jl_stop_slot() {
     export JL_SLOT JL_SLOT_DIR
     jl_bounded_hook 10 "$JL_SLOT_DIR/stop.sh"
 }
+
+# start.sh records both runtime processes; comm guards against PID reuse.
+jl_runtime_alive() {
+    for jl_proc in daemon:joan-daemon audio-router:audio-router; do
+        jl_pid=$(cat "$JL_RUN/${jl_proc%%:*}.pid" 2>/dev/null) || return 1
+        [ "$(cat "/proc/$jl_pid/comm" 2>/dev/null)" = "${jl_proc#*:}" ] || return 1
+    done
+}
+
+# The kernel's OOM report says who held the memory, and dmesg does not survive
+# the reboot. The SD card is the only storage with room; a crash loop must not
+# fill it.
+jl_record_crash() {
+    grep -q ' /mnt/sd_card ' /proc/mounts || return 0
+    jl_crash_dir=/mnt/sd_card/jooan-local
+    mkdir -p "$jl_crash_dir" || return 0
+    [ "$(ls "$jl_crash_dir" | wc -l)" -lt 30 ] || return 0
+    { date; cat /proc/meminfo /proc/net/sockstat; ps; dmesg; } \
+        > "$jl_crash_dir/runtime-$(date +%s).log" 2>&1
+}

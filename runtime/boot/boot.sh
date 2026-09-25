@@ -96,7 +96,19 @@ fi
 
 # This supervisor never invokes a saved OEM/user hook or revives telnet.
 jl_time_ticks=0
+jl_respawn_hold=0
 while :; do
+    # The OOM killer now takes the runtime rather than jooanipc (local.rc), so
+    # bring it back; jooanipc reconnects to the MQTT bridge within ~20s. Never
+    # while maintenance holds the state lock, and at most once a minute.
+    [ "$jl_respawn_hold" = 0 ] || jl_respawn_hold=$((jl_respawn_hold - 1))
+    if [ "$jl_running" != - ] && [ "$jl_respawn_hold" = 0 ] &&
+       [ ! -d "$JL_RUN/state.lock" ] && ! jl_runtime_alive; then
+        jl_respawn_hold=12
+        jl_record_crash || :
+        jl_stop_slot "$jl_running" || :
+        jl_start_slot "$jl_running" || jl_log 'runtime restart failed'
+    fi
     if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
         "$JL_CONTROL/admin/wifi-transaction.sh" tick || :
     fi
