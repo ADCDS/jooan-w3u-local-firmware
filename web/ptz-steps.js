@@ -60,20 +60,19 @@ export class PtzSteps {
         this.state('Live video unavailable');
         return false;
       }
-      await this.request('/api/v1/ptz/move', { lease, command, ...step });
-      await new Promise(resolve => setTimeout(resolve, step.duration_ms + 100));
-      if (generation === this.generation) await this.stop();
-      else if (this.stopTask) await this.stopTask;
+      const result = await this.request('/api/v1/ptz/move', { lease, command, ...step });
+      if (!result?.stopped) throw new Error('Camera stop was not confirmed');
+      if (this.lease === lease) this.lease = '';
       lease = '';
-      if (generation + 1 !== this.generation || document.hidden) return false;
+      if (generation !== this.generation || document.hidden) return false;
       const afterStop = video.getVideoPlaybackQuality?.().totalVideoFrames ?? null;
       this.state('Waiting for updated live picture…');
-      const updated = await this.settled(video, afterStop, () => generation + 1 === this.generation);
-      if (generation + 1 === this.generation) this.state(updated
+      const updated = await this.settled(video, afterStop, () => generation === this.generation);
+      if (generation === this.generation) this.state(updated
         ? 'Live video advanced · confirm position visually' : 'Picture not confirmed · check live view');
       return updated;
     } catch (error) {
-      if (generation === this.generation || generation + 1 === this.generation)
+      if (generation === this.generation)
         this.state(error.code === 'ptz_stop_uncertain' ? 'Stop not confirmed · check the camera'
           : error.message || 'Camera did not take that nudge');
       return false;
