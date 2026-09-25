@@ -48,17 +48,26 @@ int joan_run_helper(const JoanConfig *cfg, const char *operation,
     pid = fork();
     if (pid < 0) { free(buf); close(fds[0]); close(fds[1]); return -1; }
     if (pid == 0) {
+        (void)setpgid(0,0);
         dup2(fds[1], 1); dup2(fds[1], 2); close(fds[0]); close(fds[1]);
         execl(cfg->integration_helper, cfg->integration_helper, operation,
               argument_path ? argument_path : "-", id ? id : "-", (char *)0);
         _exit(127);
     }
+    (void)setpgid(pid,pid);
     close(fds[1]); fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
     for (;;) {
         ssize_t n = read(fds[0], buf + used, cap - used);
         if (n > 0) used += (size_t)n;
         if (waitpid(pid, &status, WNOHANG) == pid) break;
-        if (mono_seconds() >= deadline || used == cap) { kill(pid, SIGTERM); nap_ms(100); if (waitpid(pid, &status, WNOHANG) != pid) { kill(pid, SIGKILL); waitpid(pid, &status, 0); } status = -1; break; }
+        if (mono_seconds() >= deadline || used == cap) {
+            /* Helpers may spawn nc or shell pipeline descendants. Kill their
+             * private process group before another motor command is issued. */
+            kill(-pid, SIGTERM); nap_ms(100);
+            kill(-pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            status = -1; break;
+        }
         nap_ms(20);
     }
     while (used < cap) { ssize_t n = read(fds[0], buf + used, cap - used); if (n <= 0) break; used += (size_t)n; }

@@ -119,7 +119,7 @@ export function createNavigator({ root, onBack = () => false, onCapture = () => 
     if (dir) {
       if (ownsAxis(document.activeElement, dir)) return;
       const from = current();
-      if (from && from.hasAttribute('data-capture-arrows') && onCapture(from, dir)) {
+      if (from && from.hasAttribute('data-capture-arrows') && onCapture(from, dir, e)) {
         e.preventDefault();
         return;
       }

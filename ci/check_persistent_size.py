@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 
-DEFAULT_CAP = 192 * 1024
+DEFAULT_CAP = 196 * 1024
 DEFAULT_RESERVE = 64 * 1024
 
 
@@ -51,7 +51,7 @@ def contract_values(path: Path) -> tuple[int, int, int, int, list[str]]:
     if state_config < 12 * 1024 or external < 2 * 1024:
         raise ValueError("persistent dynamic/external reservations are not realistic")
     if transient_cap != DEFAULT_CAP or transient_reserve < 56 * 1024:
-        raise ValueError("maintenance contract must remain 192 KiB / at least 56 KiB")
+        raise ValueError("maintenance contract must remain 196 KiB / at least 56 KiB")
     return cap, reserve, state_config, external, layout
 
 

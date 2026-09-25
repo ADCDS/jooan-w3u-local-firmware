@@ -68,15 +68,28 @@
           <div class="card">
             <h2>Jog</h2>
             <div class="dpad" id="jog" tabindex="0" role="group" data-capture-arrows
-                 aria-label="Jog. Press OK, then use the arrows to move the camera.">
+                 aria-label="Jog. Tap an arrow to nudge.">
               <button data-ptz="up" class="u" data-focusable="off" aria-label="Tilt up">&uarr;</button>
               <button data-ptz="left" class="l" data-focusable="off" aria-label="Pan left">&larr;</button>
-              <button data-ptz="stop" class="c" data-focusable="off" aria-label="Stop">&#9632;</button>
+              <button data-ptz="stop" class="c" aria-label="Stop">&#9632;</button>
               <button data-ptz="right" class="r" data-focusable="off" aria-label="Pan right">&rarr;</button>
               <button data-ptz="down" class="d" data-focusable="off" aria-label="Tilt down">&darr;</button>
             </div>
-            <p id="jog-hint" class="muted tv-only">Press OK, then use the arrows</p>
-            <p id="ptz-state" class="muted">No lease</p>
+            <div id="jog-mode" class="grid2" role="group" aria-label="Nudge size">
+              <button type="button" data-step="fine" class="primary" aria-pressed="true">Fine</button>
+              <button type="button" data-step="coarse" aria-pressed="false">Coarse</button>
+            </div>
+            <p id="jog-hint" class="muted tv-only">OK, then arrow</p>
+            <p id="ptz-state" class="muted" role="status" aria-live="polite">Tap an arrow to nudge.</p>
+          </div>
+          <div class="card">
+            <h2>Presets</h2>
+            <div id="preset-chips" class="chips row-chips"></div>
+            <div class="grid2">
+              <button id="preset-set">Save current</button>
+              <button id="preset-delete" class="danger">Delete preset</button>
+            </div>
+            <div id="preset-confirm"></div>
           </div>
           <div class="card">
             <h2>Talkback</h2>
@@ -84,29 +97,13 @@
             <button id="push-to-talk" class="wide primary" disabled>Hold to talk</button>
             <p id="audio-state" class="muted">Disconnected</p>
           </div>
-        <div class="card desktop-only">
-              <h2>RTSP for NVR clients</h2>
-              <div id="streams" class="kv stack"></div>
-            </div>
-          </aside>
+        </aside>
       </section>
 
       <section id="zone-control" class="zone hidden" data-scrollport>
         <div class="card">
-          <h2>Presets</h2>
-          <div id="preset-chips" class="chips row-chips"></div>
-          <div class="grid2">
-            <button id="preset-set">Save current</button>
-            <button id="preset-delete" class="danger">Delete preset</button>
-          </div>
-          <div id="preset-confirm"></div>
-        </div>
-        <div class="card">
-          <h2>Jog speed</h2>
-          <div id="speed-chips" class="chips row-chips"></div>
-          <div class="kv">
-            <div class="row"><span>Home position</span><b><button id="ptz-home" class="link">Go to home</button></b></div>
-          </div>
+          <h2>Home</h2>
+          <button id="ptz-home">Go home</button>
         </div>
         <div class="card">
           <h2>Talkback</h2>
@@ -196,6 +193,10 @@
           <h2>State</h2>
           <div id="state-chips" class="chips"></div>
           <div id="state-detail" class="kv gap-top"></div>
+        </div>
+        <div class="card">
+          <h2>RTSP</h2>
+          <div id="streams" class="kv stack"></div>
         </div>
         <div class="card">
           <h2>Administrator password</h2>
