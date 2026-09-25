@@ -598,7 +598,10 @@ const ptzSteps = new PtzSteps({
   video: () => $('#console').dataset.fs === 'sub' ? $('#video-sub') : $('#video-main'),
   state: text => { $('#ptz-state').textContent = text; },
   canMove: () => !presetMotion,
-  inputs: busy => { for (const b of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #preset-set, #preset-delete, #ptz-home')) b.disabled = busy || presetMotion; },
+  inputs: busy => {
+    if (busy) clearPreset(); // a jog moves the head off any preset
+    for (const b of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #preset-set, #preset-delete, #ptz-home')) b.disabled = busy || presetMotion;
+  },
   settled: async (video, before, valid) => {
     if (!video || before == null || document.hidden) return false;
     await new Promise(resolve => setTimeout(resolve, 400));
@@ -651,8 +654,29 @@ async function operation(accepted) {
 }
 
 let presets = [];
+/* Delete target: an explicit choice, never implied by a goto. */
 let selectedPreset = null;
+/* The camera cannot report where it points (ONVIF GetStatus is a constant
+   0,0 and gotos are open-loop). So a chip shows only what we asked for and
+   whether the camera accepted it; it is dropped the moment anything else may
+   have moved the head (jog, failure, reload). Never "current position". */
+let presetState = { token: null, phase: null }; // phase: 'moving' | 'arrived'
 let presetMotion = false;
+function markPreset(token, phase) {
+  presetState = { token, phase };
+  for (const chip of all('#preset-chips button')) {
+    const mine = token !== null && chip.dataset.preset === token;
+    chip.classList.toggle('primary', mine && phase === 'arrived');
+    chip.classList.toggle('pending', mine && phase === 'moving');
+    chip.classList.toggle('chosen', chip.dataset.preset === selectedPreset);
+    chip.setAttribute('aria-pressed', String(mine && phase === 'arrived'));
+  }
+}
+const clearPreset = () => markPreset(null, null);
+/* The OEM replies before the head arrives and computes each goto from its step
+   counter, so a second goto mid-travel lands somewhere else. Hold further
+   motion until a worst-case traverse (4080 steps at the OEM speed) is over. */
+const PRESET_SETTLE_MS = 12000;
 async function runPresetMotion(task) {
   if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
   presetMotion = true;
@@ -671,21 +695,26 @@ async function loadPresets() {
     const b = document.createElement('button');
     b.textContent = item.name || token;
     b.dataset.preset = token;
-    if (token === selectedPreset) b.classList.add('primary');
     b.disabled = presetMotion || ptzSteps.busy || ptzSteps.uncertain;
     b.onclick = () => {
       if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
       selectedPreset = token;
-      for (const other of all('#preset-chips button')) {
-        other.classList.toggle('primary', other === b);
-      }
-      runPresetMotion(() => api('/api/v1/ptz/presets', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: Number(token) }),
-      }).then(operation)).catch(x => notice(x.message, 'crit'));
+      markPreset(token, 'moving');
+      runPresetMotion(async () => {
+        const reply = await operation(await api('/api/v1/ptz/presets', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: Number(token) }),
+        }));
+        if (reply && typeof reply.status === 'number' && reply.status !== 0)
+          throw new ApiError(`Camera refused the preset (status ${reply.status}).`, 'api');
+        await new Promise(ok => setTimeout(ok, PRESET_SETTLE_MS));
+        if (presetState.token === token) markPreset(token, 'arrived');
+      }).catch(x => { clearPreset(); notice(x.message, 'crit'); });
     };
     return b;
   }));
+  /* A reload cannot know where the head is; keep only an in-flight marker. */
+  markPreset(presetState.phase === 'moving' ? presetState.token : null, presetState.phase === 'moving' ? 'moving' : null);
   return presets;
 }
 
@@ -693,6 +722,7 @@ $('#ptz-home').onclick = () => runPresetMotion(async () => {
   try {
     const list = await loadPresets();
     const home = list.find(x => x.name === '__home__');
+    clearPreset();
     if (home) {
       await operation(await api('/api/v1/ptz/home', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -732,7 +762,11 @@ $('#preset-delete').onclick = () => {
     api('/api/v1/ptz/presets', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: Number(token) }),
-    }).then(operation).then(() => { if (selectedPreset === token) selectedPreset = null; return loadPresets(); })
+    }).then(operation).then(() => {
+      if (selectedPreset === token) selectedPreset = null;
+      if (presetState.token === token) clearPreset();
+      return loadPresets();
+    })
       .catch(x => notice(x.message, 'crit')));
 };
 
