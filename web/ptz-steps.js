@@ -61,7 +61,7 @@ export class PtzSteps {
         return false;
       }
       const result = await this.request('/api/v1/ptz/move', { lease, command, ...step });
-      if (!result?.stopped) throw new Error('Camera stop was not confirmed');
+      if (!result?.stopped) { this.uncertain = this.stopFailed = true; throw new Error('Camera stop was not confirmed'); }
       if (this.lease === lease) this.lease = '';
       lease = '';
       if (generation !== this.generation || document.hidden) return false;
