@@ -103,6 +103,54 @@ class RuntimeHookTests(unittest.TestCase):
         self.assertIn('printf \'%s\\n\' released > "$JL_SPEAKER_HOOK_RELEASED.new"', hook)
         self.assertNotIn('echo 0 > "$JL_SPEAKER_PATH/value"', hook[mute:media_wrapper])
 
+    def test_media_always_homes_and_is_not_the_oom_victim(self) -> None:
+        """A crash reboot leaves /opt/silence_reboot, which made jooanipc skip
+        PTZ homing and adopt a stale saved position, shifting every preset. And
+        the OOM killer always took jooanipc, whose watchdog reboots the camera.
+        Both must be settled in the wrapper before exec, the only point that
+        precedes jooanipc's startup homing."""
+        hook = (REPOSITORY / "runtime/boot/local.rc").read_text(encoding="utf-8")
+        wrapper = hook[hook.index("    jooanipc() {"):]
+        launch = wrapper.index('exec /mnt/mtd/run/jooanipc "$@"')
+        self.assertLess(wrapper.index("rm -f /opt/silence_reboot"), launch)
+        self.assertLess(wrapper.index("echo -900 > /proc/self/oom_score_adj"), launch)
+        start = (REPOSITORY / "runtime/slot/start.sh").read_text(encoding="utf-8")
+        daemon = start.index('echo $! > "$JL_RUN/daemon.pid"')
+        self.assertLess(daemon, start.index('echo 500 > "/proc/$!/oom_score_adj"'))
+
+    def test_supervisor_detects_a_dead_runtime(self) -> None:
+        """With jooanipc protected, the OOM killer takes the runtime, and
+        nothing else restarts it: the camera stayed offline until reboot."""
+        boot = (REPOSITORY / "runtime/boot/boot.sh").read_text(encoding="utf-8")
+        self.assertIn("! jl_runtime_alive", boot)
+        self.assertIn('[ ! -d "$JL_RUN/state.lock" ]', boot)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            processes = []
+            try:
+                for name in ("joan-daemon", "audio-router"):
+                    binary = root / name
+                    binary.write_bytes(Path("/bin/sleep").read_bytes())
+                    binary.chmod(0o755)
+                    process = subprocess.Popen([str(binary), "30"])
+                    processes.append(process)
+                    record = "daemon" if name == "joan-daemon" else name
+                    (root / f"{record}.pid").write_text(f"{process.pid}\n", encoding="utf-8")
+                check = [
+                    "sh", "-c",
+                    '. "$1" && jl_runtime_alive',
+                    "sh", str(REPOSITORY / "runtime/boot/common.sh"),
+                ]
+                environment = os.environ | {"JL_RUN": str(root)}
+                self.assertEqual(subprocess.run(check, env=environment).returncode, 0)
+                processes[0].kill()
+                processes[0].wait()
+                self.assertNotEqual(subprocess.run(check, env=environment).returncode, 0)
+            finally:
+                for process in processes:
+                    process.kill()
+                    process.wait()
+
     def test_onvif_50ms_is_not_encoded_as_500ms(self) -> None:
         hook = REPOSITORY / "runtime/slot/hooks/onvif-ptz.sh"
         with tempfile.TemporaryDirectory() as temporary:

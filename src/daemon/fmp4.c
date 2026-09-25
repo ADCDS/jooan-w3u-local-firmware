@@ -22,7 +22,11 @@
  * late viewers to catch up without waiting for the next keyframe. */
 #define RING 16u
 #define FRAGMENT_TICKS RTP_TIMESCALE
-#define RING_MAX_BYTES (3u*1024u*1024u)
+/* Bounds the ring and each bootstrap copy. The main stream runs ~106 KB/s by
+ * day, so this still holds a 6 s GOP at twice that; the board has ~4 MB of
+ * headroom and an OOM used to reboot the camera. Past it, a late viewer
+ * waits for the next IDR instead. */
+#define RING_MAX_BYTES (1536u*1024u)
 
 typedef struct { unsigned char *p;size_t n,cap; } Buf;
 typedef struct { uint32_t size,duration,flags,timestamp; } Sample;

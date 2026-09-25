@@ -26,6 +26,8 @@ MISSING = {
     "setsid": "no setsid applet; background with & and a redirect",
     "nohup": "no nohup applet; background with & and a redirect",
     "which": "command -v",
+    "pidof": "scan /proc/[0-9]*/comm",
+    "uniq": "sort -u, or awk '!seen[$0]++'",
 }
 
 # GNU flags the target's applets do not implement.

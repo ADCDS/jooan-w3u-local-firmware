@@ -39,4 +39,7 @@ JOAN_MQTT_PORT=1883 JOAN_RTSP_PORT=8554 JOAN_RTSP_PROXY_PORT=554 \
 JOAN_PUBLIC_HOST="jooan-w3u.local" \
     "$JL_SLOT_DIR/bin/joan-daemon" >"$JL_RUN/daemon.log" 2>&1 &
 echo $! > "$JL_RUN/daemon.pid"
+# On a 38 MB board the OOM killer must take this restartable process first,
+# never jooanipc, whose death reboots the camera (see local.rc).
+echo 500 > "/proc/$!/oom_score_adj" 2>/dev/null || :
 exit 0
