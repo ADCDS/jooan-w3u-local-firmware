@@ -96,6 +96,29 @@ For a conforming promoted release, the intended listeners are TCP/80 (redirect o
 TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
 supported architecture.
 
+## Memory pressure and PTZ homing
+
+The board has about 38 MB of RAM and runs with only a few megabytes free, so
+the kernel OOM killer does fire. It takes the largest process, which used to
+be the retained media process; the OEM watchdog then rebooted the camera and
+flagged the reboot "silent". A silent boot skips PTZ homing and trusts the last
+saved position, which the OEM saves only after manual jogs and never after a
+preset recall, so a crash that followed a recall shifted the whole PTZ frame
+and every preset with it.
+
+The loader wrapper therefore removes `/opt/silence_reboot` so every boot homes,
+and lowers the media process's `oom_score_adj`; `start.sh` raises the daemon's
+instead. When the OOM killer takes the runtime, the supervisor restarts it
+(rate-limited, never while maintenance holds the state lock) and writes the
+kernel's report to `jooan-local/` on the microSD card, since `dmesg` does not
+survive a reboot. The media process reconnects to the local MQTT bridge within
+about 20 seconds.
+
+Heavy memory pressure can also stall the board before any OOM kill, until the
+hardware watchdog resets it without a log. Installing an update while an NVR
+pulls both streams and a browser watches live video has reproduced this; stop
+the extra consumers during an update.
+
 ## Package format
 
 The host tooling assembles the reviewed runtime and wraps it as an OEM IronMan update package.
