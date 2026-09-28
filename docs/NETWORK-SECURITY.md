@@ -113,7 +113,10 @@ The committed network lives in the retrofit's state, not the OEM's: the
 supervisor adds it to jooanipc's wpa_supplicant once the control socket answers.
 jooanipc can restart wpa_supplicant from its own stored network (about two
 minutes into boot, and when it decides the link has failed), so the supervisor
-applies the committed network again to every new wpa_supplicant process. The
+applies the committed network again to every new wpa_supplicant process. Each
+apply also disables every other network there, including jooanipc's stored one
+(on the verified unit an open, hidden-SSID bench network), so the camera neither
+probes for it by name nor joins an open network that takes that name. The
 SKW6316 does not look for any other network by itself; without that re-apply it
 hunts for the OEM network until a power cycle. `tools/wifi-deadman.sh` records
 the Wi-Fi state to the microSD card when this needs diagnosing again.
