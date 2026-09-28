@@ -50,15 +50,15 @@ python3 tools/upload_ota.py \
   --pkg dist/JOOAN_FW_PKG
 ```
 
-It validates the A12 container, POSTs it to the OEM updater, waits for HTTPS on
-443, and prints the per-device certificate SHA-256 fingerprint. Record and
-verify that fingerprint on the isolated segment. First-install GoAhead is
+It validates the A12 container, POSTs it to the OEM updater, and waits until
+the camera reports the signed release on TCP/80. First-install GoAhead is
 unauthenticated; never upload over an untrusted network. Later releases use the
-authenticated HTTPS update API.
+authenticated update API.
 
 ## First login and migration
 
-HTTPS is the default. TCP/80 only redirects. Initial credentials are:
+The Web UI is plain HTTP on TCP/80 (see
+[Network security](NETWORK-SECURITY.md#plain-http)). Initial credentials are:
 
 ```text
 username: admin
@@ -84,12 +84,12 @@ routes; connected subnets and explicitly allowed RFC1918/ULA routes remain.
 
 After a cold reboot:
 
-1. verify HTTPS identity, warning state, login throttling, and session expiry;
+1. verify warning state, login throttling, and session expiry;
 2. verify both direct RTSP streams in an NVR;
 3. verify ONVIF from the NVR (Frigate: arrows nudge, presets recall) and preset
    save/delete with `tools/onvif_presets.py`;
 4. verify SSH `admin` password synchronization and optional keys;
-5. verify DNS-SD announcements for HTTPS, SSH, RTSP, and the camera service;
+5. verify DNS-SD announcements for HTTP, SSH, RTSP, and the camera service;
 6. verify no IPv4/IPv6 default route and no public resolver remains;
 7. scan listeners and capture traffic across reboot, including early GoAhead;
 8. verify the signed uninstall and recovery assets remain available.

@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.17"
+#define JOAN_VERSION "0.2.18"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -19,9 +19,7 @@ typedef struct {
     char web_dir[256];
     char bind_addr[64];
     unsigned port;
-    unsigned redirect_port;
-    int plain_http;
-    char public_host[128];
+    int plain_mqtt;
     char integration_helper[256];
     unsigned mqtt_port;
     unsigned rtsp_port;
@@ -105,9 +103,6 @@ int joan_mdns_set_hostname(const JoanConfig *cfg, const char *hostname);
 const char *joan_mdns_status(void);
 
 int joan_tls_ensure_identity(const JoanConfig *cfg);
-int joan_tls_enroll_identity(const JoanConfig *cfg, const char *pem, size_t len,
-                             char *why, size_t why_len);
-int joan_tls_clear_identity(const JoanConfig *cfg);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);
 

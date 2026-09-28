@@ -7,7 +7,7 @@
 #include <string.h>
 
 static void copy_env(char *dst,size_t cap,const char*name,const char*fallback){const char*v=getenv(name);snprintf(dst,cap,"%s",v&&*v?v:fallback);}
-static void usage(const char*n){fprintf(stderr,"usage: %s [--plain-http] [--bind ADDRESS] [--port N]\n",n);}
+static void usage(const char*n){fprintf(stderr,"usage: %s [--plain-mqtt] [--bind ADDRESS] [--port N]\n",n);}
 static void stop_handler(int signal_number){(void)signal_number;joan_server_stop();}
 int main(int argc,char**argv)
 {
@@ -18,19 +18,17 @@ int main(int argc,char**argv)
     copy_env(c.release_sequence_path,sizeof(c.release_sequence_path),"JOAN_RELEASE_SEQUENCE_PATH","/opt/custom/jooan-local/state/release-sequence");
     copy_env(c.web_dir,sizeof(c.web_dir),"JOAN_WEB_DIR","/usr/share/joan/web");
     copy_env(c.bind_addr,sizeof(c.bind_addr),"JOAN_BIND","0.0.0.0");
-    copy_env(c.public_host,sizeof(c.public_host),"JOAN_PUBLIC_HOST","camera.local");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
-    c.port=443;c.redirect_port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.oem_onvif_port=8899;c.mdns_enabled=1;c.mdns_port=5353;
+    c.port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.oem_onvif_port=8899;c.mdns_enabled=1;c.mdns_port=5353;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);
     if(getenv("JOAN_RTSP_PORT"))c.rtsp_port=(unsigned)strtoul(getenv("JOAN_RTSP_PORT"),NULL,10);
     if(getenv("JOAN_RTSP_PROXY_PORT"))c.rtsp_proxy_port=(unsigned)strtoul(getenv("JOAN_RTSP_PROXY_PORT"),NULL,10);
     if(getenv("JOAN_OEM_ONVIF_PORT"))c.oem_onvif_port=(unsigned)strtoul(getenv("JOAN_OEM_ONVIF_PORT"),NULL,10);
-    if(getenv("JOAN_REDIRECT_PORT"))c.redirect_port=(unsigned)strtoul(getenv("JOAN_REDIRECT_PORT"),NULL,10);
     if(getenv("JOAN_MDNS")&&!strcmp(getenv("JOAN_MDNS"),"0"))c.mdns_enabled=0;
     if(getenv("JOAN_MDNS_PORT"))c.mdns_port=(unsigned)strtoul(getenv("JOAN_MDNS_PORT"),NULL,10);
     for(i=1;i<argc;i++){
-        if(!strcmp(argv[i],"--plain-http"))c.plain_http=1;
+        if(!strcmp(argv[i],"--plain-mqtt"))c.plain_mqtt=1;
         else if(!strcmp(argv[i],"--bind")&&i+1<argc)snprintf(c.bind_addr,sizeof(c.bind_addr),"%s",argv[++i]);
         else if(!strcmp(argv[i],"--port")&&i+1<argc)c.port=(unsigned)strtoul(argv[++i],NULL,10);
         else{usage(argv[0]);return 2;}
@@ -39,12 +37,15 @@ int main(int argc,char**argv)
     signal(SIGPIPE,SIG_IGN);
     signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);
     if(joan_auth_init(&c)){fprintf(stderr,"cannot initialize authentication state\n");return 1;}
-    if(!c.plain_http&&joan_tls_ensure_identity(&c)){fprintf(stderr,"cannot initialize per-device ECDSA identity; refusing plaintext fallback\n");return 1;}
-    if(c.plain_http)fprintf(stderr,"WARNING: explicit plaintext development mode; do not expose beyond a test namespace\n");
+    /* The Web UI is plain HTTP. The per-device identity now only serves TLS on
+     * the loopback MQTT sink jooanipc connects to; --plain-mqtt is for host
+     * tests whose fake jooanipc speaks plain MQTT. */
+    if(!c.plain_mqtt&&joan_tls_ensure_identity(&c)){fprintf(stderr,"cannot initialize the per-device identity for the MQTT sink\n");return 1;}
+    if(c.plain_mqtt)fprintf(stderr,"WARNING: plain MQTT development mode; do not run on a camera\n");
     if(joan_mqtt_bridge_start(&c)){fprintf(stderr,"cannot start loopback MQTT compatibility sink\n");return 1;}
     if(joan_mdns_start(&c)){fprintf(stderr,"cannot start mDNS responder\n");return 1;}
     if(joan_rtsp_proxy_start(&c)){fprintf(stderr,"cannot start authenticated RTSP proxy\n");joan_mdns_stop();joan_mqtt_bridge_stop();return 1;}
-    fprintf(stderr,"joan-daemon %s listening on %s:%u (%s)\n",JOAN_VERSION,c.bind_addr,c.port,c.plain_http?"HTTP DEVELOPMENT MODE":"HTTPS ECDSA");
+    fprintf(stderr,"joan-daemon %s listening on %s:%u (HTTP)\n",JOAN_VERSION,c.bind_addr,c.port);
     rc=joan_server_run(&c);
     joan_rtsp_proxy_stop();
     joan_mdns_stop();

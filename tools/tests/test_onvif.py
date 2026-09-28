@@ -10,6 +10,8 @@ them. Never touches a camera.
 
 The fake camera is importable, so a client library can be pointed at it:
     with FakeCamera(bin, tls=True) as cam: ... cam.port ...
+(tls=True runs the loopback MQTT sink over TLS, as on a camera; the Web and
+ONVIF listener is plain HTTP either way.)
 """
 import base64, datetime, hashlib, http.client, json, os, pathlib, re, socket, ssl
 import struct, subprocess, sys, tempfile, threading, time
@@ -69,10 +71,10 @@ class FakeCamera:
             'JOAN_STATE_DIR': str(base / 'state'), 'JOAN_STAGING_DIR': str(base / 'staging'),
             'JOAN_WEB_DIR': str(ROOT / 'web'), 'JOAN_INTEGRATION_HELPER': str(ROOT / 'tools/tests/fake-integration.sh'),
             'JOAN_OEM_ONVIF_PORT': str(self.motor_port),
-            'JOAN_PORT': str(self.port), 'JOAN_REDIRECT_PORT': '0', 'JOAN_MQTT_PORT': str(self.mqtt_port),
+            'JOAN_PORT': str(self.port), 'JOAN_MQTT_PORT': str(self.mqtt_port),
             'JOAN_CONNECTIVITY_PORT': '0', 'JOAN_RTSP_PORT': '18596', 'JOAN_MDNS': '0',
         }
-        args = [str(self.binary), '--bind', '127.0.0.1'] + ([] if self.tls else ['--plain-http'])
+        args = [str(self.binary), '--bind', '127.0.0.1'] + ([] if self.tls else ['--plain-mqtt'])
         self.daemon = subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             self._connect()
@@ -95,7 +97,7 @@ class FakeCamera:
         # Something else on the port (a leftover daemon) would answer instead.
         assert self.daemon.poll() is None, 'daemon exited: port in use?'
         self.mqtt = socket.create_connection(('127.0.0.2', self.mqtt_port), 2)
-        if self.tls:  # the HTTPS daemon's MQTT sink is TLS too, as jooanipc expects
+        if self.tls:  # on a camera the MQTT sink is TLS, as jooanipc expects
             context = ssl.create_default_context()
             context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
             self.mqtt = context.wrap_socket(self.mqtt)
@@ -202,15 +204,9 @@ def envelope(operation, body='', namespace='http://www.onvif.org/ver20/ptz/wsdl'
 class Client:
     def __init__(self, cam):
         self.cam = cam
-        self.context = ssl.create_default_context()
-        self.context.check_hostname = False
-        self.context.verify_mode = ssl.CERT_NONE
 
     def post(self, path, xml, headers=None):
-        if self.cam.tls:
-            c = http.client.HTTPSConnection('127.0.0.1', self.cam.port, context=self.context, timeout=15)
-        else:
-            c = http.client.HTTPConnection('127.0.0.1', self.cam.port, timeout=15)
+        c = http.client.HTTPConnection('127.0.0.1', self.cam.port, timeout=15)
         c.request('POST', path, body=xml.encode(), headers={'Content-Type': 'application/soap+xml; charset=utf-8', **(headers or {})})
         r = c.getresponse()
         data = r.read().decode()

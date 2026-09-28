@@ -45,7 +45,7 @@ globalThis.document = {
   createElement: () => new Element(), hidden: false, addEventListener() {},
 };
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: '' } });
-globalThis.location = { search: '', protocol: 'https:', host: 'camera.local' };
+globalThis.location = { search: '', protocol: 'http:', host: 'camera.local' };
 globalThis.setInterval = () => 0;
 globalThis.FormData = class {
   constructor(form) { this.fields = form.fields || {}; }

@@ -60,17 +60,20 @@ shape are not sufficient compatibility evidence. Read
 
 The target release surface is local and authenticated:
 
-- HTTP on TCP/80 redirects to per-device HTTPS on TCP/443;
+- the maintenance Web UI and `/api/v1/` are plain HTTP on TCP/80. The sign-in
+  password and the session cookie cross the network unencrypted, so reach the
+  camera only from the trusted, isolated network it lives on (see below);
 - the administrator is `admin` with initial password `admin`;
   the password remains valid until changed, and the System zone reports whether
   the initial value is still in use;
-- each camera generates its own self-signed HTTPS identity; release artifacts
-  never contain a shared private key;
-- SSH on TCP/22 uses the same `admin` password as HTTPS; changing it updates
-  both services, and optional Ed25519 authorized keys may be added;
+- release artifacts never contain a shared private key; the one key the camera
+  generates for itself only serves TLS on the loopback MQTT sink `jooanipc`
+  connects to;
+- SSH on TCP/22 uses the same `admin` password as the Web UI; changing it
+  updates both services, and optional Ed25519 authorized keys may be added;
 - RTSP over TCP/554 is protected by Digest authentication using the same
   administrator password; the retained OEM RTSP service is loopback-only;
-- embedded DNS-SD advertises HTTPS, SSH, RTSP, and the camera service under a
+- embedded DNS-SD advertises HTTP, SSH, RTSP, and the camera service under a
   configurable `.local` hostname;
 - IPv4 and IPv6 default routes are removed and continuously pruned. Connected
   local-subnet routes remain, so local clients work without an Internet route.
@@ -79,8 +82,8 @@ The target release surface is local and authenticated:
   subnet can still be answered without ever restoring a default route;
 - exact-binary `jooanipc` containment blocks vendor cloud/P2P egress;
 - NVRs such as Frigate control pan/tilt and presets over ONVIF, served on the
-  HTTPS port under `/onvif/` and authenticated with a WS-Security digest of the
-  same `admin` password. The OEM ONVIF service, which checks no credentials,
+  Web UI port under `/onvif/` and authenticated with a WS-Security digest of the
+  same `admin` password, so the password itself never crosses the network. The OEM ONVIF service, which checks no credentials,
   stays on loopback.
 - the OEM speaker and motion-alarm playback paths stay muted.
 
@@ -161,7 +164,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | **Pan / tilt** | |
 | Jog (up / down / left / right) | ✓ ONVIF: one ~17° nudge per press, e.g. Frigate's arrows |
 | Presets — save / recall / delete | ✓ ONVIF: Frigate recalls; `tools/onvif_presets.py` saves, renames and deletes |
-| Control from an NVR (Frigate) | ✓ ONVIF on the HTTPS port; no zoom or autotracking |
+| Control from an NVR (Frigate) | ✓ ONVIF on port 80; no zoom or autotracking |
 | Home / calibration | ~ homes on every boot; save a preset for a go-to-home |
 | Cruise / patrol schedule | ✗ |
 | Auto-tracking | ✗ |
@@ -194,7 +197,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | Reboot | ✗ (only implicitly, when a signed update is applied) |
 | Device info / UID | ~ version and state in `/api/v1/status` |
 
-Beyond the OEM app, the retrofit adds per-device **HTTPS**, **SSH**
+Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
 (password-synchronized, optional Ed25519 keys), **mDNS** `.local` naming,
 **local-only egress** (continuous default-route pruning), exact-binary
 `jooanipc` **cloud/P2P containment**, and an authenticated **ONVIF** subset for
@@ -202,8 +205,8 @@ NVRs.
 
 ## Status and limitations
 
-The implemented software target includes per-device HTTPS; a maintenance Web
-UI; Digest-protected RTSP for both sensors; ONVIF pan/tilt and presets for NVRs;
+The implemented software target includes a maintenance Web UI over plain HTTP;
+Digest-protected RTSP for both sensors; ONVIF pan/tilt and presets for NVRs;
 transactional Wi-Fi; password-synchronized SSH with optional keys; embedded
 DNS-SD; signed, sequence-gated updates; and exact-binary `jooanipc` containment. Host/native and emulated tests exercise
 these contracts. The current `0.1.0` line also replaces the earlier expanded
