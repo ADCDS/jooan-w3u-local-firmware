@@ -12,10 +12,10 @@ save the current position, recall, delete, and nudge to aim before saving.
     tools/onvif_presets.py camera.local delete 3
 
 The password is read from JOAN_PASSWORD or prompted for; only its WS-Security
-digest is sent. Like NVR ONVIF clients, the camera's per-device certificate
-is not verified; use this on the camera's own network. Standard library only.
+digest is sent. The camera speaks plain HTTP, so use this on the camera's own
+network. Standard library only.
 """
-import argparse, base64, datetime, getpass, hashlib, html, http.client, os, re, ssl, sys
+import argparse, base64, datetime, getpass, hashlib, html, http.client, os, re, sys
 
 PTZ = 'http://www.onvif.org/ver20/ptz/wsdl'
 
@@ -32,9 +32,7 @@ def call(host, password, operation, body=''):
         '<Created xmlns="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'
         f'{created}</Created></UsernameToken></Security></s:Header><s:Body><p:{operation}>'
         f'<p:ProfileToken>ch0</p:ProfileToken>{body}</p:{operation}></s:Body></s:Envelope>')
-    context = ssl.create_default_context()
-    context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
-    connection = http.client.HTTPSConnection(host, context=context, timeout=30)
+    connection = http.client.HTTPConnection(host, timeout=30)
     connection.request('POST', '/onvif/ptz', envelope.encode(), {'Content-Type': 'application/soap+xml; charset=utf-8'})
     response = connection.getresponse()
     reply = response.read().decode('utf-8', 'replace')

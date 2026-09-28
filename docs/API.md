@@ -2,9 +2,10 @@
 
 ## Contract and qualification status
 
-`joan-daemon` and the bundled Web UI implement the versioned routes below.
-HTTPS is the production default on TCP/443; TCP/80 accepts only GET/HEAD and
-redirects to HTTPS. Plain HTTP exists only as an explicit host-test mode.
+`joan-daemon` and the bundled Web UI implement the versioned routes below,
+over plain HTTP on TCP/80. Nothing is encrypted in transit: a sign-in sends the
+password and every later request carries the session cookie in the clear, so
+use the API only from the trusted network the camera is isolated on.
 
 Implemented software is not the same as hardware qualification. Routes backed
 by retained OEM media, MQTT, PTZ, Wi-Fi, or the updater may return a
@@ -27,8 +28,8 @@ password: admin
 The initial password remains valid; setup is not forced. Login and the status
 response carry `default_password_warning: true` until it is changed, and the
 Web UI keeps that warning visible. Password rotation invalidates existing Web
-sessions and atomically publishes synchronized credentials for HTTPS, RTSP, and
-SSH. An upgraded early `0.1` database whose original password cannot be
+sessions and atomically publishes synchronized credentials for the Web UI,
+ONVIF, RTSP, and SSH. An upgraded early `0.1` database whose original password cannot be
 recovered preserves Web login but reports `ssh_password_sync: false` until the
 administrator changes the password once.
 
@@ -47,7 +48,6 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
 | `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, Ethernet link/speed and cumulative interface counters |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
-| `/api/v1/tls/identity` | `GET`, `PUT`, `DELETE` | Report, enroll or discard the HTTPS certificate. `PUT` takes one PEM bundle (private key plus chain, any order) and is how a camera gets a certificate that phones and televisions already trust; `DELETE` returns to a generated self-signed identity. Both need a restart to take effect. |
 | `/api/v1/time` | `PUT` | Set the camera clock from the client (UTC epoch seconds, as a JSON string) |
 | `/api/v1/timezone` | `PUT` | Set the stored time zone (`gmt_tz`, a `"GMT-03:00"`-style offset). The burned-in OSD overlay adopts it on the next camera restart. |
 | `/api/v1/streams` | `GET` | Enumerate the main/sub RTSP streams |
@@ -69,10 +69,10 @@ listen or talk path; the guard keeps OEM alarm and voice playback muted.
 ## ONVIF for NVRs
 
 Network video recorders such as Frigate control pan/tilt and presets over
-ONVIF. The daemon answers the few Profile S operations they need on the HTTPS listener,
-at `/onvif/device_service`, `/onvif/media` and `/onvif/ptz`. There is no
-separate port and no WS-Discovery: point the client at the camera's address and
-port 443.
+ONVIF. The daemon answers the few Profile S operations they need on the Web UI
+listener, at `/onvif/device_service`, `/onvif/media` and `/onvif/ptz`. There is
+no separate port and no WS-Discovery: point the client at the camera's address
+and port 80.
 
 - **Authentication.** Every operation except `GetSystemDateAndTime` needs a
   WS-Security UsernameToken with a PasswordDigest for user `admin` and the
@@ -115,8 +115,8 @@ A Frigate camera entry for the pan/tilt sensor looks like this:
 cameras:
   jooan_main:
     onvif:
-      host: https://192.0.2.10   # the camera; the https:// prefix selects TLS
-      port: 443
+      host: 192.0.2.10   # the camera
+      port: 80
       user: admin
       password: <administrator password>
 ```
@@ -132,7 +132,7 @@ The runtime removes IPv4 and IPv6 default routes and repeatedly prunes any that
 reappear. Connected local-subnet routes remain. `/api/v1/network/routes` accepts
 only explicit RFC1918 or ULA routes; it cannot add a public or default route.
 
-The embedded responder advertises A plus DNS-SD PTR/SRV/TXT records for HTTPS,
+The embedded responder advertises A plus DNS-SD PTR/SRV/TXT records for HTTP,
 SSH, RTSP, and `_jooan-camera._tcp` on UDP/5353. The configured label is
 advertised as `label.local`. DNS-SD is link-local; routed VLAN discovery needs
 a trusted reflector, while direct address access does not.

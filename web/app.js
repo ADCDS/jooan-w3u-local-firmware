@@ -144,7 +144,6 @@ function guard(host, message, verb, run) {
 
 /* ---------- status ---------- */
 const FEATURE_LABELS = {
-  https_identity: ['HTTPS identity', 'device key'],
   rtsp: ['RTSP', 'digest auth'],
   ptz: ['Pan / tilt', null],
   ssh: ['SSH', null],
@@ -218,7 +217,7 @@ async function load() {
      pan/tilt and presets (sensor A). */
   $('#streams').replaceChildren(...[
     ...streamList.streams.map(s => [`${s.id} · ${s.width}×${s.height}`, s.rtsp]),
-    ['ONVIF', `https://${location.host}/onvif/device_service`],
+    ['ONVIF', `http://${location.host}/onvif/device_service`],
   ].map(([label, value]) => {
     const row = document.createElement('div');
     row.className = 'row';
@@ -228,7 +227,7 @@ async function load() {
   }));
 
   $('#mdns-form').elements.hostname.value = mdns.hostname;
-  $('#mdns-result').textContent = `https://${mdns.address}/`;
+  $('#mdns-result').textContent = `http://${mdns.address}/`;
   try {
     const keys = await api('/api/v1/ssh/authorized-keys');
     const lines = (keys.authorized_keys || '').split('\n').filter(Boolean);
@@ -494,7 +493,7 @@ $('#mdns-form').addEventListener('submit', async e => {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
     });
-    $('#mdns-result').textContent = `https://${d.address}/`;
+    $('#mdns-result').textContent = `http://${d.address}/`;
     $('#rail-host').textContent = d.address;
   } catch (x) { notice(x.message, 'crit'); }
 });

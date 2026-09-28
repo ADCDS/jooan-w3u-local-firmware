@@ -24,7 +24,6 @@ JOAN_STAGING_DIR="$JL_RUN/staging" \
 JOAN_WEB_DIR="$JL_SLOT_DIR/web" \
 JOAN_INTEGRATION_HELPER="$JL_SLOT_DIR/hooks/integration-helper.sh" \
 JOAN_MQTT_PORT=1883 JOAN_RTSP_PORT=8554 JOAN_RTSP_PROXY_PORT=554 \
-JOAN_PUBLIC_HOST="jooan-w3u.local" \
     "$JL_SLOT_DIR/bin/joan-daemon" >"$JL_RUN/daemon.log" 2>&1 &
 echo $! > "$JL_RUN/daemon.pid"
 # On a 38 MB board the OOM killer must take this restartable process first,

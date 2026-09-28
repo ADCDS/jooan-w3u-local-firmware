@@ -11,7 +11,7 @@ and places a hardened local control plane around it.
 ```text
 Local browser / NVR / administrator
              |
-     HTTPS API and RTSP/TCP
+  HTTP API, ONVIF and RTSP/TCP
              |
   open gateway + policy services
      |                    |
@@ -42,17 +42,17 @@ dependency behind a narrow boundary.
 The open layer is responsible for:
 
 - model-gated, transactional installation and uninstall packages;
-- local HTTPS termination and authenticated session handling;
+- a local HTTP listener with authenticated session handling;
 - the versioned `/api/v1/` management contract;
 - password-synchronized SSH for user `admin`, with optional authorized keys;
 - local RTSP reachability;
 - no-default-route local networking plus exact-process egress containment;
 - embedded mDNS/DNS-SD discovery;
-- an ONVIF device/media/PTZ subset for NVRs, on the HTTPS listener;
+- an ONVIF device/media/PTZ subset for NVRs, on the same HTTP listener;
 - health checks, update verification, and rollback/fallback handling.
 
-The generic image does not personalize Wi-Fi or embed keys. Per-device HTTPS
-material, the administrator credential, optional SSH authorized keys, and
+The generic image does not personalize Wi-Fi or embed keys. The per-device key
+for the loopback MQTT sink, the administrator credential, optional SSH authorized keys, and
 manual Wi-Fi settings live in device-local persistent state and are excluded
 from release artifacts. The public initial password remains usable until
 changed; warning state, rather than forced setup, records that condition.
@@ -62,7 +62,7 @@ changed; warning state, rather than forced setup, records that condition.
 The implementation includes deterministic signed packaging, a compressed
 controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
-keys, the HTTPS daemon with a maintenance Web UI, a local TLS MQTT sink, ONVIF
+keys, the HTTP daemon with a maintenance Web UI, a local TLS MQTT sink, ONVIF
 pan/tilt and presets for NVRs, embedded DNS-SD, and an exact-binary
 `LD_PRELOAD` guard. The guard redirects only approved OEM service names to
 loopback and denies other `jooanipc` connect/datagram traffic. It also confines
@@ -98,8 +98,8 @@ for snapshots, but cannot eliminate that immutable early interval. The
 external router or VLAN must block untrusted peers and Internet access before
 power is applied.
 
-For a conforming promoted release, the intended listeners are TCP/80 (redirect only), TCP/443,
-TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
+For a conforming promoted release, the intended listeners are TCP/80 (Web UI,
+API and ONVIF), TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
 supported architecture.
 
 ## Memory pressure and PTZ homing

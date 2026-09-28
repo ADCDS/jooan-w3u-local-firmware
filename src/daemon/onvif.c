@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 /* ONVIF for network video recorders such as Frigate: the few Profile S
  * operations an NVR needs to find the pan/tilt sensor, move it and use the
- * OEM presets. SOAP arrives on the HTTPS listener under /onvif/. Discovery
+ * OEM presets. SOAP arrives on the HTTP listener under /onvif/. Discovery
  * extras (GetServices, GetStreamUri, ...) are left out: the flash budget is
  * tight and Frigate does not call them.
  *
@@ -341,7 +341,7 @@ int joan_onvif_handle(const JoanConfig *cfg, const JoanRequest *req, const char 
     *reply = NULL; *reply_len = 0;
     memset(&o, 0, sizeof(o)); o.cap = 4096; /* the largest reply, GetProfiles, is under 3 KiB */
     if (!(o.b = malloc(o.cap))) return -1;
-    snprintf(base, sizeof(base), "%s://%s", cfg->plain_http ? "http" : "https", host);
+    snprintf(base, sizeof(base), "http://%s", host);
     put(&o, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\""
         " xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\""
         " xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\""

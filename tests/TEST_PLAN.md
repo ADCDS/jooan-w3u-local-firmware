@@ -70,10 +70,11 @@ UNPROVISIONED -> PROVISIONED -> SESSION_AUTHENTICATED
 
 Exercise every allowed transition and every forbidden edge. In particular:
 
-- an enrolled certificate survives an mDNS rename, and the camera accepts the
-  name on that certificate as its own origin while still refusing every other
-  origin (`tools/tests/test_cert_origin.py`, which needs TLS and so runs apart
-  from the plain-HTTP daemon suite);
+- the HTTP listener backpressures a ninth concurrent connection, serves the
+  initial assets in parallel and reads a request body that arrives in pieces
+  (`tools/tests/test_http_queue.py`);
+- a certificate enrolled by 0.2.17 or earlier is discarded, key included, at
+  the first start;
 - ONVIF requires a fresh WS-Security digest for everything but the clock,
   rejects a replayed token, shares the login failure budget, parses any
   namespace prefix, never lets a lost `Stop` run the head past its deadman,
