@@ -32,14 +32,11 @@
     </form>
   </section>
 
-  <div id="console" class="hidden" data-zone="live">
+  <div id="console" class="hidden" data-zone="system">
     <nav id="rail" aria-label="Sections">
       <span class="brand"><b>Jooan Local</b><small id="rail-host">&nbsp;</small></span>
-      <button data-zone="live" aria-current="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg><span>Live</span></button>
-      <button data-zone="control"><svg viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/><circle cx="12" cy="12" r="2.6"/></svg><span>Control</span></button>
+      <button data-zone="system" aria-current="true"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.1"/><circle cx="10" cy="17" r="2.1"/></svg><span>System</span></button>
       <button data-zone="network"><svg viewBox="0 0 24 24"><path d="M2.5 9a15 15 0 0 1 19 0M6 12.8a10 10 0 0 1 12 0M9.5 16.5a5 5 0 0 1 5 0"/><circle cx="12" cy="20" r="1.1"/></svg><span>Network</span></button>
-      <button data-zone="recordings"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5V3h7l3 3M8 13h8M8 16.5h5"/></svg><span>Recordings</span></button>
-      <button data-zone="system"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.1"/><circle cx="10" cy="17" r="2.1"/></svg><span>System</span></button>
     </nav>
 
     <div id="view">
@@ -48,69 +45,6 @@
         <span class="grow">SSH password is not synchronized after upgrade. Change the administrator password once to enable it.</span>
         <button id="goto-password">Change it</button>
       </div>
-
-      <section id="zone-live" class="zone">
-        <div class="cams">
-          <div class="cam main" id="tile-main" tabindex="0" data-fs="main" role="button" aria-label="Main stream, full screen">
-            <video id="video-main" muted autoplay playsinline></video>
-            <span class="badge"><i></i>LIVE</span>
-            <span class="cap" id="cap-main">Main</span>
-            <span class="camfs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"/></svg><b>Full screen</b></span>
-          </div>
-          <div class="cam sub" id="tile-sub" tabindex="0" data-fs="sub" role="button" aria-label="Sub stream, full screen">
-            <video id="video-sub" muted autoplay playsinline></video>
-            <span class="badge"><i></i>LIVE</span>
-            <span class="cap" id="cap-sub">Sub</span>
-            <span class="camfs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6"/></svg><b>Full screen</b></span>
-          </div>
-        </div>
-        <aside class="side">
-          <div class="card">
-            <h2>Jog</h2>
-            <div class="dpad" id="jog" tabindex="0" role="group" data-capture-arrows
-                 aria-label="Jog. Tap an arrow to nudge.">
-              <button data-ptz="up" class="u" data-focusable="off" aria-label="Tilt up">&uarr;</button>
-              <button data-ptz="left" class="l" data-focusable="off" aria-label="Pan left">&larr;</button>
-              <button data-ptz="stop" class="c" aria-label="Stop">&#9632;</button>
-              <button data-ptz="right" class="r" data-focusable="off" aria-label="Pan right">&rarr;</button>
-              <button data-ptz="down" class="d" data-focusable="off" aria-label="Tilt down">&darr;</button>
-            </div>
-            <div id="jog-mode" class="grid2" role="group" aria-label="Nudge size">
-              <button type="button" data-step="fine" class="primary" aria-pressed="true">Fine</button>
-              <button type="button" data-step="coarse" aria-pressed="false">Coarse</button>
-            </div>
-            <p id="jog-hint" class="muted tv-only">OK, then arrow</p>
-            <p id="ptz-state" class="muted" role="status" aria-live="polite">Tap an arrow to nudge.</p>
-          </div>
-          <div class="card">
-            <h2>Presets</h2>
-            <div id="preset-chips" class="chips row-chips"></div>
-            <div class="grid2">
-              <button id="preset-set">Save current</button>
-              <button id="preset-delete" class="danger">Delete preset</button>
-            </div>
-            <div id="preset-confirm"></div>
-          </div>
-          <div class="card">
-            <h2>Talkback</h2>
-            <button id="audio-connect" class="wide">Listen</button>
-            <button id="push-to-talk" class="wide primary" disabled>Hold to talk</button>
-            <p id="audio-state" class="muted">Disconnected</p>
-          </div>
-        </aside>
-      </section>
-
-      <section id="zone-control" class="zone hidden" data-scrollport>
-        <div class="card">
-          <h2>Home</h2>
-          <button id="ptz-home">Go home</button>
-        </div>
-        <div class="card">
-          <h2>Talkback</h2>
-          <button id="audio-connect-2" class="wide">Listen</button>
-          <p class="muted">Listening pauses while talking.</p>
-        </div>
-      </section>
 
       <section id="zone-network" class="zone hidden" data-scrollport>
         <div class="card">
@@ -151,43 +85,6 @@
         </div>
       </section>
 
-      <section id="zone-recordings" class="zone hidden" data-scrollport>
-        <div class="browse">
-          <div class="bcol">
-            <div class="card">
-              <h2>microSD card</h2>
-              <div id="sd-status" class="kv"><div class="row"><span>State</span><b>&mdash;</b></div></div>
-              <div class="cap-bar"><div id="sd-used" class="u"></div></div>
-              <p id="sd-note" class="muted"></p>
-            </div>
-            <div class="card">
-              <h2>Days with footage</h2>
-              <div id="rec-days" class="days"></div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="toolbar">
-              <h2 id="rec-clips-title">Recordings</h2>
-              <span class="grow"></span>
-              <button id="rec-refresh" class="btn-sm">Refresh</button>
-              <button id="rec-del-day" class="btn-sm danger">Delete day</button>
-            </div>
-            <div id="rec-day-confirm"></div>
-            <div class="rec-player hidden" id="rec-player-wrap">
-              <video id="rec-player" controls preload="metadata" playsinline></video>
-              <p class="muted" id="rec-player-note"></p>
-            </div>
-            <div class="tl-wrap hidden" id="rec-tl-wrap">
-              <div class="tl" id="rec-tl"></div>
-              <div class="tl-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
-              <p class="legend"><span><i></i>Recorded</span><span class="muted">gaps are time the recorder was not writing</span></p>
-            </div>
-            <div id="rec-clips" class="clips"></div>
-            <div id="rec-clip-confirm"></div>
-          </div>
-        </div>
-      </section>
-
       <section id="zone-system" class="zone hidden" data-scrollport>
         <div class="card">
           <h2>State</h2>
@@ -195,7 +92,8 @@
           <div id="state-detail" class="kv gap-top"></div>
         </div>
         <div class="card">
-          <h2>RTSP</h2>
+          <h2>NVR</h2>
+          <p class="muted">Record and watch in an NVR such as Frigate; it pans and recalls presets over ONVIF. User admin, the administrator password.</p>
           <div id="streams" class="kv stack"></div>
         </div>
         <div class="card">
@@ -246,13 +144,6 @@
       </section>
     </div>
 
-    <div id="fs-bar" class="hidden">
-      <button data-fs-pick="main" class="primary">Main</button>
-      <button data-fs-pick="sub">Sub</button>
-      <span id="fs-sensor" class="pill"><i class="led"></i></span>
-      <span class="grow"></span>
-      <button id="fs-exit">Back</button>
-    </div>
   </div>
 
   <p id="notice" role="status" class="hidden"><span id="notice-text"></span><button id="notice-close" aria-label="Dismiss">&times;</button></p>

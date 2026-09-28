@@ -85,14 +85,14 @@ routes; connected subnets and explicitly allowed RFC1918/ULA routes remain.
 After a cold reboot:
 
 1. verify HTTPS identity, warning state, login throttling, and session expiry;
-2. verify main/sub fMP4 playback, both direct RTSP streams, and snapshot;
-3. verify mic listening and bounded press-to-talk;
-4. verify PTZ jog/stop, home, and preset save/recall/delete;
-5. verify SSH `admin` password synchronization and optional keys;
-6. verify DNS-SD announcements for HTTPS, SSH, RTSP, and the camera service;
-7. verify no IPv4/IPv6 default route and no public resolver remains;
-8. scan listeners and capture traffic across reboot, including early GoAhead;
-9. verify the signed uninstall and recovery assets remain available.
+2. verify both direct RTSP streams in an NVR;
+3. verify ONVIF from the NVR (Frigate: arrows nudge, presets recall) and preset
+   save/delete with `tools/onvif_presets.py`;
+4. verify SSH `admin` password synchronization and optional keys;
+5. verify DNS-SD announcements for HTTPS, SSH, RTSP, and the camera service;
+6. verify no IPv4/IPv6 default route and no public resolver remains;
+7. scan listeners and capture traffic across reboot, including early GoAhead;
+8. verify the signed uninstall and recovery assets remain available.
 
 Failure of any item keeps the image unqualified. Isolate the unit and follow
 [Recovery](RECOVERY.md).

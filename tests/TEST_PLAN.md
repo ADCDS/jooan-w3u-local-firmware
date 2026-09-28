@@ -74,6 +74,11 @@ Exercise every allowed transition and every forbidden edge. In particular:
   name on that certificate as its own origin while still refusing every other
   origin (`tools/tests/test_cert_origin.py`, which needs TLS and so runs apart
   from the plain-HTTP daemon suite);
+- ONVIF requires a fresh WS-Security digest for everything but the clock,
+  rejects a replayed token, shares the login failure budget, parses any
+  namespace prefix, never lets a lost `Stop` run the head past its deadman,
+  and refuses motion during preset travel (`ci/check_onvif.sh`, which builds
+  the daemon against mbedTLS for SHA-1);
 - the public initial `admin` / `admin` remains valid until changed, with
   neither forced setup nor a warning banner;
 - the reported state survives restart and flips only after password rotation;
@@ -151,8 +156,8 @@ logs, and a cold post-test recovery proving both OEM streams and management
 access. Persistent installation requires its separate rollback and pre-boot
 recovery gates.
 
-Promotion also requires main/sub fMP4, direct RTSP, mic listening/PTT, PTZ
-jog/stop/home/presets, DNS-SD, signed update/replay rejection, early-GoAhead
+Promotion also requires direct RTSP for both sensors, ONVIF nudges and preset
+save/recall/delete, DNS-SD, signed update/replay rejection, early-GoAhead
 capture, no-default-route enforcement, the steady 196 KiB/64 KiB contract, the
 single-runtime 196 KiB/56 KiB maintenance contract with SSH recovery, and
 destructive uninstall

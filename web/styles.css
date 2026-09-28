@@ -1,13 +1,13 @@
-/* Jooan Local console.
-   Three surfaces from one tree: pointer browser, phone, and a TV remote.
+/* Jooan Local maintenance console. Watching, steering and recording belong to
+   an NVR (ONVIF + RTSP); this page keeps the camera configured.
    Responsive for pointer (desktop) and touch (phone). */
 :root{
   color-scheme:dark;
   --bg:#0d1418; --panel:#151f25; --panel2:#1c282f; --line:#2b3941;
   --ink:#e9f1f4; --muted:#8ba0aa;
   --accent:#52d3a4; --accent-ink:#04231a;
-  /* Focus is deliberately not the accent: on a D-pad the ring is the only
-     cursor, and "where I am" must never read as "what this does". */
+  /* Focus is deliberately not the accent: "where I am" must never read as
+     "what this does". */
   --focus:#3d94ff; --ring-sep:#050a0d;
   --warn:#e6ab48; --crit:#f0736a;
   --pad:1rem; --radius:10px;
@@ -23,22 +23,16 @@ main{flex:1;min-height:0;display:flex;flex-direction:column;padding:var(--pad);g
 .hidden{display:none!important}
 .muted{color:var(--muted);font-size:.85rem;margin:.4rem 0 0}
 .grow{flex:1}
-code{color:var(--accent);font-family:ui-monospace,monospace}
 
 /* ---------- controls ---------- */
 button,input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);
   padding:.6rem .75rem;background:var(--panel2);color:var(--ink);min-height:44px}
 button{cursor:pointer;font-weight:600}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
-#preset-chips button.pending{border-color:var(--accent);border-style:dashed}
-#preset-chips button.chosen:not(.primary){box-shadow:inset 0 0 0 1px var(--muted)}
 button.danger{color:var(--crit);border-color:rgba(240,115,106,.5)}
 button.ghost{background:transparent}
-button.wide{width:100%}
-button.link,a.link{background:none;border:0;color:var(--accent);padding:0;min-height:0;text-decoration:underline;cursor:pointer}
-a.link.danger,button.link.danger{color:var(--crit)}
 button:disabled{opacity:.45;cursor:not-allowed}
-/* Feedback for a press. Neither a touch screen nor a remote has hover, so
+/* Feedback for a press. A touch screen has no hover, so
    until the button moves there is nothing to say it registered; and a request
    that wakes a shell helper can take a second, which reads as a dead control
    and gets pressed again. The press moves, the wait spins. */
@@ -61,7 +55,6 @@ output:empty{display:none}
 .narrow{max-width:420px;margin:6vh auto}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.5rem}
 .chips{display:flex;flex-wrap:wrap;gap:.4rem}
-.row-chips button{min-height:44px}
 
 .pill{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;
   padding:.3rem .65rem;border-radius:999px;border:1px solid var(--line);
@@ -71,51 +64,7 @@ output:empty{display:none}
 .pill.off .led{background:var(--muted)}
 
 .gap-top{margin-top:.7rem}
-.cap-bar{height:10px;border-radius:5px;background:var(--panel2);overflow:hidden;margin:.6rem 0}
-.cap-bar .u{height:100%;width:0;background:var(--accent)}
-.cap-bar .u.full{background:var(--crit)}
-
-/* ---------- recordings browser ----------
-   Two columns so the card/day context stays visible beside the clip list
-   instead of pushing it off-screen on a wide display. */
-.browse{display:grid;grid-template-columns:16rem 1fr;gap:.7rem;align-items:start}
-.bcol{display:flex;flex-direction:column;gap:.7rem;min-width:0}
-.toolbar{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-.toolbar h2{margin:0}
 .btn-sm{min-height:32px;padding:.25rem .6rem;font-size:.78rem}
-/* A day is a target, not a chip: two lines, so size and count stay readable
-   when a card holds a fortnight of them. */
-.days{display:flex;flex-direction:column;gap:.25rem;max-height:22rem;overflow-y:auto;scrollbar-width:none}
-.days::-webkit-scrollbar{display:none}
-.days button{display:block;width:100%;text-align:left;padding:.4rem .55rem;min-height:0;
-  background:none;border:1px solid transparent;color:var(--ink);font-weight:600;font-size:.84rem}
-.days button small{display:block;color:var(--muted);font-weight:400;font-size:.72rem;font-family:ui-monospace,monospace}
-.days button[aria-current="true"]{background:var(--panel2);border-color:var(--accent)}
-.clips{display:flex;flex-direction:column;gap:.3rem;margin-top:.6rem}
-.clip{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--line);
-  border-radius:8px;background:var(--panel2);font-size:.82rem}
-.clip .rng{font-family:ui-monospace,monospace;white-space:nowrap}
-.clip .sz{margin-left:auto;color:var(--muted);font-family:ui-monospace,monospace;font-size:.76rem}
-.clip .act{display:inline-flex;gap:.3rem;flex:none}
-.clip .act a,.clip .act button{display:grid;place-items:center;min-height:30px;min-width:30px;padding:0;
-  border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);text-decoration:none}
-.clip .act .danger{color:var(--crit);border-color:rgba(240,115,106,.45)}
-.clip .act svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.rec-player{margin-top:.6rem}
-.rec-player video{display:block;width:100%;max-height:44vh;background:#080d11;border:1px solid var(--line);border-radius:8px}
-.tl{position:relative;height:24px;border-radius:6px;background:var(--panel2);
-  border:1px solid var(--line);overflow:hidden;margin-top:.5rem}
-.tl i{position:absolute;top:4px;bottom:4px;min-width:2px;background:var(--accent);border-radius:2px}
-.tl-axis{display:flex;justify-content:space-between;margin-top:.2rem;font:.62rem/1 ui-monospace,monospace;color:var(--muted)}
-.legend{display:flex;gap:.8rem;align-items:center;margin:.35rem 0 0;font-size:.72rem;color:var(--muted);flex-wrap:wrap}
-.legend span{display:inline-flex;align-items:center;gap:.35rem}
-.legend i{width:.7rem;height:.7rem;border-radius:2px;background:var(--accent);flex:none}
-@media (max-width:1100px){.browse{grid-template-columns:1fr}.days{max-height:none}}
-[data-tv] .browse{grid-template-columns:1fr}
-[data-tv] .days{max-height:none}
-/* Nothing may exceed the viewport: a TV has no way to scroll sideways. */
-[data-tv] .clip{flex-wrap:wrap}
-[data-tv] .clip .rng{white-space:normal}
 .kv{display:flex;flex-direction:column;gap:.45rem}
 .kv .row{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;font-size:.82rem}
 .kv .row span{color:var(--muted);flex:none;white-space:nowrap}
@@ -133,30 +82,9 @@ output:empty{display:none}
 .confirm p{margin:0 0 .5rem;font-size:.85rem}
 
 
-/* ---------- TV remote ----------
-   One ring for pointer-keyboard focus and the D-pad. It is layered over its
-   neighbours because on a remote the ring is the only cursor: losing it means
-   losing your place. A remote is also used from across a room, so a TV gets
-   larger type and taller controls from the same tree. */
-:where(a,button,input,select,textarea,[tabindex]):focus-visible,.nav-focus{outline:none;position:relative;z-index:10;
+/* One visible ring for keyboard focus, layered over its neighbours. */
+:where(a,button,input,select,textarea,[tabindex]):focus-visible{outline:none;position:relative;z-index:10;
   box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--focus)}
-[data-tv] .nav-focus{transform:scale(1.04);transition:transform .15s ease}
-@media (prefers-reduced-motion:reduce){[data-tv] .nav-focus{transform:none;transition:none}}
-/* On a remote the ring IS the cursor, so there must be exactly one. The
-   platform moves native focus on its own (the IME, a zone being revealed),
-   which leaves the browser's ring on one element and ours on another: two
-   cursors, and no way to tell which one OK will press. Ours wins. */
-[data-tv] :where(a,button,input,select,textarea,[tabindex]):focus-visible:not(.nav-focus){box-shadow:none}
-.tv-only{display:none}
-[data-tv] .tv-only{display:block}
-/* A 1080p TV reports a 960x540 CSS viewport at devicePixelRatio 2, so the panel
-   already doubles every CSS pixel: 16px of text lands as 32 physical px, which
-   is the 10-foot size. Scaling the root font on top of that double-counts and
-   is what made the console look zoomed in. Leave the type alone; spend the
-   budget on hit targets and on surviving overscan, which a TV really does cut. */
-[data-tv] main{padding:2.6vh 3.4vw}
-[data-tv] button,[data-tv] select,[data-tv] input{min-height:2.6rem}
-[data-tv] #rail{width:9.5rem}
 
 /* ---------- console shell ---------- */
 #console{flex:1;min-height:0;display:flex;gap:var(--pad)}
@@ -176,56 +104,6 @@ output:empty{display:none}
 [data-scrollport]::-webkit-scrollbar{display:none}
 @media (prefers-reduced-motion:reduce){[data-scrollport]{scroll-behavior:auto}}
 
-#zone-live{flex-direction:row}
-.cams{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:.6rem}
-.side{width:15rem;flex:none;display:flex;flex-direction:column;gap:.6rem;overflow-y:auto;scrollbar-width:none}
-.side::-webkit-scrollbar{display:none}
-
-/* ---------- camera tiles ---------- */
-.cam{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);
-  background:#080d11;cursor:pointer}
-.cam video{display:block;width:100%;height:100%;object-fit:contain;background:#080d11}
-.cam.main{flex:1;min-height:0}
-/* Both sensors are 16:9 and the live area is roughly 16:9 too, so a
-   full-width sub tile letterboxes a 16:9 source into a slot: the box grows,
-   the picture does not. A 16:9 tile at partial width makes the image larger. */
-.cam.sub{flex:none;width:40%;aspect-ratio:16/9;align-self:flex-start}
-.cam .badge{position:absolute;top:.4rem;right:.5rem;display:flex;gap:.3rem;align-items:center;
-  font:700 .6rem/1 ui-monospace,monospace;letter-spacing:.1em;color:#fff;
-  background:rgba(0,0,0,.5);border-radius:4px;padding:.25rem .4rem}
-.cam .badge i{width:.4rem;height:.4rem;border-radius:50%;background:var(--crit)}
-.cam .cap{position:absolute;left:.5rem;bottom:.4rem;font:.62rem/1.2 ui-monospace,monospace;
-  color:#bccfd8;text-shadow:0 1px 2px #000;
-  max-width:calc(100% - 9rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.camfs{position:absolute;right:.5rem;bottom:.4rem;display:inline-flex;align-items:center;gap:.3rem;
-  font:600 .68rem/1 system-ui,sans-serif;padding:.4rem .55rem;border-radius:6px;
-  border:1px solid rgba(255,255,255,.28);background:rgba(8,14,18,.75);color:#e9f1f4}
-.camfs svg{width:.85rem;height:.85rem;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round}
-
-.dpad{display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem}
-.dpad button{aspect-ratio:1;display:grid;place-items:center;padding:0}
-/* Holding the arrows: say so, because the pad now answers keys that are not
-   aimed at any one button. */
-.dpad.jogging{box-shadow:0 0 0 2px var(--ring-sep),0 0 0 4px var(--accent)}
-.dpad.jogging button{border-color:var(--accent)}
-.dpad .u{grid-column:2;grid-row:1} .dpad .l{grid-column:1;grid-row:2}
-.dpad .c{grid-column:2;grid-row:2} .dpad .r{grid-column:3;grid-row:2}
-.dpad .d{grid-column:2;grid-row:3}
-
-/* ---------- full screen ----------
-   A CSS state, not a DOM move: the selected tile is promoted to fill the
-   viewport while its <video> keeps playing. Moving the element would tear
-   down and restart the MediaSource for no benefit. */
-#console[data-fs]{flex-direction:column}
-#console[data-fs] #rail,#console[data-fs] #ssh-warning,
-#console[data-fs] .side,#console[data-fs] .zone:not(#zone-live){display:none}
-#console[data-fs] #zone-live{display:flex}
-#console[data-fs] .cams{gap:0}
-#console[data-fs="main"] .cam.sub,#console[data-fs="sub"] .cam.main{display:none}
-#console[data-fs] .cam{flex:1;width:auto;aspect-ratio:auto;min-height:0;border-radius:8px}
-#console[data-fs] .camfs{display:none}
-#fs-bar{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex:none}
-
 #notice{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(1rem + env(safe-area-inset-bottom,0px));
   max-width:min(92vw,34rem);display:flex;align-items:center;gap:.6rem;margin:0;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
@@ -242,16 +120,8 @@ output:empty{display:none}
     padding-top:.4rem;padding-bottom:env(safe-area-inset-bottom,0px)}
   #rail .brand{display:none}
   #rail button{flex-direction:column;gap:.2rem;justify-content:center;text-align:center;font-size:.68rem;padding:.4rem .2rem}
-  #zone-live{flex-direction:column}
-  .cams{flex:none}
-  .cam.main{flex:none;aspect-ratio:16/9}
-  .cam.sub{width:62%}
-  .side{width:auto;overflow:visible}
-  .side .grid2{grid-template-columns:1fr}
-  .cam .cap{max-width:calc(100% - 8rem)}
   #view{overflow-y:auto}
   /* Clear the bottom rail: a toast covering the navigation is worse than the
      error it reports. */
   #notice{bottom:calc(4.6rem + env(safe-area-inset-bottom,0px))}
 }
-
