@@ -188,6 +188,11 @@ class RuntimeHookTests(unittest.TestCase):
             "    n=0; [ -f \"$WPA_COUNTER\" ] && n=$(cat \"$WPA_COUNTER\")\n"
             "    printf '%s\\n' \"$n\"; echo $((n + 1)) > \"$WPA_COUNTER\"\n"
             "    ;;\n"
+            "  *list_networks*)\n"
+            "    n=0; [ -f \"$WPA_COUNTER\" ] && n=$(cat \"$WPA_COUNTER\")\n"
+            "    printf 'network id / ssid / bssid / flags\\n'\n"
+            "    i=0; while [ \"$i\" -lt \"$n\" ]; do printf '%s\\tnet\\tany\\t\\n' \"$i\"; i=$((i + 1)); done\n"
+            "    ;;\n"
             "  *status*) printf 'wpa_state=COMPLETED\\n' ;;\n"
             "  *) printf 'OK\\n' ;;\n"
             "esac\n",
@@ -233,6 +238,25 @@ class RuntimeHookTests(unittest.TestCase):
             calls = log.read_text(encoding="utf-8")
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
+
+    def test_wifi_hook_disables_every_other_network(self) -> None:
+        """jooanipc's own stored network (the retired, open JOOANTEST) sits in
+        the same wpa_supplicant. Only the two blocks this apply added may stay
+        enabled, or the camera probes for it and would join an open impostor."""
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        fixture = REPOSITORY / "tools/tests/wifi-space.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, log = self._wifi_apply_environment(root)
+            (root / "wpa.counter").write_text("1\n")  # the OEM network is id 0
+            result = subprocess.run([str(hook), str(fixture)], env=environment,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("3|-iwlan0|disable_network|0\n", calls)
+            self.assertNotIn("disable_network|1", calls)
+            self.assertNotIn("disable_network|2", calls)
+            self.assertLess(calls.index("disable_network|0"), calls.index("reassociate"))
 
     def test_slot_start_does_not_apply_wifi(self) -> None:
         """start.sh is bounded to 15s and runs long before wpa_supplicant
