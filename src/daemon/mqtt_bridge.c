@@ -250,4 +250,9 @@ int joan_mqtt_operation(const char*operation,char*response,size_t capacity)
 {
     unsigned i;int state=-1;if(!operation||!response||!capacity)return-1;pthread_mutex_lock(&mutex);for(i=0;i<16;i++)if(operations[i].state&&!strcmp(operations[i].id,operation)){state=operations[i].state;if(operations[i].response[0])snprintf(response,capacity,"%s",operations[i].response);else response[0]=0;break;}pthread_mutex_unlock(&mutex);return state==2?0:state==1?1:-1;
 }
+/* Stop waiting for an answer, so the next command of the same kind may go. */
+void joan_mqtt_abandon(const char*operation)
+{
+    unsigned i;pthread_mutex_lock(&mutex);for(i=0;i<16;i++)if(operations[i].state==1&&!strcmp(operations[i].id,operation))operations[i].state=3;pthread_mutex_unlock(&mutex);
+}
 const char *joan_mqtt_bridge_status(void){return state;}

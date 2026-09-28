@@ -80,7 +80,7 @@ def main():
         print('saved as', re.search(r'PresetToken>(\d+)<', reply).group(1))
     elif args.command == 'goto':
         call(args.host, password, 'GotoPreset', f'<p:PresetToken>{token_for(args.host, password, args.preset)}</p:PresetToken>')
-        print('moving; the camera refuses other moves for 20 s while it travels')
+        print('moving')
     elif args.command == 'delete':
         call(args.host, password, 'RemovePreset', f'<p:PresetToken>{token_for(args.host, password, args.preset)}</p:PresetToken>')
         print('deleted')

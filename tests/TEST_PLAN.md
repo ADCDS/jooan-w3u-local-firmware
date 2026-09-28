@@ -78,8 +78,10 @@ Exercise every allowed transition and every forbidden edge. In particular:
 - ONVIF requires a fresh WS-Security digest for everything but the clock,
   rejects a replayed token, shares the login failure budget, parses any
   namespace prefix, never lets a lost `Stop` run the head past its deadman,
-  and refuses motion during preset travel (`ci/check_onvif.sh`, which builds
-  the daemon against mbedTLS for SHA-1);
+  answers a recall without waiting for the travel, and holds a recall or
+  nudge made during travel until the OEM reports the head stopped, running
+  only the newest (`ci/check_onvif.sh`, which builds the daemon against
+  mbedTLS for SHA-1);
 - the public initial `admin` / `admin` remains valid until changed, with
   neither forced setup nor a warning banner;
 - the reported state survives restart and flips only after password rotation;

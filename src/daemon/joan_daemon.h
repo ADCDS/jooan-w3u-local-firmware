@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.18"
+#define JOAN_VERSION "0.2.19"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -93,6 +93,7 @@ void joan_mqtt_bridge_stop(void);
 int joan_mqtt_bridge_publish(const char *topic, const void *payload, size_t len);
 int joan_mqtt_request(unsigned command, const char *payload, char operation[65]);
 int joan_mqtt_operation(const char *operation, char *response, size_t capacity);
+void joan_mqtt_abandon(const char *operation);
 const char *joan_mqtt_bridge_status(void);
 
 int joan_mdns_start(const JoanConfig *cfg);
@@ -106,8 +107,9 @@ int joan_tls_ensure_identity(const JoanConfig *cfg);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);
 
-/* The PTZ order shared by the Web API and ONVIF; http.c owns it. */
+/* The PTZ order ONVIF goes through; http.c owns it. */
 int joan_ptz_preset_request(unsigned command, const char *payload, char operation[65]);
+int joan_ptz_goto(unsigned token);
 int joan_ptz_nudge(const char *direction);
 /* HTTP status and a malloc'd SOAP reply, or -1. host is the validated
  * authority the client used, for the service addresses it is given. */

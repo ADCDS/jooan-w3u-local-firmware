@@ -230,8 +230,8 @@ static int status_zero(const char *json)
     return p && p[9] == '0' && (p[10] < '0' || p[10] > '9');
 }
 
-/* Send one OEM preset command and wait for its reply, which the Web API
- * polls for instead. 0 on success; otherwise the fault's HTTP status. */
+/* Send one OEM preset command and wait for its reply. 0 on success;
+ * otherwise the fault's HTTP status. */
 static int oem(Out *o, unsigned command, const char *payload, char *reply, size_t cap)
 {
     char operation_id[65]; unsigned i; int rc = joan_ptz_preset_request(command, payload, operation_id);
@@ -320,12 +320,16 @@ static int dispatch(Out *o, const char *op, const char *p, const char *end, cons
     else if (!strcmp(op, "GetPresets")) return presets(o);
     else if (!strcmp(op, "SetPreset")) return set_preset(o, p, end);
     else if (!strcmp(op, "GotoPreset") || !strcmp(op, "RemovePreset")) {
-        int go = op[0] == 'G';
         if (text(p, end, "PresetToken", value, sizeof(value)) || preset_token(value, &token))
             return fault(o, "Sender", "InvalidArgVal", "unknown PresetToken");
-        snprintf(payload, sizeof(payload), go ? "{\"cmd\":66491,\"cmd_type\":\"request\",\"coordinateID\":%u,\"mot_index\":0}"
-                                              : "{\"cmd\":66490,\"cmd_type\":\"request\",\"ptz_coordinate\":[{\"coordinateID\":%u}],\"mot_index\":0}", token);
-        if ((st = oem(o, go ? 66491 : 66490, payload, reply, sizeof(reply)))) return st;
+        if (op[0] == 'G') {
+            /* Answered without waiting for the travel; see joan_ptz_goto. */
+            if ((st = joan_ptz_goto(token)))
+                return fault(o, "Receiver", "Action", st > 0 ? "another camera move is pending" : "the camera command channel is unavailable");
+        } else {
+            snprintf(payload, sizeof(payload), "{\"cmd\":66490,\"cmd_type\":\"request\",\"ptz_coordinate\":[{\"coordinateID\":%u}],\"mot_index\":0}", token);
+            if ((st = oem(o, 66490, payload, reply, sizeof(reply)))) return st;
+        }
         put(o, "<tptz:%sResponse/>", op);
     } else if (!strcmp(op, "ContinuousMove")) return continuous_move(o, p, end);
     else if (!strcmp(op, "Stop")) put(o, "<tptz:StopResponse/>"); /* each nudge stops itself */
