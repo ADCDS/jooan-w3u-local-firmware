@@ -128,14 +128,12 @@ class RuntimeHookTests(unittest.TestCase):
             root = Path(temporary)
             processes = []
             try:
-                for name in ("joan-daemon", "audio-router"):
-                    binary = root / name
-                    binary.write_bytes(Path("/bin/sleep").read_bytes())
-                    binary.chmod(0o755)
-                    process = subprocess.Popen([str(binary), "30"])
-                    processes.append(process)
-                    record = "daemon" if name == "joan-daemon" else name
-                    (root / f"{record}.pid").write_text(f"{process.pid}\n", encoding="utf-8")
+                binary = root / "joan-daemon"
+                binary.write_bytes(Path("/bin/sleep").read_bytes())
+                binary.chmod(0o755)
+                process = subprocess.Popen([str(binary), "30"])
+                processes.append(process)
+                (root / "daemon.pid").write_text(f"{process.pid}\n", encoding="utf-8")
                 check = [
                     "sh", "-c",
                     '. "$1" && jl_runtime_alive',
@@ -150,37 +148,6 @@ class RuntimeHookTests(unittest.TestCase):
                 for process in processes:
                     process.kill()
                     process.wait()
-
-    def test_onvif_50ms_is_not_encoded_as_500ms(self) -> None:
-        hook = REPOSITORY / "runtime/slot/hooks/onvif-ptz.sh"
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            capture = root / "request"
-            executable(
-                fake_bin / "nc",
-                "#!/bin/sh\n"
-                "[ \"$1\" = -w2 ] || exit 3\n"
-                "cat > \"$CAPTURE\"\n"
-                "printf 'HTTP/1.0 200 OK\\r\\n\\r\\n'\n"
-                "printf '<tptz:ContinuousMoveResponse/>'\n",
-            )
-            environment = os.environ | {
-                "PATH": f"{fake_bin}:/bin:/usr/bin",
-                "CAPTURE": str(capture),
-                "JL_RUN": str(root),
-            }
-            result = subprocess.run(
-                [str(hook), "move", "up", "3", "50"],
-                env=environment,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            request = capture.read_text(encoding="utf-8")
-            self.assertIn("<tptz:Timeout>PT0.050S</tptz:Timeout>", request)
-            self.assertNotIn("PT0.50S", request)
 
     def _wifi_apply_environment(self, root: Path) -> tuple[dict[str, str], Path]:
         """Build a fake PATH for wifi-apply.sh: wpa_cli hands out incrementing

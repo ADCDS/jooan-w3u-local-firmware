@@ -1,17 +1,9 @@
 'use strict';
-import { JooanAudioClient } from './audio-client.js';
-import { Fmp4Player } from './video-player.js';
-import { PtzSteps } from './ptz-steps.js';
-import { looksLikeTv, createNavigator, isSelect } from './spatial.js';
 
 const $ = s => document.querySelector(s);
 const all = s => Array.from(document.querySelectorAll(s));
 
 let csrf = '', wifiId = '', firmwareId = '';
-let audioClient = null, unbindTalk = null;
-let videoPlayers = [];
-let streams = [];
-let fsOrigin = null;
 
 /* ---------- notice ---------- */
 /* The camera and the session fail differently, and the old UI reported both
@@ -105,15 +97,10 @@ let autoSignInPromise = null;
 function requireLogin(epoch = authEpoch, force = false) {
   if (epoch !== authEpoch || (!csrf && !force)) return;
   ++authEpoch;
-  videoPlayers.forEach(p => p.close());
-  videoPlayers = [];
-  if (audioClient) { unbindTalk?.(); audioClient.close().catch(() => {}); audioClient = null; }
   csrf = '';
-  recordingsLoaded = false;
-  exitFullscreen(false);
   show('#login');
-  /* A session that expired behind your back should not make a TV user spell
-     the password out again. Once, and never from inside its own failure. */
+  /* A session that expired behind your back should not ask for the saved
+     password again. Once, and never from inside its own failure. */
   if (!autoSignInPromise && readSaved()?.password) void autoSignIn();
 }
 window.addEventListener('joan-auth-required', () => { void verifySession(authEpoch); });
@@ -124,53 +111,15 @@ function setZone(zone) {
   for (const b of all('#rail button')) b.setAttribute('aria-current', String(b.dataset.zone === zone));
   for (const s of all('.zone')) s.classList.toggle('hidden', s.id !== 'zone-' + zone);
 }
-/* Picking a zone on a remote should land the ring IN the zone. Leaving it
-   parked on the rail is what made a freshly opened zone look unreachable: the
-   rail is how you got here, the content is what you came for. */
-function enterZone() {
-  if (!tvNav) return;
-  const first = tvNav.list().find(el => el.closest('.zone:not(.hidden)'));
-  if (first) tvNav.focus(first);
-}
 for (const b of all('#rail button')) {
   b.onclick = () => {
     setZone(b.dataset.zone);
     if (b.dataset.zone === 'network') loadNetworkQuality();
-    enterZone();
   };
 }
-
-/* ---------- full screen ---------- */
-function setFullscreen(which) {
-  $('#console').dataset.fs = which;
-  $('#fs-bar').classList.remove('hidden');
-  for (const b of all('[data-fs-pick]')) b.classList.toggle('primary', b.dataset.fsPick === which);
-  const stream = streams.find(s => s.id === which);
-  $('#fs-sensor').innerHTML = '<i class="led"></i>';
-  $('#fs-sensor').append(`${which} · ${stream ? stream.width + '×' + stream.height : ''}`);
-}
-function exitFullscreen(restoreFocus = true) {
-  delete $('#console').dataset.fs;
-  $('#fs-bar').classList.add('hidden');
-  const origin = fsOrigin;
-  fsOrigin = null;
-  /* Return focus to the tile that opened full screen, so a keyboard/remote
-     user lands back where they were instead of at the top of the document. */
-  if (restoreFocus && origin) document.querySelector(origin)?.focus();
-}
-for (const tile of all('[data-fs]')) {
-  tile.onclick = () => { fsOrigin = '#' + tile.id; setFullscreen(tile.dataset.fs); };
-  /* A div with role=button does not fire click from Enter on its own. */
-  tile.onkeydown = e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tile.click(); }
-  };
-}
-for (const b of all('[data-fs-pick]')) b.onclick = () => setFullscreen(b.dataset.fsPick);
-$('#fs-exit').onclick = () => exitFullscreen();
 
 /* ---------- confirm guard ---------- */
-/* Destructive actions get a second press, with Cancel focused. On a couch,
-   with a remote, OK is the easiest button to hit by accident. */
+/* Destructive actions get a second press, with Cancel first. */
 function guard(host, message, verb, run) {
   host.replaceChildren();
   const box = document.createElement('div');
@@ -192,19 +141,12 @@ function guard(host, message, verb, run) {
   box.append(text, row);
   host.append(box);
 }
-const guardOpen = () => !!document.querySelector('.confirm');
-function closeGuard() {
-  for (const g of all('.confirm')) g.remove();
-}
 
 /* ---------- status ---------- */
 const FEATURE_LABELS = {
   https_identity: ['HTTPS identity', 'device key'],
   rtsp: ['RTSP', 'digest auth'],
-  fmp4_main: ['Main stream', null],
-  fmp4_sub: ['Sub stream', null],
   ptz: ['Pan / tilt', null],
-  audio: ['Audio', null],
   ssh: ['SSH', null],
   mdns: ['mDNS', null],
 };
@@ -271,22 +213,19 @@ async function load() {
   const [streamList, mdns] = await Promise.all([
     api('/api/v1/streams'), api('/api/v1/network/mdns'),
   ]);
-  streams = streamList.streams;
   $('#rail-host').textContent = mdns.address || '';
-  $('#streams').replaceChildren(...streams.map(s => {
+  /* What an NVR needs: both sensors over RTSP, and ONVIF on this very port for
+     pan/tilt and presets (sensor A). */
+  $('#streams').replaceChildren(...[
+    ...streamList.streams.map(s => [`${s.id} · ${s.width}×${s.height}`, s.rtsp]),
+    ['ONVIF', `https://${location.host}/onvif/device_service`],
+  ].map(([label, value]) => {
     const row = document.createElement('div');
     row.className = 'row';
-    const k = document.createElement('span'); k.textContent = s.id;
-    const v = document.createElement('b'); v.textContent = s.rtsp;
+    const k = document.createElement('span'); k.textContent = label;
+    const v = document.createElement('b'); v.textContent = value;
     row.append(k, v); return row;
   }));
-  for (const s of streams) {
-    const cap = $('#cap-' + s.id);
-    if (cap) cap.textContent = `${s.id} · ${s.width}×${s.height}`;
-  }
-  videoPlayers.forEach(p => p.close());
-  videoPlayers = streams.map(s => new Fmp4Player($('#video-' + s.id), s));
-  videoPlayers.forEach(p => p.start().catch(x => notice(`${p.stream.id} video: ${x.message}`)));
 
   $('#mdns-form').elements.hostname.value = mdns.hostname;
   $('#mdns-result').textContent = `https://${mdns.address}/`;
@@ -304,15 +243,10 @@ async function load() {
       return row;
     }));
   } catch (x) { $('#ssh-list').textContent = x.message; }
-  loadPresets().catch(() => {});
 }
 
 /* ---------- auth ---------- */
-/* Staying signed in, for the remote.
- *
- * Signing in on a television means spelling a password out on a grid keyboard
- * with four arrows and OK, every time the app is opened. So the credential can
- * be kept here and replayed on load.
+/* Staying signed in: the credential can be kept here and replayed on load.
  *
  * It is kept in clear text in this origin's localStorage, which is the honest
  * description and the reason it is opt-in and off by default: anyone who can
@@ -397,9 +331,6 @@ $('#password-form').addEventListener('submit', e => {
       });
       ++authEpoch;
       csrf = '';
-      videoPlayers.forEach(p => p.close());
-      videoPlayers = [];
-      if (audioClient) { unbindTalk?.(); audioClient.close().catch(() => {}); audioClient = null; }
       forgetSaved(); // saved credentials contain the old password
       $('#remember').checked = false;
       show('#login');
@@ -412,7 +343,7 @@ $('#change-password').onclick = () => show('#setup');
 
 /* ---------- camera time ---------- */
 /* The camera has no RTC and no NTP route, so its clock defaults years off,
-   which shows in the burned-in OSD overlay and any recording metadata. Push
+   which shows in the burned-in OSD overlay and the recorded streams. Push
    this device's clock (true UTC) so it keeps correct time. Idle sessions use
    a monotonic server clock, unaffected by setting the wall clock. */
 function tickLocalTime() { const el = $('#time-local'); if (el) el.textContent = new Date().toLocaleString(); }
@@ -450,7 +381,7 @@ async function setCameraTimezone() {
     body: JSON.stringify({ gmt_tz: browserTimeZone() }),
   });
 }
-/* One time write at a time; refresh the stream only after all selected writes.
+/* One time write at a time; reload only after all selected writes.
    A failed write must not trigger a reload that races the next PUT. */
 let timeBusy = false;
 async function writeCameraTime(epoch, zone) {
@@ -463,7 +394,7 @@ async function writeCameraTime(epoch, zone) {
       const d = await setCameraTimezone();
       $('#time-result').textContent =
         `Clock synced; time zone ${d.gmt_tz} saved. The overlay updates after a restart.`;
-    } else $('#time-result').textContent = 'Camera clock set; live video reloads.';
+    } else $('#time-result').textContent = 'Camera clock set.';
     await load();
   } catch (x) { notice(x.message, 'crit'); }
   finally {
@@ -591,233 +522,6 @@ $('#ssh-form').addEventListener('submit', async e => {
   } catch (x) { notice(x.message, 'crit'); }
 });
 
-/* ---------- ptz ---------- */
-const ptzSteps = new PtzSteps({
-  request: (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}) }),
-  video: () => $('#console').dataset.fs === 'sub' ? $('#video-sub') : $('#video-main'),
-  state: text => { $('#ptz-state').textContent = text; },
-  canMove: () => !presetMotion,
-  inputs: busy => {
-    if (busy) clearPreset(); // a jog moves the head off any preset
-    for (const b of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #preset-set, #preset-delete, #ptz-home')) b.disabled = busy || presetMotion;
-  },
-  settled: async (video, before, valid) => {
-    if (!video || before == null || document.hidden) return false;
-    await new Promise(resolve => setTimeout(resolve, 400));
-    const deadline = performance.now() + 4500;
-    while (valid() && !document.hidden && performance.now() < deadline) {
-      if (video.getVideoPlaybackQuality?.().totalVideoFrames > before + 2) return true;
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-    return false;
-  },
-});
-
-for (const b of all('[data-ptz]')) {
-  if (b.dataset.ptz === 'stop') b.onclick = () => ptzSteps.stop().catch(() => {});
-  else b.onclick = () => ptzSteps.nudge(b.dataset.ptz);
-  b.addEventListener('keydown', e => { if (isSelect(e)) e.stopPropagation(); });
-}
-let jogOn = false;
-function setJog(on) {
-  if (jogOn === on) return;
-  jogOn = on;
-  $('#jog').classList.toggle('jogging', on);
-  $('#jog-hint').textContent = on ? 'Tap an arrow once · Back to leave' : 'Press OK, then tap an arrow';
-}
-$('#jog').addEventListener('keydown', e => {
-  if (e.target !== $('#jog') || !tvNav || !isSelect(e)) return;
-  e.preventDefault();
-  if (!e.repeat) setJog(!jogOn);
-});
-$('#jog').addEventListener('blur', () => setJog(false));
-window.addEventListener('blur', () => { if (ptzSteps.busy || ptzSteps.lease) ptzSteps.stop().catch(() => {}); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && (ptzSteps.busy || ptzSteps.lease)) ptzSteps.stop().catch(() => {}); });
-$('#jog-mode').addEventListener('click', e => {
-  const b = e.target.closest('[data-step]');
-  if (!b || ptzSteps.busy) return;
-  ptzSteps.setMode(b.dataset.step);
-  for (const item of all('#jog-mode [data-step]')) {
-    item.classList.toggle('primary', item === b);
-    item.setAttribute('aria-pressed', String(item === b));
-  }
-});
-
-async function operation(accepted) {
-  for (let i = 0; i < 65; i++) {
-    const state = await api(accepted.status);
-    if (state.state === 'complete') return state.response;
-    await new Promise(ok => setTimeout(ok, 1000));
-  }
-  throw new ApiError('Camera operation timed out', 'api');
-}
-
-let presets = [];
-/* Delete target: an explicit choice, never implied by a goto. */
-let selectedPreset = null;
-/* The camera cannot report where it points (ONVIF GetStatus is a constant
-   0,0 and gotos are open-loop). So a chip shows only what we asked for and
-   whether the camera accepted it; it is dropped the moment anything else may
-   have moved the head (jog, failure, reload). Never "current position". */
-let presetState = { token: null, phase: null }; // phase: 'moving' | 'arrived'
-let presetMotion = false;
-function markPreset(token, phase) {
-  presetState = { token, phase };
-  for (const chip of all('#preset-chips button')) {
-    const mine = token !== null && chip.dataset.preset === token;
-    chip.classList.toggle('primary', mine && phase === 'arrived');
-    chip.classList.toggle('pending', mine && phase === 'moving');
-    chip.classList.toggle('chosen', chip.dataset.preset === selectedPreset);
-    chip.setAttribute('aria-pressed', String(mine && phase === 'arrived'));
-  }
-}
-const clearPreset = () => markPreset(null, null);
-/* The OEM replies before the head arrives and computes each goto from its step
-   counter, so a second goto mid-travel lands somewhere else. Hold further
-   motion until a worst-case traverse (4080 steps at the OEM speed) is over. */
-const PRESET_SETTLE_MS = 12000;
-async function runPresetMotion(task) {
-  if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
-  presetMotion = true;
-  for (const button of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #ptz-home, #preset-set, #preset-delete')) button.disabled = true;
-  try { return await task(); }
-  finally {
-    presetMotion = false;
-    for (const button of all('#jog [data-ptz]:not([data-ptz="stop"]), #preset-chips button, #ptz-home, #preset-set, #preset-delete')) button.disabled = ptzSteps.busy || ptzSteps.uncertain;
-  }
-}
-async function loadPresets() {
-  const response = await operation(await api('/api/v1/ptz/presets'));
-  presets = response.ptz_coordinate || response.presets || [];
-  $('#preset-chips').replaceChildren(...presets.map(item => {
-    const token = String(item.coordinateID ?? item.token);
-    const b = document.createElement('button');
-    b.textContent = item.name || token;
-    b.dataset.preset = token;
-    b.disabled = presetMotion || ptzSteps.busy || ptzSteps.uncertain;
-    b.onclick = () => {
-      if (presetMotion || ptzSteps.busy || ptzSteps.uncertain) return;
-      selectedPreset = token;
-      markPreset(token, 'moving');
-      runPresetMotion(async () => {
-        const reply = await operation(await api('/api/v1/ptz/presets', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: Number(token) }),
-        }));
-        if (reply && typeof reply.status === 'number' && reply.status !== 0)
-          throw new ApiError(`Camera refused the preset (status ${reply.status}).`, 'api');
-        await new Promise(ok => setTimeout(ok, PRESET_SETTLE_MS));
-        if (presetState.token === token) markPreset(token, 'arrived');
-      }).catch(x => { clearPreset(); notice(x.message, 'crit'); });
-    };
-    return b;
-  }));
-  /* A reload cannot know where the head is; keep only an in-flight marker. */
-  markPreset(presetState.phase === 'moving' ? presetState.token : null, presetState.phase === 'moving' ? 'moving' : null);
-  return presets;
-}
-
-$('#ptz-home').onclick = () => runPresetMotion(async () => {
-  try {
-    const list = await loadPresets();
-    const home = list.find(x => x.name === '__home__');
-    clearPreset();
-    if (home) {
-      await operation(await api('/api/v1/ptz/home', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'goto', token: Number(home.coordinateID ?? home.token) }),
-      }));
-    } else if (window.confirm('No home preset exists. Save the current position as home?')) {
-      await operation(await api('/api/v1/ptz/home', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set' }),
-      }));
-    }
-    notice('Home operation completed');
-  } catch (x) { notice(x.message, 'crit'); }
-}).catch(x => notice(x.message, 'crit'));
-
-$('#preset-set').onclick = async () => {
-  if (ptzSteps.busy || ptzSteps.uncertain) return;
-  try {
-    const name = window.prompt('Preset name');
-    if (!name) return;
-    await operation(await api('/api/v1/ptz/presets', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    }));
-    await loadPresets();
-  } catch (x) { notice(x.message, 'crit'); }
-};
-
-$('#preset-delete').onclick = () => {
-  if (ptzSteps.busy || ptzSteps.uncertain) return;
-  if (!selectedPreset) { notice('Choose a preset first.'); return; }
-  /* Snapshot the target: the guard box is non-modal, so the selection can
-     change before the operator confirms — delete exactly what the dialog names. */
-  const token = selectedPreset;
-  const chosen = presets.find(p => String(p.coordinateID ?? p.token) === token);
-  guard($('#preset-confirm'), `Delete preset ${chosen?.name || token}?`, 'Delete', () =>
-    api('/api/v1/ptz/presets', {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: Number(token) }),
-    }).then(operation).then(() => {
-      if (selectedPreset === token) selectedPreset = null;
-      if (presetState.token === token) clearPreset();
-      return loadPresets();
-    })
-      .catch(x => notice(x.message, 'crit')));
-};
-
-/* ---------- audio ---------- */
-/* Both Talkback buttons (live zone and control zone) reflect one shared audio
-   state, so update whichever exist together instead of a single hardcoded one. */
-function setAudioLabel(text) { for (const b of all('#audio-connect, #audio-connect-2')) b.textContent = text; }
-async function toggleAudio() {
-  try {
-    if (audioClient) {
-      unbindTalk?.();
-      await audioClient.close();
-      audioClient = null;
-      $('#push-to-talk').disabled = true;
-      $('#audio-state').textContent = 'Disconnected';
-      setAudioLabel('Listen');
-      return;
-    }
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    audioClient = new JooanAudioClient({
-      url: `${protocol}//${location.host}/api/v1/audio/mic`,
-      authToken: csrf,
-      allowInsecure: location.protocol !== 'https:',
-    });
-    const connected = audioClient;
-    audioClient.addEventListener('talkstate', e => {
-      $('#audio-state').textContent = e.detail.active ? 'Speaking' : 'Listening';
-    });
-    audioClient.addEventListener('audioerror', e => notice(e.detail?.message || 'Audio error', 'crit'));
-    audioClient.addEventListener('close', () => {
-      if (audioClient !== connected) return;
-      unbindTalk?.();
-      audioClient = null;
-      $('#push-to-talk').disabled = true;
-      $('#audio-state').textContent = 'Disconnected';
-      setAudioLabel('Listen');
-    });
-    await audioClient.connect();
-    unbindTalk = audioClient.bindPressToTalk($('#push-to-talk'));
-    $('#push-to-talk').disabled = false;
-    $('#audio-state').textContent = 'Listening';
-    setAudioLabel('Disconnect audio');
-  } catch (x) {
-    audioClient = null;
-    $('#push-to-talk').disabled = true;
-    notice(x.message, 'crit');
-  }
-}
-$('#audio-connect').onclick = toggleAudio;
-$('#audio-connect-2').onclick = toggleAudio;
-
 /* ---------- firmware ---------- */
 $('#firmware-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -841,262 +545,6 @@ $('#firmware-apply').onclick = () => {
       .catch(x => notice(x.message, 'crit')));
 };
 
-/* ---------- recordings (microSD) ----------
-   The camera's retained OEM media process records to the card on its own; this
-   zone curates that: card capacity, the days it has footage for, and the clips
-   in a day, which can be downloaded or deleted. Playback is deliberately absent:
-   the OEM writes AVI, which no browser plays, and remuxing to fMP4 does not fit
-   the persistent-size budget. Schedule configuration is not offered because
-   jooanipc provably ignores external RecodSchedTime edits. */
-let recordingsLoaded = false, selectedDay = '';
-function kvRow([k, v]) {
-  const row = document.createElement('div');
-  row.className = 'row';
-  const a = document.createElement('span'); a.textContent = k;
-  const b = document.createElement('b'); b.textContent = v;
-  row.append(a, b);
-  return row;
-}
-function fmtSize(kb) {
-  kb = Number(kb) || 0;
-  if (kb >= 1048576) return (kb / 1048576).toFixed(1) + ' GB';
-  if (kb >= 1024) return Math.round(kb / 1024) + ' MB';
-  return kb + ' KB';
-}
-const clipEpoch = name => (/^\d{9,11}$/.test(name) ? Number(name) : 0);
-function clipTime(name) {
-  const e = clipEpoch(name);
-  return e ? new Date(e * 1000).toLocaleTimeString() : name;
-}
-/* Seconds past local midnight, which is the axis the day folder is named on. */
-function secondsIntoDay(epoch) {
-  const d = new Date(epoch * 1000);
-  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
-}
-/* The recorder only stamps a START per clip, so a clip's end is the next clip's
-   start. The last clip of a day has no successor: if that day is today it is
-   still being written and ends "now", but on an earlier day the recorder simply
-   stopped at some unrecorded moment. Do not invent that moment -- claiming it
-   ran to midnight would draw coverage the card cannot prove. */
-function clipSpans(day, clips) {
-  const midnight = new Date(`${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}T00:00:00`).getTime() / 1000;
-  const now = Date.now() / 1000;
-  const isToday = now >= midnight && now < midnight + 86400;
-  return clips.map((cl, i) => {
-    const start = clipEpoch(cl.name);
-    const next = i + 1 < clips.length ? clipEpoch(clips[i + 1].name) : 0;
-    if (next) return { clip: cl, start, end: Math.max(next, start), state: 'closed' };
-    if (isToday) return { clip: cl, start, end: Math.max(now, start), state: 'recording' };
-    return { clip: cl, start, end: start, state: 'unknown' };
-  });
-}
-function formatDay(d) {
-  if (!/^\d{8}$/.test(d)) return d;
-  return new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00`)
-    .toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
-const ICON_DOWNLOAD = 'M12 4v10m0 0l-4-4m4 4l4-4M5 19h14';
-const ICON_TRASH = 'M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12';
-const ICON_PLAY = 'M8 5v14l11-7z';
-function iconEl(tag, path, label) {
-  const el = document.createElement(tag);
-  el.title = label;
-  el.setAttribute('aria-label', label);
-  el.innerHTML = `<svg viewBox="0 0 24 24"><path d="${path}"/></svg>`;
-  return el;
-}
-function clipRow(day, span) {
-  const cl = span.clip;
-  const row = document.createElement('div');
-  row.className = 'clip';
-  const rng = document.createElement('span');
-  rng.className = 'rng';
-  const from = clipTime(cl.name);
-  rng.textContent = span.state === 'closed'
-    ? `${from} — ${new Date(span.end * 1000).toLocaleTimeString()}`
-    : span.state === 'recording' ? `${from} — recording` : from;
-  const sz = document.createElement('span');
-  sz.className = 'sz';
-  sz.textContent = fmtSize(Math.round((cl.size || 0) / 1024));
-  const act = document.createElement('span');
-  act.className = 'act';
-  const href = `/api/v1/recordings/file/${day}/${encodeURIComponent(cl.name)}`;
-  const play = iconEl('button', ICON_PLAY, 'Play');
-  play.onclick = () => playClip(day, cl.name, from);
-  const dl = iconEl('a', ICON_DOWNLOAD, 'Download');
-  dl.href = href;
-  dl.setAttribute('download', `${day}-${cl.name}.avi`);
-  const del = iconEl('button', ICON_TRASH, 'Delete');
-  del.className = 'danger';
-  del.onclick = () => guard($('#rec-clip-confirm'), `Delete recording ${from}?`, 'Delete',
-    () => api(href, { method: 'DELETE' }).then(() => loadRecordings()).catch(x => notice(x.message, 'crit')));
-  act.append(play, dl, del);
-  row.append(rng, sz, act);
-  return row;
-}
-/* The recorder writes AVI, which no browser plays, so the daemon rewrites the
-   clip as MP4 on the way out. A plain <video> element then supplies transport,
-   scrubbing and speed without shipping a player. Audio is dropped in the
-   rewrite: the recorder stores G.711, which browsers will not decode in MP4. */
-const CLIP_NOTE = "video only, converted from the recorder's AVI";
-function playClip(day, name, label) {
-  const wrap = $('#rec-player-wrap');
-  const video = $('#rec-player');
-  const note = $('#rec-player-note');
-  wrap.classList.remove('hidden');
-  /* The camera walks the whole AVI to build a sample table before it can
-     answer, which is seconds on a long clip -- measured at 5s for 23 MB. An
-     empty player sitting there reads as a freeze, so say what is happening,
-     and say it when it fails: this used to swallow the error and show nothing
-     at all. `play()` rejecting is not that failure -- it is usually autoplay
-     policy, and the controls still work -- so only the element's own error
-     counts. */
-  note.textContent = `${label} · preparing…`;
-  video.onloadeddata = () => { note.textContent = `${label} · ${CLIP_NOTE}`; };
-  video.onerror = () => { note.textContent = `${label} · could not be played.`; };
-  video.src = `/api/v1/recordings/play/${day}/${encodeURIComponent(name)}`;
-  video.play().catch(() => {});
-  wrap.scrollIntoView({ block: 'nearest' });
-}
-function renderTimeline(spans) {
-  const tl = $('#rec-tl');
-  $('#rec-tl-wrap').classList.toggle('hidden', !spans.length);
-  tl.replaceChildren(...spans.map(s => {
-    const a = secondsIntoDay(s.start);
-    const b = Math.min(a + Math.max(s.end - s.start, 0), 86400);
-    const bar = document.createElement('i');
-    bar.style.left = (a / 86400 * 100) + '%';
-    bar.style.width = ((b - a) / 86400 * 100) + '%';
-    bar.title = `${clipTime(s.clip.name)} · ${fmtSize(Math.round((s.clip.size || 0) / 1024))}`;
-    return bar;
-  }));
-}
-async function loadClips(day) {
-  $('#rec-player-wrap').classList.add('hidden');
-  $('#rec-player').removeAttribute('src');
-  if (!day) { $('#rec-clips').replaceChildren(); renderTimeline([]); return; }
-  const clips = (await api('/api/v1/recordings/day/' + day)).clips || [];
-  if (!clips.length) {
-    $('#rec-clips').textContent = 'No recordings for this day.';
-    renderTimeline([]);
-    return;
-  }
-  const spans = clipSpans(day, clips);
-  renderTimeline(spans);
-  $('#rec-clips').replaceChildren(...spans.map(s => clipRow(day, s)));
-}
-async function loadSdStatus() {
-  const s = await api('/api/v1/storage/sd');
-  const bar = $('#sd-used');
-  if (s.mounted) {
-    const total = s.total_kb || 0, used = s.used_kb || 0;
-    const pct = total ? Math.min(100, Math.round(used / total * 100)) : 0;
-    bar.style.width = pct + '%';
-    bar.classList.toggle('full', pct >= 90);
-    $('#sd-status').replaceChildren(...[
-      ['State', 'Mounted'],
-      ['Used', `${fmtSize(used)} of ${fmtSize(total)}`],
-      ['Free', fmtSize(s.free_kb || 0)],
-    ].map(kvRow));
-    $('#sd-note').textContent = '';
-  } else {
-    bar.style.width = '0';
-    $('#sd-status').replaceChildren(kvRow(['State', s.present ? 'Not mounted' : 'No card detected']));
-    $('#sd-note').textContent = 'Insert a microSD card; the camera records to it automatically.';
-  }
-}
-async function selectDay(day) {
-  selectedDay = day;
-  for (const b of all('#rec-days button')) {
-    if (b.dataset.day === day) b.setAttribute('aria-current', 'true');
-    else b.removeAttribute('aria-current');
-  }
-  $('#rec-clips-title').textContent = day ? `Recordings — ${formatDay(day)}` : 'Recordings';
-  $('#rec-del-day').disabled = !day;
-  await loadClips(day);
-}
-async function loadRecordings() {
-  try {
-    await loadSdStatus();
-    const days = (await api('/api/v1/recordings/days')).days || [];
-    if (!days.length) {
-      $('#rec-days').textContent = 'No recordings on the card yet.';
-      $('#rec-clips').replaceChildren();
-      $('#rec-del-day').disabled = true;
-    } else {
-      $('#rec-days').replaceChildren(...days.map(d => {
-        const b = document.createElement('button');
-        b.dataset.day = d.day;
-        b.append(formatDay(d.day));
-        const sub = document.createElement('small');
-        sub.textContent = `${fmtSize(d.size_kb)} · ${d.count} clip${d.count === 1 ? '' : 's'}`;
-        b.append(sub);
-        b.onclick = () => selectDay(d.day).catch(x => notice(x.message, 'crit'));
-        return b;
-      }));
-      const keep = days.some(d => d.day === selectedDay) ? selectedDay : days[days.length - 1].day;
-      await selectDay(keep);
-    }
-    recordingsLoaded = true;
-  } catch (x) { notice(x.message, 'crit'); }
-}
-$('#rec-refresh').onclick = () => loadRecordings();
-$('#rec-del-day').onclick = () => {
-  if (!selectedDay) return;
-  const day = selectedDay;
-  guard($('#rec-day-confirm'), `Delete every recording from ${formatDay(day)}?`, 'Delete day',
-    () => api('/api/v1/recordings/day/' + day, { method: 'DELETE' })
-      .then(() => { selectedDay = ''; return loadRecordings(); })
-      .catch(x => notice(x.message, 'crit')));
-};
-$('[data-zone="recordings"]').addEventListener('click', () => { if (!recordingsLoaded) loadRecordings(); });
-
-/* ---------- TV remote ----------
-   A Fire TV / Android TV remote sends four arrows and OK: no pointer, no Tab.
-   Spatial navigation moves the ring over whatever is on screen, so nothing has
-   to declare a focus order. Inert unless the page looks like a TV, so arrows
-   keep scrolling an ordinary browser.
-
-   Back is handled in the order a viewer expects to unwind: dismiss a confirm,
-   leave full screen, leave the password form, return to Live. Returning false
-   at the end hands Back to the system, which is how you leave the app. */
-let tvNav = null;
-function initTvRemote() {
-  if (!looksLikeTv()) return;
-  document.documentElement.setAttribute('data-tv', '');
-  tvNav = createNavigator({
-    root: document.body,
-    onCapture: (el, dir, event) => {
-      if (el.id !== 'jog' || !jogOn) return false;
-      if (!event.repeat && !ptzSteps.busy) ptzSteps.nudge(dir);
-      return true;
-    },
-    /* Back walks back up, one step per press: release the jog, close what is
-       open, out of the content to the rail, off the zone to Live, and only
-       from there out of the app. It used to give up as soon as the ring was
-       anywhere in the Live zone -- so Back on the jog quit the app instead of
-       stepping out of it, which reads as the remote firing at random. */
-    onBack: () => {
-      if (jogOn) { if (ptzSteps.lease) ptzSteps.stop().catch(() => {}); setJog(false); return true; }
-      if (guardOpen()) { closeGuard(); return true; }
-      if ($('#console').dataset.fs) { exitFullscreen(); return true; }
-      if (!$('#setup').classList.contains('hidden')) { show('#console'); return true; }
-      if ($('#console').classList.contains('hidden')) return false;   /* sign-in screen */
-      const zone = $('#console').dataset.zone;
-      const ring = tvNav.current();
-      const tab = $(`#rail button[data-zone="${zone}"]`);
-      if (ring && tab && !ring.closest('#rail')) { tvNav.focus(tab); return true; }
-      if (zone && zone !== 'live') {
-        setZone('live');
-        tvNav.focus($('#rail button[data-zone="live"]'));
-        return true;
-      }
-      return false;
-    },
-  });
-  tvNav.restore();
-}
-
 /* ---------- boot ---------- */
 async function resume() {
   const epoch = authEpoch;
@@ -1106,8 +554,7 @@ async function resume() {
   csrf = session.csrf;
   await load();
 }
-setZone('live');
-initTvRemote();
+setZone('system');
 const bootEpoch = authEpoch;
 resume().catch(x => {
   if (authEpoch !== bootEpoch || csrf) return; // another sign-in won the race

@@ -20,7 +20,7 @@ reboot, and recovery.
 | Port | Protocol | Purpose | Policy |
 |---:|---|---|---|
 | 80/tcp | HTTP | Redirect to HTTPS | No application or credential exchange |
-| 443/tcp | HTTPS | UI and `/api/v1/` | Authenticated; unique per-device TLS identity |
+| 443/tcp | HTTPS | UI, `/api/v1/` and ONVIF `/onvif/` | Authenticated (session, or a WS-Security digest for ONVIF); unique per-device TLS identity |
 | 5353/udp | mDNS/DNS-SD | Host and HTTPS/SSH/RTSP/camera discovery | Link-local multicast only |
 | 22/tcp | SSH | Administrative shell | Synchronized `admin` password; optional keys |
 | 554/tcp | RTSP | Local video | TCP transport; restrict to approved viewers |
@@ -35,7 +35,10 @@ The runtime supplies continuous `telnetd` suppression, password-synchronized
 SSH with optional keys, HTTPS on 443, the port-80 redirect, embedded DNS-SD,
 and an exact-hash `jooanipc` containment DSO. The daemon owns public RTSP/TCP
 554 and requires Digest authentication; the guard remaps the retained OEM RTSP
-service to loopback TCP/8554 for the proxy and fMP4 ingestion.
+service to loopback TCP/8554 for the proxy. The OEM ONVIF
+service accepts any credentials, so the guard keeps it on loopback TCP/8899.
+NVRs use the daemon's authenticated ONVIF subset on 443 instead (see
+[API](API.md#onvif-for-nvrs)).
 
 ## Early-boot OEM exposure
 
@@ -119,7 +122,7 @@ After installation and after each update:
 4. verify TCP/80 only redirects and sends no sensitive content;
 5. verify HTTPS identity, login throttling, and session expiry;
 6. verify SSH `admin` accepts the synchronized password and optional keys;
-7. verify DNS-SD records and direct RTSP/fMP4 behavior;
+7. verify DNS-SD records, direct RTSP, and ONVIF authentication;
 8. verify no IPv4/IPv6 default route or public resolver remains;
 9. verify attempted vendor cloud/P2P connections cannot leave the VLAN;
 10. test IPv4 and IPv6 separately.

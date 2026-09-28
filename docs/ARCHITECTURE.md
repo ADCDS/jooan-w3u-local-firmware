@@ -48,6 +48,7 @@ The open layer is responsible for:
 - local RTSP reachability;
 - no-default-route local networking plus exact-process egress containment;
 - embedded mDNS/DNS-SD discovery;
+- an ONVIF device/media/PTZ subset for NVRs, on the HTTPS listener;
 - health checks, update verification, and rollback/fallback handling.
 
 The generic image does not personalize Wi-Fi or embed keys. Per-device HTTPS
@@ -61,13 +62,18 @@ changed; warning state, rather than forced setup, records that condition.
 The implementation includes deterministic signed packaging, a compressed
 controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
-keys, the HTTPS daemon and Web UI, main/sub fMP4, a local TLS MQTT sink, microphone
-and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
-exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
-names to loopback and denies other `jooanipc` connect/datagram traffic.
-It also confines OEM RTSP to loopback TCP/8554, suppresses OEM speaker output,
-and grants the amplifier only to bounded local talkback. An authenticated
-Digest proxy exposes RTSP to local clients on TCP/554.
+keys, the HTTPS daemon with a maintenance Web UI, a local TLS MQTT sink, ONVIF
+pan/tilt and presets for NVRs, embedded DNS-SD, and an exact-binary
+`LD_PRELOAD` guard. The guard redirects only approved OEM service names to
+loopback and denies other `jooanipc` connect/datagram traffic. It also confines
+OEM RTSP to loopback TCP/8554, the OEM ONVIF service to loopback TCP/8899, and
+suppresses OEM speaker output. An authenticated Digest proxy exposes RTSP to
+local clients on TCP/554.
+
+Viewing, recording and steering moved to the NVR (Frigate over RTSP and ONVIF)
+in 0.2.14. The camera no longer remuxes video for browsers or routes audio,
+which also retired the per-viewer fMP4 buffers and the audio router process: on
+a 38 MB board that memory was part of what the OOM killer fought over.
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
 runtime must total no more than 200704 bytes (196 KiB), with at least 65536 bytes
@@ -116,8 +122,8 @@ about 20 seconds.
 
 Heavy memory pressure can also stall the board before any OOM kill, until the
 hardware watchdog resets it without a log. Installing an update while an NVR
-pulls both streams and a browser watches live video has reproduced this; stop
-the extra consumers during an update.
+pulls both streams and a browser watched live video has reproduced this; stop
+the NVR during an update.
 
 ## Package format
 

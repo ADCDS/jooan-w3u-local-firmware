@@ -303,11 +303,6 @@ class SignedReleaseTests(unittest.TestCase):
             )
             for command in ("mount", "umount", "reboot"):
                 os.chmod(fake_bin / command, 0o755)
-            (slot / "hooks/onvif-ptz.sh").write_text(
-                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_MOUNT_LOG"\n',
-                encoding="utf-8",
-            )
-            os.chmod(slot / "hooks/onvif-ptz.sh", 0o755)
 
             helper = REPOSITORY / "runtime/slot/hooks/integration-helper.sh"
             environment = os.environ | {
@@ -335,27 +330,6 @@ class SignedReleaseTests(unittest.TestCase):
             routes.write_text("0.0.0.0/0\n", encoding="utf-8")
             self.assertNotEqual(subprocess.run(
                 [str(helper), "routes-set", str(routes), "route-id"],
-                env=environment,
-                capture_output=True,
-            ).returncode, 0)
-            ptz = root / "ptz.json"
-            ptz.write_text(
-                '{"command":"left","duration_ms":250,"speed":3}\n',
-                encoding="utf-8",
-            )
-            jog = subprocess.run(
-                [str(helper), "ptz-jog", str(ptz), "ptz-id"],
-                env=environment,
-                capture_output=True,
-            )
-            self.assertEqual(jog.returncode, 0, jog.stderr)
-            self.assertIn("move left 3 250", log.read_text())
-            ptz.write_text(
-                '{"command":"left;reboot","duration_ms":250,"speed":3}\n',
-                encoding="utf-8",
-            )
-            self.assertNotEqual(subprocess.run(
-                [str(helper), "ptz-jog", str(ptz), "ptz-id"],
                 env=environment,
                 capture_output=True,
             ).returncode, 0)
@@ -453,7 +427,7 @@ class HostBuilderTests(unittest.TestCase):
             and not path.name.endswith(".test.js")
         }
         self.assertIn("app.js", deployable)
-        self.assertNotIn("audio-codec.test.js", deployable)
+        self.assertNotIn("app-auth-race.test.js", deployable)
         # The PWA shell was retired to buy that space. A service worker also
         # cached index.html and app.js, which would have kept serving the
         # pre-update UI after a firmware upgrade.

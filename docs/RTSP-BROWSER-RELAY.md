@@ -1,5 +1,10 @@
 # Off-camera RTSP → browser playback investigation
 
+> Outcome (0.2.14): playback left the camera. The in-daemon fMP4 remuxer and
+> the Web UI player were removed; an NVR (Frigate) pulls RTSP directly and
+> drives pan/tilt over ONVIF. The measurements below are kept as the record of
+> why nothing heavier belongs on the camera.
+
 The camera has a 38 MiB Linux RAM budget and a single CPU core. **Do not
 attempt to run a WebRTC server, transcoder, or another always-on media service on
 it.** The retained OEM `jooanipc` owns both encoders; `joan-daemon` is a local

@@ -414,12 +414,10 @@ jl_stop_slot() {
     jl_bounded_hook 10 "$JL_SLOT_DIR/stop.sh"
 }
 
-# start.sh records both runtime processes; comm guards against PID reuse.
+# start.sh records the runtime process; comm guards against PID reuse.
 jl_runtime_alive() {
-    for jl_proc in daemon:joan-daemon audio-router:audio-router; do
-        jl_pid=$(cat "$JL_RUN/${jl_proc%%:*}.pid" 2>/dev/null) || return 1
-        [ "$(cat "/proc/$jl_pid/comm" 2>/dev/null)" = "${jl_proc#*:}" ] || return 1
-    done
+    jl_pid=$(cat "$JL_RUN/daemon.pid" 2>/dev/null) || return 1
+    [ "$(cat "/proc/$jl_pid/comm" 2>/dev/null)" = joan-daemon ]
 }
 
 # The kernel's OOM report says who held the memory, and dmesg does not survive

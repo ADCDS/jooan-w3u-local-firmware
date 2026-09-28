@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "joan_daemon.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -75,4 +77,54 @@ int joan_run_helper(const JoanConfig *cfg, const char *operation,
     if (output) *output = buf; else free(buf);
     if (output_len) *output_len = used;
     return status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
+
+/* The motor path is jooanipc's own ONVIF PTZ service, which the guard keeps
+ * on loopback. Calling it here rather than through a helper script costs no
+ * fork, so a nudge lasts as long as it was asked to: the helper added a
+ * quarter to half a second before each Stop reached the OEM. The OEM runs a
+ * ContinuousMove until Stop, ignoring speed and Timeout, so every caller
+ * stops explicitly and keeps the deadman armed. direction NULL means Stop;
+ * the request is complete before the socket opens. */
+int joan_oem_ptz(const JoanConfig *cfg, const char *direction, unsigned speed)
+{
+    static const char *const velocity[] = { "0.2", "0.4", "0.6", "0.8", "1.0" };
+    char body[640], reply[4096]; const char *v; size_t got = 0; ssize_t z;
+    int n, head, fd, ok, pan = 0, negative = 0;
+    struct sockaddr_in a; struct timeval limit = { 2, 0 };
+    if (direction) {
+        pan = !strcmp(direction, "left") || !strcmp(direction, "right");
+        negative = !strcmp(direction, "left") || !strcmp(direction, "down");
+        if (!pan && strcmp(direction, "up") && strcmp(direction, "down")) return -1;
+    }
+    v = velocity[speed >= 1 && speed <= 5 ? speed - 1 : 2];
+    /* The OEM matches these literal prefixes, so they must not change. */
+    n = snprintf(body, sizeof(body),
+        "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\""
+        " xmlns:tt=\"http://www.onvif.org/ver10/schema\"><s:Body>");
+    if (direction)
+        n += snprintf(body + n, sizeof(body) - (size_t)n,
+            "<tptz:ContinuousMove><tptz:ProfileToken>profile_0</tptz:ProfileToken><tptz:Velocity>"
+            "<tt:PanTilt x=\"%s%s\" y=\"%s%s\"/></tptz:Velocity></tptz:ContinuousMove>",
+            pan && negative ? "-" : "", pan ? v : "0.0", !pan && negative ? "-" : "", pan ? "0.0" : v);
+    else
+        n += snprintf(body + n, sizeof(body) - (size_t)n,
+            "<tptz:Stop><tptz:ProfileToken>profile_0</tptz:ProfileToken><tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom></tptz:Stop>");
+    n += snprintf(body + n, sizeof(body) - (size_t)n, "</s:Body></s:Envelope>");
+    head = snprintf(reply, sizeof(reply),
+        "POST /onvif/Ptz HTTP/1.0\r\nHost: 127.0.0.1:%u\r\nContent-Type: application/soap+xml; charset=utf-8; "
+        "action=\"http://www.onvif.org/ver20/ptz/wsdl/%s\"\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+        cfg->oem_onvif_port, direction ? "ContinuousMove" : "Stop", n, body);
+    if (n <= 0 || (size_t)n >= sizeof(body) || head <= 0 || (size_t)head >= sizeof(reply)) return -1;
+    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) return -1;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &limit, sizeof(limit));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof(limit));
+    memset(&a, 0, sizeof(a)); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)cfg->oem_onvif_port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(fd, (struct sockaddr *)&a, sizeof(a)) || send(fd, reply, (size_t)head, MSG_NOSIGNAL) != head) { close(fd); return -1; }
+    while (got + 1 < sizeof(reply) && (z = recv(fd, reply + got, sizeof(reply) - 1 - got, 0)) > 0) got += (size_t)z;
+    close(fd); reply[got] = 0;
+    ok = (!strncmp(reply, "HTTP/1.1 200 ", 13) || !strncmp(reply, "HTTP/1.0 200 ", 13)) && !strstr(reply, "Fault>") &&
+         strstr(reply, direction ? "<tptz:ContinuousMoveResponse" : "<tptz:StopResponse");
+    return ok ? 0 : -1;
 }

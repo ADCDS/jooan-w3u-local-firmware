@@ -181,19 +181,35 @@ static Bucket *bucket_for(const char *remote, time_t now)
     return &buckets[free_i];
 }
 
+int joan_auth_throttled(const char *remote)
+{
+    Bucket *b; time_t now = auth_now(); int limited;
+    pthread_mutex_lock(&lock);
+    b = bucket_for(remote, now);
+    if (b->since + 60 < now) { b->since = now; b->failures = 0; }
+    limited = b->failures >= 5;
+    pthread_mutex_unlock(&lock);
+    return limited;
+}
+
+void joan_auth_note(const char *remote, int ok)
+{
+    Bucket *b;
+    pthread_mutex_lock(&lock);
+    b = bucket_for(remote, auth_now());
+    if (ok) b->failures = 0; else b->failures++;
+    pthread_mutex_unlock(&lock);
+}
+
 int joan_auth_login(const JoanConfig *cfg, const char *remote,
                     const char *user, const char *password, JoanAuthz *out)
 {
     Bucket *b; Session *s = NULL; unsigned i; time_t now = auth_now(); int must = 0;
     unsigned char random[32];
     memset(out, 0, sizeof(*out));
-    pthread_mutex_lock(&lock);
-    b = bucket_for(remote, now);
-    if (b->since + 60 < now) { b->since = now; b->failures = 0; }
-    if (b->failures >= 5) { pthread_mutex_unlock(&lock); return -2; }
-    pthread_mutex_unlock(&lock);
+    if (joan_auth_throttled(remote)) return -2;
     if (strcmp(user, "admin") || !verify(cfg, password, &must)) {
-        pthread_mutex_lock(&lock); b = bucket_for(remote, now); b->failures++; pthread_mutex_unlock(&lock);
+        joan_auth_note(remote, 0);
         return -1;
     }
     if (joan_random(random, sizeof(random))) return -1;

@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.13"
+#define JOAN_VERSION "0.2.14"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -23,11 +23,10 @@ typedef struct {
     int plain_http;
     char public_host[128];
     char integration_helper[256];
-    char audio_socket[256];
-    char sd_dir[256];
     unsigned mqtt_port;
     unsigned rtsp_port;
     unsigned rtsp_proxy_port;
+    unsigned oem_onvif_port;
     int mdns_enabled;
     unsigned mdns_port;
 } JoanConfig;
@@ -41,13 +40,9 @@ typedef struct {
     char cookie[1024];
     char csrf[128];
     char content_type[128];
-    char upgrade[64];
-    char ws_key[128];
-    char ws_protocol[128];
     char origin[256];
     char host[256];
     char transfer_encoding[64];
-    char range[64];
     size_t content_length;
     unsigned char *body;
 } JoanRequest;
@@ -82,10 +77,16 @@ int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out);
 int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
                               const char *old_password, const char *new_password);
 void joan_auth_logout(const JoanAuthz *auth);
+/* Failure budget per remote address, shared with the Web login, for
+ * credentials checked outside it (ONVIF). */
+int joan_auth_throttled(const char *remote);
+void joan_auth_note(const char *remote, int ok);
 
 int joan_run_helper(const JoanConfig *cfg, const char *operation,
                     const char *argument_path, const char *id,
                     unsigned char **output, size_t *output_len, unsigned timeout_sec);
+/* Start a jog (up/down/left/right) or, with NULL, stop the OEM motor. */
+int joan_oem_ptz(const JoanConfig *cfg, const char *direction, unsigned speed);
 int joan_stage_blob(const JoanConfig *cfg, const char *category,
                     const void *data, size_t len, char id[65], char path[512]);
 
@@ -107,21 +108,16 @@ int joan_tls_ensure_identity(const JoanConfig *cfg);
 int joan_tls_enroll_identity(const JoanConfig *cfg, const char *pem, size_t len,
                              char *why, size_t why_len);
 int joan_tls_clear_identity(const JoanConfig *cfg);
-int joan_fmp4_start(const JoanConfig *cfg);
-int joan_fmp4_init_segment(const char *stream, unsigned char **data, size_t *len,
-                           unsigned timeout_ms);
-int joan_fmp4_fragment(const char *stream, uint32_t after,
-                       unsigned char **data, size_t *len, uint32_t *first,
-                       uint32_t *sequence, unsigned timeout_ms);
-const char *joan_fmp4_status(const char *stream);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);
-typedef struct JoanRecMp4 JoanRecMp4;
-typedef int (*JoanRecSink)(void *ctx, const void *data, size_t len);
-JoanRecMp4 *joan_recmp4_open(const char *path);
-long joan_recmp4_length(const JoanRecMp4 *m);
-int joan_recmp4_write(JoanRecMp4 *m, JoanRecSink sink, void *ctx, long from, long to);
-void joan_recmp4_close(JoanRecMp4 *m);
+
+/* The PTZ order shared by the Web API and ONVIF; http.c owns it. */
+int joan_ptz_preset_request(unsigned command, const char *payload, char operation[65]);
+int joan_ptz_nudge(const char *direction);
+/* HTTP status and a malloc'd SOAP reply, or -1. host is the validated
+ * authority the client used, for the service addresses it is given. */
+int joan_onvif_handle(const JoanConfig *cfg, const JoanRequest *req, const char *host,
+                      char **reply, size_t *reply_len);
 
 int joan_server_run(const JoanConfig *cfg);
 void joan_server_stop(void);
