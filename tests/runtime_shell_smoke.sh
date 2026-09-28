@@ -169,6 +169,50 @@ jl_ensure_wifi A 2>/dev/null || :
 unset -f wpa_cli jl_wpa_pid
 rm -f "$JL_WIFI_FAIL" "$JL_CONFIG/wifi.json" "$JL_RUN/wifi-applied" "$JL_RUN/wifi-attempts"
 
+# The network watchdog reboots a camera whose Wi-Fi chip has stopped
+# transmitting, but never loops on a network that is simply gone.
+JL_DOG_LOG=$fixture/netdog; : > "$JL_DOG_LOG"
+jl_uptime() { printf '%s\n' "$JL_T"; }
+arping() { [ -f "$fixture/arp-ok" ]; }
+dmesg() { [ ! -f "$fixture/chip-crash" ] || printf 'bspassert after recv(8): DUMPDONE\n'; }
+reboot() { printf 'reboot %s\n' "$JL_T" >> "$JL_DOG_LOG"; }
+sync() { :; }
+jl_record_crash() { printf 'record %s\n' "$1" >> "$JL_DOG_LOG"; }
+jl_netdog_ok=0 jl_netdog_down=
+rm -f "$JL_RUN/default-gateway" "$JL_STATE/netdog-reboots"
+JL_T=5000; jl_net_watchdog                    # no known gateway: no opinion
+[ ! -s "$JL_DOG_LOG" ]
+printf '192.168.20.1 wlan0\n' > "$JL_RUN/default-gateway"
+JL_T=100; jl_net_watchdog; JL_T=800; jl_net_watchdog
+[ ! -s "$JL_DOG_LOG" ]                        # never worked, uptime < 15 min
+: > "$fixture/arp-ok"; JL_T=810; jl_net_watchdog; [ "$jl_netdog_ok" = 1 ]
+rm -f "$fixture/arp-ok"
+JL_T=820; jl_net_watchdog; JL_T=1119; jl_net_watchdog
+[ ! -s "$JL_DOG_LOG" ]                        # 299 s down: not yet
+mkdir "$JL_RUN/state.lock"; JL_T=1200; jl_net_watchdog; rm -rf "$JL_RUN/state.lock"
+[ ! -s "$JL_DOG_LOG" ]                        # never during maintenance
+JL_T=1210; jl_net_watchdog; JL_T=1510; jl_net_watchdog
+grep -q '^reboot 1510$' "$JL_DOG_LOG" && grep -q '^record netdog$' "$JL_DOG_LOG"
+[ "$(cat "$JL_STATE/netdog-reboots")" = 1 ]
+# After one watchdog reboot the next waits for 30 minutes of uptime...
+: > "$JL_DOG_LOG"; jl_netdog_ok=1 jl_netdog_down=
+JL_T=1000; jl_net_watchdog; JL_T=1700; jl_net_watchdog
+[ ! -s "$JL_DOG_LOG" ]
+JL_T=1800; jl_net_watchdog; grep -q '^reboot 1800$' "$JL_DOG_LOG"
+[ "$(cat "$JL_STATE/netdog-reboots")" = 2 ]
+# ... a logged chip crash cuts the down time to 30 s ...
+: > "$JL_DOG_LOG"; rm -f "$JL_STATE/netdog-reboots"; jl_netdog_ok=1 jl_netdog_down=
+: > "$fixture/chip-crash"
+JL_T=400; jl_net_watchdog; JL_T=429; jl_net_watchdog; [ ! -s "$JL_DOG_LOG" ]
+JL_T=430; jl_net_watchdog; grep -q '^reboot 430$' "$JL_DOG_LOG"
+rm -f "$fixture/chip-crash"
+# ... and 30 healthy minutes forget earlier watchdog reboots.
+: > "$fixture/arp-ok"; printf '3\n' > "$JL_STATE/netdog-reboots"
+JL_T=1000; jl_net_watchdog; [ -f "$JL_STATE/netdog-reboots" ]
+JL_T=1800; jl_net_watchdog; [ ! -f "$JL_STATE/netdog-reboots" ]
+unset -f jl_uptime arping dmesg reboot sync jl_record_crash
+rm -f "$fixture/arp-ok" "$JL_RUN/default-gateway"
+
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
 mkdir -p "$JL_ROOT/slots/A" "$JL_ROOT/slots/B"
 printf stable > "$JL_ROOT/slots/A/runtime.tar.gz"
