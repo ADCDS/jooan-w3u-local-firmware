@@ -22,8 +22,18 @@ static JoanConfig G;
 /* One physical command order shared by ONVIF moves, presets, Stop retries. */
 static pthread_mutex_t ptz_lock=PTHREAD_MUTEX_INITIALIZER;
 static int ptz_stop_uncertain;
-static uint64_t ptz_preset_expires;
 static uint64_t ptz_stop_retry_ms;
+/* A recall moves pan and tilt together at 450 steps/s, and jooanipc answers
+ * it only once the head has stopped (measured: the answer comes at
+ * max(dx,dy)/450 s). That answer ends the travel, not a timer; the cap only
+ * covers a lost answer, above a full 4080-step pan (9.1 s). */
+#define PTZ_TRAVEL_CAP_MS 15000u
+#define PTZ_SETTLE_MS 300u
+static char ptz_travel_op[65];
+static uint64_t ptz_travel_until;
+/* The newest recall or nudge asked for while the head travelled. It runs
+ * once the head stops; older ones are dropped, so clicks never pile up. */
+static struct{int kind;unsigned token;char direction[8];uint64_t expires;}ptz_next;
 static uint64_t ptz_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000u+(uint64_t)t.tv_nsec/1000000u;}
 static pthread_mutex_t worker_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t worker_available=PTHREAD_COND_INITIALIZER;
@@ -54,15 +64,16 @@ static int host_ok(const char*host){char name[256],label[64],*colon;struct in_ad
 static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r->origin[0])return required?0:1;if(!host_ok(r->host))return 0;snprintf(expected,sizeof(expected),"http://%s",r->host);return !strcmp(r->origin,expected);}
 static int authorized(Conn*c,JoanRequest*r,JoanAuthz*a,int csrf){int rc;if(!origin_ok(r,0))return error_json(c,403,"origin_rejected","request origin is not this camera"),-1;rc=joan_auth_request(r,csrf,a);if(rc==-2)return error_json(c,403,"csrf_rejected","request token missing or invalid"),-1;if(rc)return error_json(c,401,"authentication_required","authentication required"),-1;return 0;}
 static int helper_json(Conn*c,const char*op,const char*path,const char*id){unsigned char*out=NULL;size_t n=0;char esc[4096],body[4352];unsigned timeout=!strcmp(op,"firmware-verify")?60u:!strcmp(op,"wifi-stage")?65u:15u;int rc=joan_run_helper(&G,op,path,id,&out,&n,timeout);if(rc){free(out);return error_json(c,502,"integration_failed","local integration operation failed");}if(!strcmp(op,"ssh-list")){if(n>1800)n=1800;json_escape(out?out:(unsigned char*)"",n,esc,sizeof(esc));snprintf(body,sizeof(body),"{\"ok\":true,\"authorized_keys\":\"%s\"}",esc);}else snprintf(body,sizeof(body),"{\"ok\":true,\"id\":\"%s\"}",id?id:"");free(out);return json(c,200,body);}
-/* 66491 goto; 66485/66489 save/update record the live step counter and
- * 66490 deletes: none may run while the head is still travelling, or a
- * preset is saved mid-move. Only a goto opens the travel window.
+/* A recall is under way or settling, or a request waits for the head. */
+static int ptz_busy(void){return ptz_travel_op[0]||ptz_travel_until>ptz_monotonic_ms()||ptz_next.kind;}
+/* 66485/66489 save/update record the live step counter and 66490 deletes:
+ * none may run while the head is busy, or a preset is saved mid-move.
+ * Recalls go through joan_ptz_goto.
  * 0 sent; 1 the head is busy; -2 same command pending; -1 no channel. */
 int joan_ptz_preset_request(unsigned command,const char*payload,char operation[65]){int rc;
-    if(command!=66491&&command!=66485&&command!=66489&&command!=66490)return joan_mqtt_request(command,payload,operation);
+    if(command!=66485&&command!=66489&&command!=66490)return joan_mqtt_request(command,payload,operation);
     pthread_mutex_lock(&ptz_lock);
-    if(ptz_stop_uncertain||ptz_preset_expires>ptz_monotonic_ms())rc=1;
-    else{rc=joan_mqtt_request(command,payload,operation);if(!rc&&command==66491)ptz_preset_expires=ptz_monotonic_ms()+20000;}
+    rc=ptz_stop_uncertain||ptz_busy()?1:joan_mqtt_request(command,payload,operation);
     pthread_mutex_unlock(&ptz_lock);
     return rc;
 }
@@ -76,30 +87,74 @@ static int ptz_stop_locked(void)
     else ptz_stop_uncertain=0;
     return rc;
 }
+/* 0 moved and stopped; -1 the move or stop was not confirmed. */
+static int ptz_nudge_locked(const char*direction)
+{
+    struct timespec step={0,350000000L};
+    if(joan_oem_ptz(&G,direction,3)){ptz_stop_uncertain=1;ptz_stop_retry_ms=ptz_monotonic_ms();return -1;}
+    nanosleep(&step,NULL);
+    return ptz_stop_locked()?-1:0;
+}
+static int ptz_goto_locked(unsigned token)
+{
+    char payload[96];
+    snprintf(payload,sizeof(payload),"{\"cmd\":66491,\"cmd_type\":\"request\",\"coordinateID\":%u,\"mot_index\":0}",token);
+    if(joan_mqtt_request(66491,payload,ptz_travel_op)){ptz_travel_op[0]=0;return -1;}
+    ptz_travel_until=ptz_monotonic_ms()+PTZ_TRAVEL_CAP_MS;
+    return 0;
+}
+static void ptz_hold(int kind,unsigned token,const char*direction)
+{
+    ptz_next.kind=kind;ptz_next.token=token;
+    snprintf(ptz_next.direction,sizeof(ptz_next.direction),"%s",direction?direction:"");
+    ptz_next.expires=ptz_monotonic_ms()+20000u;
+}
 static void *ptz_expiry_loop(void *unused)
 {
     (void)unused;
-    for(;;){struct timespec delay={0,250000000L};nanosleep(&delay,NULL);
-        pthread_mutex_lock(&ptz_lock);
-        if(ptz_stop_uncertain&&ptz_monotonic_ms()>=ptz_stop_retry_ms)
+    for(;;){struct timespec delay={0,100000000L};char reply[2049];uint64_t now;nanosleep(&delay,NULL);
+        pthread_mutex_lock(&ptz_lock);now=ptz_monotonic_ms();
+        if(ptz_stop_uncertain&&now>=ptz_stop_retry_ms)
             (void)ptz_stop_locked();
+        if(ptz_travel_op[0]&&joan_mqtt_operation(ptz_travel_op,reply,sizeof(reply))!=1){
+            ptz_travel_op[0]=0;ptz_travel_until=now+PTZ_SETTLE_MS;} /* answered: the head stopped */
+        else if(ptz_travel_op[0]&&now>=ptz_travel_until){
+            joan_mqtt_abandon(ptz_travel_op);ptz_travel_op[0]=0;}
+        if(ptz_next.kind&&now>=ptz_next.expires)ptz_next.kind=0;
+        if(ptz_next.kind&&!ptz_stop_uncertain&&!ptz_travel_op[0]&&ptz_travel_until<=now){
+            int kind=ptz_next.kind;ptz_next.kind=0;
+            if(kind==1)(void)ptz_goto_locked(ptz_next.token);
+            else (void)ptz_nudge_locked(ptz_next.direction);
+        }
         pthread_mutex_unlock(&ptz_lock);
     }
     return NULL;
 }
 
+/* Answered at once, because the NVR waits on each answer and the head can be
+ * busy for seconds. 0 sent, or held until the head stops; 1 a stop is
+ * unconfirmed; -1 no command channel. */
+int joan_ptz_goto(unsigned token)
+{
+    int rc=0;
+    pthread_mutex_lock(&ptz_lock);
+    if(ptz_stop_uncertain)rc=1;
+    else if(ptz_busy())ptz_hold(1,token,NULL);
+    else rc=ptz_goto_locked(token);
+    pthread_mutex_unlock(&ptz_lock);
+    return rc;
+}
+
 /* One ONVIF press is one coarse nudge, timed here instead of by the
  * client's Stop: the live picture lags seconds behind, so a hold cannot be
- * aimed, and a fixed step lands the same every time. 0 moved and stopped;
- * 1 the head is busy; -1 the move or stop was not confirmed. */
+ * aimed, and a fixed step lands the same every time. Pressed while a recall
+ * travels, it waits for the head to stop. 0 moved and stopped, or held;
+ * 1 a stop is unconfirmed; -1 the move or stop was not confirmed. */
 int joan_ptz_nudge(const char*direction)
 {
     int rc=1;
     pthread_mutex_lock(&ptz_lock);
-    if(!ptz_stop_uncertain&&ptz_preset_expires<=ptz_monotonic_ms()){
-        if(joan_oem_ptz(&G,direction,3)){ptz_stop_uncertain=1;ptz_stop_retry_ms=ptz_monotonic_ms();rc=-1;}
-        else{struct timespec step={0,350000000L};nanosleep(&step,NULL);rc=ptz_stop_locked()?-1:0;}
-    }
+    if(!ptz_stop_uncertain){if(ptz_busy()){ptz_hold(2,0,direction);rc=0;}else rc=ptz_nudge_locked(direction);}
     pthread_mutex_unlock(&ptz_lock);
     return rc;
 }

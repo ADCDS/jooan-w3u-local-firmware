@@ -59,6 +59,11 @@ class FakeCamera:
         self.commands = []
         self.motor = []          # (monotonic time, 'ContinuousMove' | 'Stop', x, y)
         self.motor_refuse = []   # operations to answer with a SOAP fault, once each
+        # jooanipc answers a recall only once the head stops (travel seconds).
+        self.travel = 0.0
+        self.gotos = []          # [received, answered, token] per recall
+        self.overlap = False     # a command reached the head while a recall travelled
+        self.send_lock = threading.Lock()
 
     def __enter__(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -138,6 +143,8 @@ class FakeCamera:
                 op = 'ContinuousMove' if '<tptz:ContinuousMove>' in text else 'Stop' if '<tptz:Stop>' in text else '?'
                 move = re.search(r'<tt:PanTilt x="([^"]*)" y="([^"]*)"/>', text)
                 self.motor.append((time.monotonic(), op) + (move.groups() if move else ()))
+                if self.gotos and self.gotos[-1][1] is None:
+                    self.overlap = True
                 if op in self.motor_refuse:
                     self.motor_refuse.remove(op)
                     conn.sendall(b'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n<env:Fault></env:Fault>')
@@ -160,6 +167,12 @@ class FakeCamera:
             self.commands.append(request)
             reply = {'cmd': request['cmd'], 'cmd_type': 'response', 'status': 0}
             cmd = request['cmd']
+            if self.gotos and self.gotos[-1][1] is None and cmd != 66486:
+                self.overlap = True
+            if cmd == 66491:
+                self.gotos.append([time.monotonic(), None, request['coordinateID']])
+                threading.Timer(self.travel, self._arrive, (self.gotos[-1], reply)).start()
+                continue
             if cmd == 66486:
                 reply['ptz_coordinate'] = [{'coordinateID': k, 'name': v} for k, v in sorted(self.presets.items())]
             elif cmd == 66485:
@@ -173,7 +186,15 @@ class FakeCamera:
                 self.presets[request['coordinateID']] = request['name']
             elif cmd == 66490:
                 self.presets.pop(request['ptz_coordinate'][0]['coordinateID'], None)
-            # jooanipc prints compact JSON (cJSON unformatted), as the daemon expects.
+            self._reply(reply)
+
+    def _arrive(self, goto, reply):
+        goto[1] = time.monotonic()
+        self._reply(reply)
+
+    def _reply(self, reply):
+        # jooanipc prints compact JSON (cJSON unformatted), as the daemon expects.
+        with self.send_lock:
             self.mqtt.sendall(mqtt_publish(b'qaiot/mqtt/user/device/reply', json.dumps(reply, separators=(',', ':'), ensure_ascii=False).encode()))
 
 
@@ -295,14 +316,32 @@ def main(binary):
         status, xml = client.ptz('RemovePreset', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetToken>3</ns0:PresetToken>')
         assert status == 200 and 3 not in cam.presets, xml
 
-        # A goto opens the travel window: nothing else may move the head.
-        status, xml = client.ptz('GotoPreset', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetToken>2</ns0:PresetToken>')
-        assert status == 200 and cam.commands[-1] == {'cmd': 66491, 'cmd_type': 'request', 'coordinateID': 2, 'mot_index': 0}, xml
+        # A recall is answered at once; nothing else reaches the head until
+        # jooanipc reports it stopped. Requests made meanwhile are held, not
+        # refused, and only the newest runs once the head stops.
+        def goto(token):
+            return client.ptz('GotoPreset', f'<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetToken>{token}</ns0:PresetToken>')
+        cam.travel = 0.8
         cam.motor.clear()
+        started = time.monotonic()
+        status, xml = goto(2)
+        assert status == 200 and time.monotonic() - started < 0.4, 'a recall does not wait for the travel'
+        assert cam.commands[-1] == {'cmd': 66491, 'cmd_type': 'request', 'coordinateID': 2, 'mot_index': 0}, xml
+        assert goto(0)[0] == 200, 'a recall during travel is held'
         status, xml = client.ptz('ContinuousMove', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:Velocity><ns0:PanTilt x="0.5" y="0"/></ns0:Velocity>')
-        assert status == 500 and 'pending' in xml, xml
-        assert client.ptz('GotoPreset', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetToken>1</ns0:PresetToken>')[0] == 500
-        assert not cam.motor, 'nothing moved during travel'
+        assert status == 200, xml
+        status, xml = client.ptz('SetPreset', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetName>mid</ns0:PresetName>')
+        assert status == 500 and 'pending' in xml, 'no save while the head is busy'
+        time.sleep(2.0)
+        assert [g[2] for g in cam.gotos] == [2], 'the older held recall was dropped'
+        assert [m[1:] for m in cam.motor] == [('ContinuousMove', '0.6', '0.0'), ('Stop',)], cam.motor
+        assert cam.motor[0][0] >= cam.gotos[0][1], 'the held nudge waited for the head to stop'
+        assert goto(1)[0] == 200 and goto(0)[0] == 200
+        time.sleep(2.6)
+        assert [g[2] for g in cam.gotos] == [2, 1, 0] and cam.gotos[2][0] >= cam.gotos[1][1], cam.gotos
+        assert not cam.overlap, 'nothing reached the head while a recall travelled'
+        status, xml = client.ptz('SetPreset', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:PresetName>after</ns0:PresetName>')
+        assert status == 200, 'the head is free again once the answer arrives'
 
         # Wrong passwords share the Web login's per-address budget.
         for _ in range(5):

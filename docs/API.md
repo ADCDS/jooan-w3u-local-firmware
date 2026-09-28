@@ -97,8 +97,14 @@ and port 80.
   `PresetName` (1–64 characters, no quotes or backslashes). With a `PresetToken`
   it re-saves that slot at the current position. The OEM refuses a save where a
   preset already exists at the same position, and the fault reports its status
-  (`-2`). After a recall, further moves and preset commands are refused for 20 s
-  while the head travels: a command mid-travel lands the head somewhere else.
+  (`-2`).
+- **Travel.** `GotoPreset` answers at once. The head then moves pan and tilt
+  together at 450 steps/s (a full pan takes about 9 s), and the OEM reports
+  when it stops. A command sent mid-travel lands the head somewhere else, so a
+  recall or `ContinuousMove` that arrives meanwhile is accepted and held until
+  that report, then runs. Only the newest held request runs; older ones are
+  dropped, so repeated clicks do not queue up. `SetPreset` and `RemovePreset`
+  are refused until the head has stopped.
 - **Discovery.** `GetCapabilities` and `GetProfiles` complete the set. It is
   what Frigate uses, with the flash budget as the limit. Any other operation
   returns `ter:ActionNotSupported`.
