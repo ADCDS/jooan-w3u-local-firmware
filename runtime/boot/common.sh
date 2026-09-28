@@ -446,5 +446,53 @@ jl_record_crash() {
     mkdir -p "$jl_crash_dir" || return 0
     [ "$(ls "$jl_crash_dir" | wc -l)" -lt 30 ] || return 0
     { date; cat /proc/meminfo /proc/net/sockstat; ps; dmesg; } \
-        > "$jl_crash_dir/runtime-$(date +%s).log" 2>&1
+        > "$jl_crash_dir/${1:-runtime}-$(date +%s).log" 2>&1
+}
+
+jl_uptime() { cut -d. -f1 /proc/uptime; }
+
+# The SKW6316's own firmware can crash: the driver logs an assert ending in
+# DUMPDONE and then refuses every transmit, so the camera stays associated
+# but silent. Nothing on the board resets the chip; a reboot does. So reboot
+# when the gateway stops answering ARP (the IoT firewall may drop ICMP) for
+# JL_NETDOG_DOWN seconds, or 30 once the chip has logged a crash. A path that
+# never worked this boot first waits for 15 minutes of uptime, and every
+# watchdog reboot doubles that wait (to 4 hours) until the network has been up
+# for 30 minutes, so a network that is simply gone cannot reboot-loop the
+# camera. Never during maintenance or a Wi-Fi trial.
+jl_netdog_ok=0
+jl_netdog_down=
+jl_net_watchdog() {
+    if [ -d "$JL_RUN/state.lock" ] || [ -e "$JL_STATE/wifi-trial" ] ||
+       [ ! -r "$JL_RUN/default-gateway" ] ||
+       ! read -r jl_netdog_gw jl_netdog_dev < "$JL_RUN/default-gateway"; then
+        jl_netdog_down=
+        return 0
+    fi
+    jl_netdog_now=$(jl_uptime)
+    if arping -c 1 -w 2 -I "$jl_netdog_dev" "$jl_netdog_gw" >/dev/null 2>&1; then
+        jl_netdog_ok=1 jl_netdog_down=
+        if [ "$jl_netdog_now" -ge 1800 ] && [ -f "$JL_STATE/netdog-reboots" ]; then
+            rm -f "$JL_STATE/netdog-reboots"
+        fi
+        return 0
+    fi
+    [ -n "$jl_netdog_down" ] || jl_netdog_down=$jl_netdog_now
+    jl_netdog_limit=${JL_NETDOG_DOWN:-300}
+    dmesg 2>/dev/null | grep -q DUMPDONE && jl_netdog_limit=30
+    [ $((jl_netdog_now - jl_netdog_down)) -ge "$jl_netdog_limit" ] || return 0
+    jl_netdog_n=0
+    [ ! -f "$JL_STATE/netdog-reboots" ] || IFS= read -r jl_netdog_n < "$JL_STATE/netdog-reboots" || :
+    case "$jl_netdog_n" in ''|*[!0-9]*) jl_netdog_n=0 ;; esac
+    jl_netdog_wait=0
+    if [ "$jl_netdog_n" != 0 ] || [ "$jl_netdog_ok" != 1 ]; then
+        jl_netdog_shift=$jl_netdog_n
+        [ "$jl_netdog_shift" -le 4 ] || jl_netdog_shift=4
+        jl_netdog_wait=$((900 << jl_netdog_shift))
+    fi
+    [ "$jl_netdog_now" -ge "$jl_netdog_wait" ] || return 0
+    printf '%s\n' "$((jl_netdog_n + 1))" > "$JL_STATE/netdog-reboots" || :
+    jl_record_crash netdog || :
+    sync
+    reboot
 }

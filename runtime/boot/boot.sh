@@ -118,6 +118,7 @@ while :; do
     if [ "$jl_running" != - ]; then
         jl_ensure_wifi "$jl_running" || :
     fi
+    jl_net_watchdog || :
     # Persist the clock about every 30 minutes; NOR flash tolerates few writes.
     jl_time_ticks=$((jl_time_ticks + 1))
     if [ "$jl_time_ticks" -ge 360 ]; then

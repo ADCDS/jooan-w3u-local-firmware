@@ -118,8 +118,20 @@ apply also disables every other network there, including jooanipc's stored one
 (on the verified unit an open, hidden-SSID bench network), so the camera neither
 probes for it by name nor joins an open network that takes that name. The
 SKW6316 does not look for any other network by itself; without that re-apply it
-hunts for the OEM network until a power cycle. `tools/wifi-deadman.sh` records
-the Wi-Fi state to the microSD card when this needs diagnosing again.
+hunts for the OEM network until a power cycle.
+
+The SKW6316's own firmware can also crash (the driver logs an assert ending in
+`DUMPDONE`, then refuses every transmit), which leaves the camera associated but
+silent, and nothing on the board resets the chip. The supervisor therefore
+reboots the camera when the gateway stops answering ARP for 5 minutes, or for
+30 seconds once the chip has logged a crash. It records the reason and the
+kernel log under `jooan-local/netdog-*.log` on the microSD card first. A network
+that never worked in the current boot is given 15 minutes of uptime first, and
+each watchdog reboot doubles that wait (up to 4 hours) until the network has
+stayed up for 30 minutes, so an absent network cannot make the camera reboot in
+a loop. It never acts during maintenance or a Wi-Fi trial.
+`tools/wifi-deadman.sh` records the Wi-Fi state in detail when this needs
+diagnosing again.
 
 Avoid recovery designs that depend only on Wi-Fi. Keep a verified flash backup
 and external programmer path.
