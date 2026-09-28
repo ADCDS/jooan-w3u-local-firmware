@@ -210,20 +210,37 @@ jl_apply_allowed_routes() {
 # seconds, so it simply retries until wpa_supplicant answers, then applies
 # once. Attempts are capped so a network that never accepts us cannot thrash
 # the radio forever.
+jl_wpa_pid() {
+    for jl_proc in /proc/[0-9]*; do
+        [ "$(cat "$jl_proc/comm" 2>/dev/null)" = wpa_supplicant ] || continue
+        printf '%s\n' "${jl_proc#/proc/}"
+        return 0
+    done
+    return 1
+}
+
+# jooanipc owns wpa_supplicant. About two minutes into boot it can restart it
+# from its own stored network (on this unit a retired bench AP), which drops
+# the committed one, and the SKW6316 then hunts for the old network until a
+# power cycle. Whether that lands before or after our apply is a race. So the
+# committed network belongs to the wpa_supplicant process it was applied to:
+# a new process gets it applied again, with its own five attempts.
 jl_ensure_wifi() {
     [ -f "$JL_CONFIG/wifi.json" ] || return 0
-    [ ! -f "$JL_RUN/wifi-applied" ] || return 0
+    jl_wpa=$(jl_wpa_pid) || return 0
+    [ "$(cat "$JL_RUN/wifi-applied" 2>/dev/null)" != "$jl_wpa" ] || return 0
     jl_wifi_hook=$JL_RUN/slot-$1/hooks/wifi-apply.sh
     [ -x "$jl_wifi_hook" ] || return 0
     wpa_cli -iwlan0 ping 2>/dev/null | grep -q PONG || return 0
-    jl_wifi_tries=0
+    jl_wifi_owner='' jl_wifi_tries=0
     [ ! -f "$JL_RUN/wifi-attempts" ] ||
-        IFS= read -r jl_wifi_tries < "$JL_RUN/wifi-attempts" || :
+        IFS=: read -r jl_wifi_owner jl_wifi_tries < "$JL_RUN/wifi-attempts" || :
+    [ "$jl_wifi_owner" = "$jl_wpa" ] || jl_wifi_tries=0
     case "$jl_wifi_tries" in ''|*[!0-9]*) jl_wifi_tries=0 ;; esac
     [ "$jl_wifi_tries" -lt 5 ] || return 0
-    printf '%s\n' "$((jl_wifi_tries + 1))" > "$JL_RUN/wifi-attempts" || :
+    printf '%s:%s\n' "$jl_wpa" "$((jl_wifi_tries + 1))" > "$JL_RUN/wifi-attempts" || :
     if jl_bounded_hook 60 "$jl_wifi_hook" "$JL_CONFIG/wifi.json"; then
-        : > "$JL_RUN/wifi-applied" || :
+        printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
     else
         jl_log 'committed Wi-Fi network could not be applied'
     fi
