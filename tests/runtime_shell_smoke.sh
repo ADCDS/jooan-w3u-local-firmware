@@ -123,7 +123,8 @@ unset -f route
 rm -f "$JL_CONFIG/routes.list" "$JL_RUN/default-gateway" "$JL_RUN/default-gateway6"
 
 # The supervisor applies the committed network only once wpa_supplicant
-# answers, exactly once per boot, and gives up rather than thrashing.
+# answers, exactly once per wpa_supplicant process, and gives up rather than
+# thrashing.
 mkdir -p "$JL_RUN/slot-A/hooks"
 cat > "$JL_RUN/slot-A/hooks/wifi-apply.sh" <<'HOOK'
 #!/bin/sh
@@ -134,6 +135,11 @@ chmod +x "$JL_RUN/slot-A/hooks/wifi-apply.sh"
 JL_WIFI_CALLS=$fixture/wifi-calls; export JL_WIFI_CALLS
 : > "$JL_WIFI_CALLS"
 printf '{"ssid":"x","password":"y"}\n' > "$JL_CONFIG/wifi.json"
+jl_wpa_pid() { return 1; }                    # wpa_supplicant not started yet
+wpa_cli() { printf 'PONG\n'; }
+jl_ensure_wifi A
+[ ! -s "$JL_WIFI_CALLS" ]
+jl_wpa_pid() { printf '101\n'; }
 wpa_cli() { return 1; }                       # control socket not up yet
 jl_ensure_wifi A
 [ ! -s "$JL_WIFI_CALLS" ]
@@ -142,6 +148,13 @@ jl_ensure_wifi A
 [ "$(wc -l < "$JL_WIFI_CALLS")" = 1 ]
 jl_ensure_wifi A                              # already applied: not repeated
 [ "$(wc -l < "$JL_WIFI_CALLS")" = 1 ]
+# jooanipc restarted wpa_supplicant from its own stored network: apply again,
+# once, to the new process.
+jl_wpa_pid() { printf '202\n'; }
+jl_ensure_wifi A
+jl_ensure_wifi A
+[ "$(wc -l < "$JL_WIFI_CALLS")" = 2 ]
+[ "$(cat "$JL_RUN/wifi-applied")" = 202 ]
 # A hook that keeps failing is retried, but only up to the cap.
 rm -f "$JL_RUN/wifi-applied" "$JL_RUN/wifi-attempts"
 : > "$JL_WIFI_CALLS"
@@ -149,7 +162,11 @@ JL_WIFI_FAIL=$fixture/wifi-fail; export JL_WIFI_FAIL; : > "$JL_WIFI_FAIL"
 i=0; while [ "$i" -lt 9 ]; do jl_ensure_wifi A 2>/dev/null || :; i=$((i + 1)); done
 [ "$(wc -l < "$JL_WIFI_CALLS")" = 5 ]
 [ ! -f "$JL_RUN/wifi-applied" ]
-unset -f wpa_cli
+# ... and a new wpa_supplicant gets its own attempts.
+jl_wpa_pid() { printf '303\n'; }
+jl_ensure_wifi A 2>/dev/null || :
+[ "$(wc -l < "$JL_WIFI_CALLS")" = 6 ]
+unset -f wpa_cli jl_wpa_pid
 rm -f "$JL_WIFI_FAIL" "$JL_CONFIG/wifi.json" "$JL_RUN/wifi-applied" "$JL_RUN/wifi-attempts"
 
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
