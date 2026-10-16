@@ -18,6 +18,7 @@ killall goahead 2>/dev/null || :
 # configure nothing, and start.sh itself is bounded to 15s. The supervisor
 # (jl_ensure_wifi) applies it once wpa_supplicant answers instead.
 
+JOAN_RUN_DIR="$JL_RUN" \
 JOAN_STATE_DIR="$JL_ROOT/config" \
 JOAN_RELEASE_SEQUENCE_PATH="$JL_ROOT/state/release-sequence" \
 JOAN_STAGING_DIR="$JL_RUN/staging" \

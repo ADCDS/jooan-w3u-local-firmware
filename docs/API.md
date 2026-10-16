@@ -43,6 +43,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/setup/status` | `GET` | Initial-password and credential-sync state |
 | `/api/v1/setup/password` | `POST` | Rotate the shared administrator password |
 | `/api/v1/session` | `POST`, `GET`, `DELETE` | Create, inspect, or end a session |
+| `/api/v1/system/audio-pause` | `GET`, `PUT` | Inspect or persist the optional OEM audio-processing pause |
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, and helper status |
 | `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
@@ -65,6 +66,29 @@ username is `admin` and the password is the administrator password. The OEM
 upstream is loopback-only on TCP/8554. Pan/tilt and presets are ONVIF, below.
 The camera's RTSP streams carry no usable audio, and the retrofit ships no
 listen or talk path; the guard keeps OEM alarm and voice playback muted.
+
+## Optional OEM audio pause
+
+`GET /api/v1/system/audio-pause` returns `enabled`, `active`, `state`, and
+`recovery_reason`. `PUT` accepts exactly `{"enabled": true}` or
+`{"enabled": false}` and requires the normal administrator session and CSRF
+header. The setting defaults to false and persists across clean restarts.
+The System zone exposes the same control.
+
+When enabled, the exact supported OEM audio callback waits at its existing
+sleep boundary, before acquiring an audio frame. OEM microphone processing
+stops; the video encoders keep running. This is CPU saving, not a speaker mute
+or an implementation of microphone listening/talkback.
+
+The camera waits for RTSP media forwarding before issuing an eight-second
+RAM lease. Forwarding must continue for every sensor that has supplied media
+since daemon startup. A stopped stream disables the setting and resumes OEM
+audio. No NVR or host renews the lease: the camera owns it. This deliberately
+also disables the pause if a previously active NVR stops consuming video.
+
+An interrupted first-minute trial disables the setting at the next daemon
+startup. Clean shutdowns preserve it. Inspect `recovery_reason` before an
+explicit retry. See [Audio pause](AUDIO-PAUSE.md) for recovery details.
 
 ## ONVIF for NVRs
 

@@ -97,6 +97,13 @@
           <div id="streams" class="kv stack"></div>
         </div>
         <div class="card">
+          <h2>Audio processing</h2>
+          <p class="muted">Pausing OEM microphone processing reduces CPU use. OEM audio capture stops; video continues. The setting is saved on the camera.</p>
+          <label class="check"><input id="audio-pause-enabled" type="checkbox"> Pause OEM audio processing</label>
+          <button id="audio-pause-save">Save audio setting</button>
+          <output id="audio-pause-status" role="status" aria-live="polite"></output>
+        </div>
+        <div class="card">
           <h2>Administrator password</h2>
           <div class="kv">
             <div class="row"><span>Shared with</span><b>Web &middot; ONVIF &middot; RTSP &middot; SSH</b></div>

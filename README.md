@@ -155,6 +155,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | **Audio** | |
 | Listen (camera microphone) | ✗ (retired with the in-browser media client) |
 | Two-way talk | ✗ (retired with the in-browser media client) |
+| Pause OEM microphone processing to save CPU | ✓ persistent, optional System setting with automatic recovery |
 | Speaker volume | ✗ |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |

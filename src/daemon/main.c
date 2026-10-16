@@ -15,6 +15,7 @@ int main(int argc,char**argv)
     memset(&c,0,sizeof(c));
     copy_env(c.state_dir,sizeof(c.state_dir),"JOAN_STATE_DIR","/var/lib/joan");
     copy_env(c.staging_dir,sizeof(c.staging_dir),"JOAN_STAGING_DIR","/tmp/joan-staging");
+    copy_env(c.run_dir,sizeof(c.run_dir),"JOAN_RUN_DIR",c.staging_dir);
     copy_env(c.release_sequence_path,sizeof(c.release_sequence_path),"JOAN_RELEASE_SEQUENCE_PATH","/opt/custom/jooan-local/state/release-sequence");
     copy_env(c.web_dir,sizeof(c.web_dir),"JOAN_WEB_DIR","/usr/share/joan/web");
     copy_env(c.bind_addr,sizeof(c.bind_addr),"JOAN_BIND","0.0.0.0");
@@ -45,8 +46,10 @@ int main(int argc,char**argv)
     if(joan_mqtt_bridge_start(&c)){fprintf(stderr,"cannot start loopback MQTT compatibility sink\n");return 1;}
     if(joan_mdns_start(&c)){fprintf(stderr,"cannot start mDNS responder\n");return 1;}
     if(joan_rtsp_proxy_start(&c)){fprintf(stderr,"cannot start authenticated RTSP proxy\n");joan_mdns_stop();joan_mqtt_bridge_stop();return 1;}
+    if(joan_audio_pause_start(&c))fprintf(stderr,"audio pause supervision unavailable; OEM audio remains running\n");
     fprintf(stderr,"joan-daemon %s listening on %s:%u (HTTP)\n",JOAN_VERSION,c.bind_addr,c.port);
     rc=joan_server_run(&c);
+    joan_audio_pause_stop();
     joan_rtsp_proxy_stop();
     joan_mdns_stop();
     joan_mqtt_bridge_stop();

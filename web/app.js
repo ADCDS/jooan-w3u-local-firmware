@@ -209,9 +209,10 @@ async function loadStatus() {
 
 async function load() {
   if (!await loadStatus()) return;
-  const [streamList, mdns] = await Promise.all([
-    api('/api/v1/streams'), api('/api/v1/network/mdns'),
+  const [streamList, mdns, audioPause] = await Promise.all([
+    api('/api/v1/streams'), api('/api/v1/network/mdns'), api('/api/v1/system/audio-pause'),
   ]);
+  renderAudioPause(audioPause);
   $('#rail-host').textContent = mdns.address || '';
   /* What an NVR needs: both sensors over RTSP, and ONVIF on this very port for
      pan/tilt and presets (sensor A). */
@@ -339,6 +340,24 @@ $('#password-form').addEventListener('submit', e => {
 });
 
 $('#change-password').onclick = () => show('#setup');
+
+function renderAudioPause(s) {
+  $('#audio-pause-enabled').checked = !!s.enabled;
+  const states = { running: 'OEM audio is running.', paused: 'OEM audio is paused.',
+    starting: 'Waiting for the audio callback to pause.',
+    waiting_for_video: 'Saved. Waiting for video traffic before pausing audio.',
+    recovered: 'Audio resumed automatically. The pause setting has been disabled.' };
+  $('#audio-pause-status').textContent = states[s.state] || 'Audio state unavailable.';
+}
+$('#audio-pause-save').onclick = () => busy($('#audio-pause-save'), async () => {
+  try {
+    renderAudioPause(await api('/api/v1/system/audio-pause', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: $('#audio-pause-enabled').checked }),
+    }));
+    notice('Audio setting saved. Refresh to check its current state.');
+  } catch (x) { notice(x.message, 'crit'); }
+});
 
 /* ---------- camera time ---------- */
 /* The camera has no RTC and no NTP route, so its clock defaults years off,

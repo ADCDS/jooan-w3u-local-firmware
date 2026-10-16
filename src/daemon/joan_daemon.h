@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.19"
+#define JOAN_VERSION "0.2.20"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -15,6 +15,7 @@
 typedef struct {
     char state_dir[256];
     char staging_dir[256];
+    char run_dir[256];
     char release_sequence_path[256];
     char web_dir[256];
     char bind_addr[64];
@@ -106,6 +107,12 @@ const char *joan_mdns_status(void);
 int joan_tls_ensure_identity(const JoanConfig *cfg);
 int joan_rtsp_proxy_start(const JoanConfig *cfg);
 void joan_rtsp_proxy_stop(void);
+/* -1: no video observed; 0: video stopped; 1: both observed streams progress. */
+int joan_rtsp_proxy_audio_health(void);
+int joan_audio_pause_start(const JoanConfig *cfg);
+void joan_audio_pause_stop(void);
+int joan_audio_pause_set(int enabled);
+void joan_audio_pause_status(char *out, size_t cap);
 
 /* The PTZ order ONVIF goes through; http.c owns it. */
 int joan_ptz_preset_request(unsigned command, const char *payload, char operation[65]);

@@ -326,7 +326,13 @@ def main(binary):
         started = time.monotonic()
         status, xml = goto(2)
         assert status == 200 and time.monotonic() - started < 0.4, 'a recall does not wait for the travel'
-        assert cam.commands[-1] == {'cmd': 66491, 'cmd_type': 'request', 'coordinateID': 2, 'mot_index': 0}, xml
+        # The HTTP response intentionally precedes asynchronous MQTT delivery.
+        # Wait for the fake OEM to observe it rather than racing its reader.
+        expected = {'cmd': 66491, 'cmd_type': 'request', 'coordinateID': 2, 'mot_index': 0}
+        deadline = time.monotonic() + 0.5
+        while cam.commands[-1] != expected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert cam.commands[-1] == expected, xml
         assert goto(0)[0] == 200, 'a recall during travel is held'
         status, xml = client.ptz('ContinuousMove', '<ns0:ProfileToken>ch0</ns0:ProfileToken><ns0:Velocity><ns0:PanTilt x="0.5" y="0"/></ns0:Velocity>')
         assert status == 200, xml

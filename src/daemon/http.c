@@ -52,6 +52,21 @@ static int error_json(Conn*c,int status,const char*code,const char*message){char
 static void json_escape(const unsigned char*in,size_t n,char*out,size_t cap){size_t i,o=0;for(i=0;i<n&&o+7<cap;i++){unsigned char x=in[i];if(x=='"'||x=='\\'){out[o++]='\\';out[o++]=x;}else if(x>=32&&x<127)out[o++]=x;else{o+=snprintf(out+o,cap-o,"\\u%04x",x);} }out[o]=0;}
 
 static int json_field(const unsigned char*body,size_t len,const char*key,char*out,size_t cap){char needle[96];const char*p,*e;size_t n;if(!body||snprintf(needle,sizeof(needle),"\"%s\"",key)>=(int)sizeof(needle))return-1;p=strstr((const char*)body,needle);if(!p||(size_t)(p-(const char*)body)>=len)return-1;p+=strlen(needle);while(*p==' '||*p=='\t')p++;if(*p++!=':')return-1;while(*p==' '||*p=='\t')p++;if(*p++!='"')return-1;e=p;while(*e&&*e!='"'&&(size_t)(e-(const char*)body)<len){if(*e=='\\')return-1;e++;}n=(size_t)(e-p);if(*e!='"'||n+1>cap)return-1;memcpy(out,p,n);out[n]=0;return 0;}
+/* This setting accepts one JSON boolean, rejecting duplicates/unknown keys. */
+static int audio_pause_boolean(const unsigned char *raw,size_t len,int *value)
+{
+    const char *p=(const char*)raw;
+    if(!p||memchr(raw,0,len))return -1;
+#define WS() while(*p&&isspace((unsigned char)*p))p++
+    WS();if(*p++!='{')return -1;WS();
+    if(strncmp(p,"\"enabled\"",9))return -1;
+    p+=9;WS();if(*p++!=':')return -1;WS();
+    if(!strncmp(p,"true",4)){*value=1;p+=4;}
+    else if(!strncmp(p,"false",5)){*value=0;p+=5;}else return -1;
+    WS();if(*p++!='}')return -1;WS();
+#undef WS
+    return *p||(size_t)(p-(const char*)raw)!=len?-1:0;
+}
 static int header_copy(const char*headers,const char*name,char*out,size_t cap){size_t nl=strlen(name);const char*p=headers;while(p&&*p){const char*e=strstr(p,"\r\n");size_t line=e?(size_t)(e-p):strlen(p);if(line>nl&&p[nl]==':'&&!strncasecmp(p,name,nl)){const char*v=p+nl+1;size_t n;while(v<p+line&&(*v==' '||*v=='\t'))v++;n=(size_t)((p+line)-v);if(n>=cap)n=cap-1;memcpy(out,v,n);out[n]=0;return 0;}if(!e)break;p=e+2;}return-1;}
 
 /* Browsers send every cookie for the parent domain too, so the Cookie header
@@ -188,6 +203,14 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/health"))return json(c,200,"{\"ok\":true}");
     if(!strcmp(r->path,"/api/login")&&!strcmp(r->method,"POST")){int rc;if(json_field(r->body,r->content_length,"username",x,sizeof(x))||json_field(r->body,r->content_length,"password",y,sizeof(y)))return error_json(c,400,"invalid_json","username and password are required");rc=joan_auth_login(&G,r->remote,x,y,&a);memset(y,0,sizeof(y));if(rc==-2)return error_json(c,429,"rate_limited","try later");if(rc)return error_json(c,401,"invalid_credentials","invalid credentials");snprintf(body,sizeof(body),"{\"ok\":true,\"csrf\":\"%s\",\"default_password_warning\":%s}",a.csrf,a.must_change?"true":"false");snprintf(x,sizeof(x),"Set-Cookie: joan_session=%s; Path=/; HttpOnly; SameSite=Strict\r\n",a.token);return response(c,200,"application/json",body,strlen(body),x);}
     if(authorized(c,r,&a,strcmp(r->method,"GET")&&strcmp(r->method,"HEAD")))return 0;
+    if(!strcmp(r->path,"/api/v1/system/audio-pause")){
+        if(!strcmp(r->method,"PUT")){
+            int enabled;
+            if(audio_pause_boolean(r->body,r->content_length,&enabled))return error_json(c,400,"invalid_audio_pause","enabled must be a JSON boolean");
+            if(joan_audio_pause_set(enabled))return error_json(c,500,"audio_pause_unavailable","could not save audio pause setting");
+        }else if(strcmp(r->method,"GET"))return error_json(c,400,"invalid_method","use GET or PUT");
+        joan_audio_pause_status(body,sizeof(body));return json(c,200,body);
+    }
     if(!strcmp(r->path,"/api/status")){unsigned char*routes=NULL;size_t routes_len=0;const char*routes_json="{\"cidrs\":[]}";if(!joan_run_helper(&G,"routes-list",NULL,NULL,&routes,&routes_len,2)&&routes_len&&routes_len<512&&routes[0]=='{')routes_json=(char*)routes;snprintf(body,sizeof(body),"{\"version\":\"%s\",\"state\":\"ready\",\"local_only\":true,\"active_routes\":%s,\"default_password_warning\":%s,\"ssh_password_sync\":%s,\"rtsp_password_sync\":%s,\"features\":{\"rtsp\":true,\"ptz\":\"onvif\",\"ssh\":\"password-synchronized\",\"mdns\":\"%s\"},\"mqtt_bridge\":\"%s\",\"https_cloud_bridge\":{\"supported\":false,\"blocker\":\"OEM trust/pinning contract not recovered\"}}",JOAN_VERSION,routes_json,a.must_change?"true":"false",joan_auth_ssh_synchronized(&G)?"true":"false",joan_auth_rtsp_synchronized(&G)?"true":"false",joan_mdns_status(),joan_mqtt_bridge_status());free(routes);return json(c,200,body);}
     if(!strcmp(r->path,"/api/time")&&!strcmp(r->method,"PUT")){char epoch[24];char*ep=NULL;long long v;if(json_field(r->body,r->content_length,"epoch",epoch,sizeof(epoch)))return error_json(c,400,"invalid_json","epoch required");v=strtoll(epoch,&ep,10);if(!ep||*ep||v<1577836800LL||v>4102444800LL)return error_json(c,400,"invalid_time","out of range");if(joan_run_helper(&G,"time-set",NULL,epoch,NULL,NULL,10))return error_json(c,502,"time_set_failed","clock set failed");snprintf(body,sizeof(body),"{\"ok\":true,\"epoch\":%lld}",(long long)time(NULL));return json(c,200,body);}
     if(!strcmp(r->path,"/api/timezone")&&!strcmp(r->method,"PUT")){char gmt[16],s;int hh,mm,n=0;if(json_field(r->body,r->content_length,"gmt_tz",gmt,sizeof(gmt)))return error_json(c,400,"invalid_json","gmt_tz required");if(sscanf(gmt,"GMT%c%2d:%2d%n",&s,&hh,&mm,&n)!=3||n!=9||gmt[9]||(s!='+'&&s!='-')||hh>14||mm>59)return error_json(c,400,"invalid_timezone","bad gmt_tz");if(joan_run_helper(&G,"timezone-set",NULL,gmt,NULL,NULL,10))return error_json(c,502,"timezone_set_failed","set failed");snprintf(body,sizeof(body),"{\"ok\":true,\"gmt_tz\":\"%s\"}",gmt);return json(c,200,body);}
