@@ -1,16 +1,25 @@
 # Optional OEM audio-processing pause
 
-Firmware 0.2.20 adds an opt-in, persistent System setting and the authenticated
+Firmware 0.2.21 adds an opt-in, persistent System setting and the authenticated
 `GET`/`PUT /api/v1/system/audio-pause` endpoint. Default: disabled. The setting
 is `config/audio-pause` under `/opt/custom/jooan-local`; normal shutdown and
 firmware replacement preserve it.
 
-The existing exact-executable-hash guard interposes the verified OEM
-`usleep(10000)` call whose return address is `0x00494e2c`. This is the audio
-callback's loop boundary before PollingFrame/GetFrame. It waits cooperatively
-without retaining a driver frame or a publication lock. Other threads, callers,
-executables and forked children retain normal sleep behavior. This replaces the
-experimental ptrace stop; no thread IDs or instruction patches are persisted.
+The existing exact-executable-hash guard interposes two verified boundaries:
+its outer `usleep(10000)` (return `0x00494e2c`) and its audio queue's
+`pthread_cond_timedwait` (return `0x006f4b40`, restricted to thread
+`AE_AudioFrameCB`). The latter is essential: the OEM poller can retry an expired
+absolute deadline indefinitely and never return to the outer sleep. That busy
+poll, rather than AAC encoding, caused the observed CPU load on this unit.
+
+Before pausing at the condition wait, the guard disables cancellation and
+releases the queue mutex. It uses relative sleeps while leased, reacquires the
+mutex and restores cancellation before returning to the real condition wait.
+Each queue-wait pause is bounded to one second, preserving cancellation during
+OEM shutdown/reconfiguration even while a healthy lease is being renewed.
+No driver frame or publication lock is held while paused. Other callers,
+threads, executables and forked children retain normal behavior. No ptrace,
+thread IDs or instruction patches are persisted.
 
 Pausing stops the OEM microphone callback and its raw/AAC publications. It does
 not implement microphone listening, change the encoders, or unmute the speaker.
