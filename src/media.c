@@ -66,8 +66,8 @@ int jipc_streams_init(jipc_app *app)
             }
             return -1;
         }
-        app->streams[i].width = i % 2 ? app->config.sub_width : app->config.width;
-        app->streams[i].height = i % 2 ? app->config.sub_height : app->config.height;
+        app->streams[i].width = jipc_video_width(&app->config, i);
+        app->streams[i].height = jipc_video_height(&app->config, i);
         app->streams[i].fps = app->config.fps;
     }
     return 0;
@@ -281,7 +281,9 @@ static void backend_failed(media_state *state, const char *error)
 {
     jipc_app *app = state->app;
     app->backend_ready = 0;
+    pthread_mutex_lock(&app->config_mutex);
     snprintf(app->backend_error, sizeof app->backend_error, "%s", error);
+    pthread_mutex_unlock(&app->config_mutex);
     jipc_log("error", "media: %s", error);
 }
 
@@ -296,8 +298,16 @@ static void *media_main(void *opaque)
     while (!app->stop && !atomic_load(&state->quit)) {
         char error[256] = {0};
         if (state->imp) {
+            if (jipc_imp_wait(state->imp, 10) < 0) {
+                backend_failed(state, "encoder descriptor wait failed"); break;
+            }
+            /* Controls already waiting take precedence over another drain.
+             * At most one available frame per channel is drained per pass. */
+            uint64_t priority_until = jipc_now_us() + 5000;
+            while (atomic_load(&app->control_waiters) && !app->stop && !state->quit && jipc_now_us() < priority_until)
+                jipc_sleep_ms(1);
             pthread_mutex_lock(&app->control_mutex);
-            int rc = jipc_imp_poll(app, state->imp, 10, error, sizeof error);
+            int rc = jipc_imp_poll(app, state->imp, 0, error, sizeof error);
             if (rc < 0) backend_failed(state, error);
             pthread_mutex_unlock(&app->control_mutex);
             if (rc < 0) break;
@@ -426,11 +436,21 @@ void jipc_backend_stop(jipc_app *app)
     }
 }
 
+static void control_lock(jipc_app *app)
+{
+    atomic_fetch_add(&app->control_waiters, 1);
+    pthread_mutex_lock(&app->control_mutex);
+    atomic_fetch_sub(&app->control_waiters, 1);
+}
+
 int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity)
 {
     if (!operation) return fail(error, capacity, "missing control operation");
-    pthread_mutex_lock(&app->control_mutex);
+    /* Motors and their deadlines never wait on the encoder/JPEG SDK gate. */
+    if (!strcmp(operation, "ptz") || !strcmp(operation, "ptz_stop") || !strncmp(operation, "preset_", 7))
+        return jipc_platform_control(app, operation, value, value2, error, capacity);
+    control_lock(app);
     media_state *state = app->backend_state;
     int rc;
     if (!state || !app->backend_ready) rc = fail(error, capacity, "media backend is not ready");
@@ -479,7 +499,7 @@ int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
 {
     if (!frame) return fail(error, capacity, "missing snapshot result");
     memset(frame, 0, sizeof *frame);
-    pthread_mutex_lock(&app->control_mutex);
+    control_lock(app);
     media_state *state = app->backend_state;
     int rc = !state || !app->backend_ready ? fail(error, capacity, "media backend is not ready") :
              state->imp ? jipc_imp_snapshot(state->imp, channel, frame, error, capacity) :
@@ -491,7 +511,7 @@ int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
 int jipc_backend_talk(jipc_app *app, const void *data, size_t bytes,
                       char *error, size_t capacity)
 {
-    pthread_mutex_lock(&app->control_mutex);
+    control_lock(app);
     media_state *state = app->backend_state;
     int rc = 0;
     if (!state || !app->backend_ready) rc = fail(error, capacity, "media backend is not ready");

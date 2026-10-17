@@ -2,11 +2,11 @@
 
 Native dual-sensor capture and native encoding now work on the physical target
 with the [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi).
-Four H.264 channels decoded with FFmpeg: both main views at 640×360 and both
+Four H.264 channels decoded with FFmpeg: both main views at 1280×720 and both
 substreams at 320×240, configured at 15 fps with audio disabled. Physical pan,
 tilt, deadman stop and repeated two-axis preset return passed. Frigate on NVR host
 records the two main views and recognizes ONVIF pan/tilt and saved presets.
-See the [native qualification receipt](camera-native-test-20261017.json).
+See the [quality/control qualification receipt](camera-quality-test-20261017.json).
 
 The historical [IVDC receipt](camera-ivdc-test-20261017.json) records an initial
 secondary AE fault. Replaying the OEM input-enumeration handshake initializes

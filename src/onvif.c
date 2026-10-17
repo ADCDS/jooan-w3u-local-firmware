@@ -240,25 +240,26 @@ static int host_name(const char *host,char *out,size_t cap) {
 }
 static void date_xml(writer *w,const struct tm *t){put(w,"<tt:Time><tt:Hour>%d</tt:Hour><tt:Minute>%d</tt:Minute><tt:Second>%d</tt:Second></tt:Time><tt:Date><tt:Year>%d</tt:Year><tt:Month>%d</tt:Month><tt:Day>%d</tt:Day></tt:Date>",t->tm_hour,t->tm_min,t->tm_sec,t->tm_year+1900,t->tm_mon+1,t->tm_mday);}
 static void video_config(jipc_app *app,writer *w,const jipc_config *c,unsigned ch){
-    unsigned width=ch%2?c->sub_width:c->width,height=ch%2?c->sub_height:c->height;
+    unsigned width=jipc_video_width(c,ch),height=jipc_video_height(c,ch);
     unsigned char sps[512],pps[512];size_t sn=sizeof(sps),pn=sizeof(pps);const char *h264=NULL;
     if(jipc_codec_parameters(app,ch,sps,&sn,pps,&pn)==0&&sn>=2){
         if(sps[1]==66)h264="Baseline";else if(sps[1]==77)h264="Main";else if(sps[1]==88)h264="Extended";else if(sps[1]==100)h264="High";
     }
-    put(w,"<tt:VideoEncoderConfiguration token=\"enc%u\"><tt:Name>H264 %s</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>%u</tt:Width><tt:Height>%u</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality><tt:RateControl><tt:FrameRateLimit>%u</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>%u</tt:BitrateLimit></tt:RateControl>",ch,profile_token(ch),width,height,c->fps,c->bitrate);
-    /* The hardware encoder is configured with a two-second GOP. Replay files
+    put(w,"<tt:VideoEncoderConfiguration token=\"enc%u\"><tt:Name>H264 %s</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>%u</tt:Width><tt:Height>%u</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality><tt:RateControl><tt:FrameRateLimit>%u</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>%u</tt:BitrateLimit></tt:RateControl>",ch,profile_token(ch),width,height,c->fps,jipc_video_bitrate(c,ch));
+    /* The hardware encoder is configured with the configured GOP. Replay files
      * have no configured GOP; their authoritative codec parameters are in SDP. */
-    if(h264&&!strcmp(c->backend,"imp"))put(w,"<tt:H264><tt:GovLength>%u</tt:GovLength><tt:H264Profile>%s</tt:H264Profile></tt:H264>",c->fps*2,h264);
+    if(h264&&!strcmp(c->backend,"imp"))put(w,"<tt:H264><tt:GovLength>%u</tt:GovLength><tt:H264Profile>%s</tt:H264Profile></tt:H264>",c->gop_frames?c->gop_frames:c->fps*2,h264);
     put(w,"<tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:VideoEncoderConfiguration>");
 }
 static void ptz_config(writer *w,const jipc_config *c,const char *tag){
-    put(w,"<%s token=\"ptz0\"><tt:Name>Camera motor</tt:Name><tt:UseCount>%u</tt:UseCount><tt:NodeToken>ptz0</tt:NodeToken><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultPTZTimeout>PT1.2S</tt:DefaultPTZTimeout></%s>",tag,c->sensors*2,tag);
+    put(w,"<%s token=\"ptz0\"><tt:Name>Camera motor</tt:Name><tt:UseCount>%u</tt:UseCount><tt:NodeToken>ptz0</tt:NodeToken><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultPTZTimeout>%s</tt:DefaultPTZTimeout></%s>",tag,2u,c->onvif_nudge?"PT0.35S":"PT1.2S",tag);
 }
 static void profile(jipc_app *app,writer *w,const jipc_config *c,unsigned ch,const char *tag){
-    put(w,"<trt:%s token=\"%s\" fixed=\"true\"><tt:Name>Sensor %u %s</tt:Name><tt:VideoSourceConfiguration token=\"source%u\"><tt:Name>Sensor %u</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>sensor%u</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"%u\" height=\"%u\"/></tt:VideoSourceConfiguration>",tag,profile_token(ch),ch/2,ch%2?"sub":"main",ch/2,ch/2,ch/2,c->width,c->height);
+    put(w,"<trt:%s token=\"%s\" fixed=\"true\"><tt:Name>Sensor %u %s</tt:Name><tt:VideoSourceConfiguration token=\"source%u\"><tt:Name>Sensor %u</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>sensor%u</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"%u\" height=\"%u\"/></tt:VideoSourceConfiguration>",tag,profile_token(ch),ch/2,ch%2?"sub":"main",ch/2,ch/2,ch/2,jipc_video_width(c,(ch/2)*2),jipc_video_height(c,(ch/2)*2));
     video_config(app,w,c,ch);
     if(c->audio)put(w,"<tt:AudioSourceConfiguration token=\"audio_source\"><tt:Name>Microphone</tt:Name><tt:UseCount>%u</tt:UseCount><tt:SourceToken>microphone</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"audio_encoder\"><tt:Name>G711 A-law</tt:Name><tt:UseCount>%u</tt:UseCount><tt:Encoding>G711</tt:Encoding><tt:Bitrate>64</tt:Bitrate><tt:SampleRate>8</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration>",c->sensors*2,c->sensors*2);
-    ptz_config(w,c,"tt:PTZConfiguration");put(w,"</trt:%s>",tag);
+    if(ch<2)ptz_config(w,c,"tt:PTZConfiguration");
+    put(w,"</trt:%s>",tag);
 }
 static int number(const char *text,double *out){char *end;errno=0;double v=strtod(text,&end);if(errno||end==text||*end||!isfinite(v)||v < -1||v > 1)return -1;*out=v;return 0;}
 static int slot_token(const char *s){if(strncmp(s,"preset",6))return -1;char *end;errno=0;long v=strtol(s+6,&end,10);return errno||*end||v<1||v>16?-1:(int)v;}
@@ -290,10 +291,10 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(named(action,"GetConfiguration")){char token[64];if(text_value(&d,d.action,"PTZConfigurationToken",token,sizeof(token))<0||strcmp(token,"ptz0"))return fault(&w,"InvalidArgVal","Unknown PTZConfigurationToken");}
         if(named(action,"GetCompatibleConfigurations")&&channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
         const char *op=named(action,"GetConfigurations")?"GetConfigurations":named(action,"GetConfiguration")?"GetConfiguration":"GetCompatibleConfigurations";
-        put(&w,"<tptz:%sResponse>",op);ptz_config(&w,&c,"tptz:PTZConfiguration");put(&w,"</tptz:%sResponse>",op);
+        put(&w,"<tptz:%sResponse>",op);if(!named(action,"GetCompatibleConfigurations")||ch<2)ptz_config(&w,&c,"tptz:PTZConfiguration");put(&w,"</tptz:%sResponse>",op);
     }else if(named(action,"GetConfigurationOptions")){
         char token[64];if(text_value(&d,d.action,"ConfigurationToken",token,sizeof(token))<0||strcmp(token,"ptz0"))return fault(&w,"InvalidArgVal","Unknown ConfigurationToken");
-        put(&w,"<tptz:GetConfigurationOptionsResponse><tptz:PTZConfigurationOptions><tt:Spaces><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:Spaces><tt:PTZTimeout><tt:Min>PT1.2S</tt:Min><tt:Max>PT1.2S</tt:Max></tt:PTZTimeout></tptz:PTZConfigurationOptions></tptz:GetConfigurationOptionsResponse>");
+        put(&w,"<tptz:GetConfigurationOptionsResponse><tptz:PTZConfigurationOptions><tt:Spaces><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:Spaces><tt:PTZTimeout><tt:Min>%s</tt:Min><tt:Max>%s</tt:Max></tt:PTZTimeout></tptz:PTZConfigurationOptions></tptz:GetConfigurationOptionsResponse>",c.onvif_nudge?"PT0.35S":"PT1.2S",c.onvif_nudge?"PT0.35S":"PT1.2S");
     }else if(named(action,"GetProfiles")){
         put(&w,"<trt:GetProfilesResponse>");for(unsigned i=0;i<c.sensors*2&&i<4;++i)profile(app,&w,&c,i,"Profiles");put(&w,"</trt:GetProfilesResponse>");
     }else if(named(action,"GetProfile")){
@@ -304,7 +305,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(named(action,"GetStreamUri"))put(&w,"<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://%s:%u/live/ch%u</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse>",hostname,c.rtsp_port,ch);
         else put(&w,"<trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>%s/api/v1/snapshot?channel=%u</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT60S</tt:Timeout></trt:MediaUri></trt:GetSnapshotUriResponse>",base,ch);
     }else if(named(action,"GetVideoSources")){
-        put(&w,"<trt:GetVideoSourcesResponse>");for(unsigned i=0;i<c.sensors&&i<2;++i)put(&w,"<trt:VideoSources token=\"sensor%u\"><tt:Framerate>%u</tt:Framerate><tt:Resolution><tt:Width>%u</tt:Width><tt:Height>%u</tt:Height></tt:Resolution></trt:VideoSources>",i,c.fps,c.width,c.height);put(&w,"</trt:GetVideoSourcesResponse>");
+        put(&w,"<trt:GetVideoSourcesResponse>");for(unsigned i=0;i<c.sensors&&i<2;++i)put(&w,"<trt:VideoSources token=\"sensor%u\"><tt:Framerate>%u</tt:Framerate><tt:Resolution><tt:Width>%u</tt:Width><tt:Height>%u</tt:Height></tt:Resolution></trt:VideoSources>",i,c.fps,jipc_video_width(&c,i*2),jipc_video_height(&c,i*2));put(&w,"</trt:GetVideoSourcesResponse>");
     }else if(named(action,"GetNodes")||named(action,"GetNode")){
         if(named(action,"GetNode")){char token[64];if(text_value(&d,d.action,"NodeToken",token,sizeof(token))<0||strcmp(token,"ptz0"))return fault(&w,"InvalidArgVal","Unknown NodeToken");}
         int many=named(action,"GetNodes");put(&w,"<tptz:%sResponse><tptz:%s token=\"ptz0\" FixedHomePosition=\"false\"><tt:Name>Camera motor</tt:Name><tt:SupportedPTZSpaces><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:SupportedPTZSpaces><tt:MaximumNumberOfPresets>16</tt:MaximumNumberOfPresets><tt:HomeSupported>false</tt:HomeSupported></tptz:%s></tptz:%sResponse>",many?"GetNodes":"GetNode",many?"PTZNode":"PTZNode",many?"PTZNode":"PTZNode",many?"GetNodes":"GetNode");
@@ -314,12 +315,15 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(jipc_platform_status(app,&status,error,sizeof(error))<0)return fault(&w,"Action",error[0]?error:"PTZ status unavailable");
         if(named(action,"GetPresets")){
             put(&w,"<tptz:GetPresetsResponse>");
-            for(unsigned i=0;i<16;++i)if(status.preset_mask&(UINT32_C(1)<<i))put(&w,"<tptz:Preset token=\"preset%u\"><tt:Name>Preset %u</tt:Name></tptz:Preset>",i+1,i+1);
+            for(unsigned i=0;i<16;++i)if(status.preset_mask&(UINT32_C(1)<<i)){
+                put(&w,"<tptz:Preset token=\"preset%u\"><tt:Name>",i+1); escaped(&w,status.preset_names[i]); put(&w,"</tt:Name></tptz:Preset>");
+            }
             put(&w,"</tptz:GetPresetsResponse>");
         }else{
             time_t now=time(NULL);struct tm utc;char stamp[32];
             if(!gmtime_r(&now,&utc)||!strftime(stamp,sizeof(stamp),"%Y-%m-%dT%H:%M:%SZ",&utc)||status.pan < -100||status.pan>100||status.tilt < -100||status.tilt>100)return fault(&w,"Action","PTZ position or clock unavailable");
-            put(&w,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.2f\" y=\"%.2f\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt></tt:MoveStatus><tt:Error/><tt:UtcTime>%s</tt:UtcTime></tptz:PTZStatus></tptz:GetStatusResponse>",status.pan/100.0,status.tilt/100.0,status.moving?"MOVING":"IDLE",stamp);
+            put(&w,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.2f\" y=\"%.2f\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt></tt:MoveStatus><tt:Error>",status.pan/100.0,status.tilt/100.0,status.moving?"MOVING":"IDLE");
+            escaped(&w,status.error);put(&w,"</tt:Error><tt:UtcTime>%s</tt:UtcTime></tptz:PTZStatus></tptz:GetStatusResponse>",stamp);
         }
     }else if(named(action,"ContinuousMove")){
         if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
@@ -327,9 +331,13 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(vel<0||pt<0||child(&d,vel,"Zoom")>=0||attr_value(&d,pt,"x",x,sizeof(x))<0||attr_value(&d,pt,"y",y,sizeof(y))<0||number(x,&px)<0||number(y,&py)<0)return fault(&w,"InvalidArgVal","PanTilt velocity must be finite in [-1,1]; zoom is unsupported");
         char space[192];if(attr_value(&d,pt,"space",space,sizeof(space))==0&&strcmp(space,"http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace"))return fault(&w,"InvalidArgVal","Unsupported PanTilt velocity space");
         char timeout[64];int timeout_node=child(&d,d.action,"Timeout");
-        if(timeout_node>=0&&(text_value(&d,d.action,"Timeout",timeout,sizeof(timeout))<0||strcmp(timeout,"PT1.2S")))return fault(&w,"InvalidArgVal","This motor supports the fixed timeout PT1.2S");
-        /* The platform worker enforces a bounded motion deadline. */
-        int status=control(app,&w,"ptz",(int)(px*100),(int)(py*100));if(status)return status;put(&w,"<tptz:ContinuousMoveResponse/>");
+        if(timeout_node>=0&&(text_value(&d,d.action,"Timeout",timeout,sizeof(timeout))<0||strcmp(timeout,c.onvif_nudge?"PT0.35S":"PT1.2S")))return fault(&w,"InvalidArgVal","Unsupported motor timeout");
+        if(ch>=2)return fault(&w,"ActionNotSupported","This sensor has no motor");
+        /* Optional compatibility with the original local Frigate controller:
+         * one steady 350 ms nudge; reply after stop so queued Stop is harmless. */
+        if(c.onvif_nudge){char error[256];if(jipc_platform_nudge(app,(int)(px*100),(int)(py*100),error,sizeof(error)))return fault(&w,"Action",error);}
+        else {int status=control(app,&w,"ptz",(int)(px*100),(int)(py*100));if(status)return status;}
+        put(&w,"<tptz:ContinuousMoveResponse/>");
     }else if(named(action,"Stop")){
         if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
         int status=control(app,&w,"ptz_stop",0,0);if(status)return status;put(&w,"<tptz:StopResponse/>");
@@ -337,16 +345,14 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
         char tok[64];int slot=-1;
         if(text_value(&d,d.action,"PresetToken",tok,sizeof(tok))==0)slot=slot_token(tok);
-        else if(named(action,"SetPreset")){
-            jipc_ptz_status status;char error[256]={0};
-            if(jipc_platform_status(app,&status,error,sizeof(error))<0)return fault(&w,"Action",error[0]?error:"PTZ status unavailable");
-            for(int i=0;i<16;++i)if(!(status.preset_mask&(UINT32_C(1)<<i))){slot=i+1;break;}
-        }
-        if(slot<1)return fault(&w,"InvalidArgVal","PresetToken must be preset1..preset16, or all preset slots are occupied");
-        int name_node=child(&d,d.action,"PresetName");
-        if(name_node>=0){char name[128],expected[32];snprintf(expected,sizeof(expected),"Preset %d",slot);if(text_value(&d,d.action,"PresetName",name,sizeof(name))<0||strcmp(name,expected))return fault(&w,"ActionNotSupported","Custom preset labels are unsupported; use Preset N");}
+        else if(named(action,"SetPreset"))slot=0;
+        if(slot<0)return fault(&w,"InvalidArgVal","PresetToken must be preset1..preset16");
+        char name[65];const char *label=NULL;
+        if(child(&d,d.action,"PresetName")>=0){if(text_value(&d,d.action,"PresetName",name,sizeof(name))<0)return fault(&w,"InvalidArgVal","Invalid preset name");label=name;}
         if(child(&d,d.action,"Speed")>=0)return fault(&w,"ActionNotSupported","Preset speed selection is unsupported");
-        const char *op=named(action,"SetPreset")?"preset_set":named(action,"GotoPreset")?"preset_goto":"preset_remove";int status=control(app,&w,op,slot,0);if(status)return status;
+        if(ch>=2)return fault(&w,"ActionNotSupported","This sensor has no motor");
+        if(named(action,"SetPreset")){char error[256];if(slot ? jipc_platform_preset_set(app,slot,label,error,sizeof(error)) : jipc_platform_preset_create(app,&slot,label,error,sizeof(error)))return fault(&w,"Action",error);}
+        else {const char *op=named(action,"GotoPreset")?"preset_goto":"preset_remove";int status=control(app,&w,op,slot,0);if(status)return status;}
         if(named(action,"SetPreset"))put(&w,"<tptz:SetPresetResponse><tptz:PresetToken>preset%d</tptz:PresetToken></tptz:SetPresetResponse>",slot);
         else put(&w,"<tptz:%sResponse/>",named(action,"GotoPreset")?"GotoPreset":"RemovePreset");
     }else return fault(&w,"ActionNotSupported","Action is not implemented by this local camera service");

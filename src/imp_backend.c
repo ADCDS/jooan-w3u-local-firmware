@@ -28,7 +28,7 @@ typedef struct {
     int lock_fd, isp, system, tuning, enabled, added[2];
     int fs_created[4], enc_created[4], registered[4], bound[4], fs_enabled[4], receiving[4];
     int groups[4], fds[4], ai_enabled, ai_channel, ao_enabled, ao_channel;
-    unsigned sensors, sensor_count, width, height, sub_width, sub_height, fps, bitrate;
+    unsigned sensors, sensor_count, width[2], height[2], sub_width, sub_height, fps, bitrate[4], gop;
     int audio;
     int openimp_fullframe, workspace_created, workspace_enabled;
     unsigned char *frame;
@@ -295,6 +295,10 @@ static int validate_provider(const char *version, const jipc_config *config,
             return failure(error, capacity, "OpenIMP bring-up requires audio disabled");
         if (config->fps != 15)
             return failure(error, capacity, "OpenIMP OEM sensor activation is qualified at 15 fps");
+        if (config->width > 1280 || config->height > 720 ||
+            (config->sensors == 2 && (jipc_video_width(config,0) != jipc_video_width(config,2) ||
+             jipc_video_height(config,0) != jipc_video_height(config,2))))
+            return failure(error, capacity, "OpenIMP dual-sensor capture requires matching main geometry up to 1280x720; asymmetric DMA layouts are not qualified");
         return 0;
     }
     if (!strstr(version, "1.3.0") && !strstr(version, "1.0.1"))
@@ -315,19 +319,21 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         return failure(error, capacity, "a prior IMP teardown failed; verify driver detachment or reset the camera before hardware initialization");
     if (config.sensors < 1 || config.sensors > 2 || !config.libimp[0])
         return failure(error, capacity, "IMP requires one or two sensors and an explicit libimp path");
-    if (config.width > 2304 || config.height > 1296 || config.sub_width > config.width ||
+    if (config.width > 2304 || config.height > 1296 || config.width1 > 2304 || config.height1 > 1296 || config.sub_width > config.width ||
         config.sub_height > config.height || config.fps > 30)
         return failure(error, capacity, "video geometry/fps exceeds the recovered CV2005 profile");
-    if (config.width % 16 || config.sub_width % 16 || config.height % 8 || config.sub_height % 8)
+    if (config.width % 16 || config.sub_width % 16 || config.height % 8 || config.sub_height % 8 || config.width1 % 16 || config.height1 % 8)
         return failure(error, capacity, "IMP crop/scaler profile requires widths divisible by 16 and heights divisible by 8");
     if (validate_elf(config.libimp, error, capacity) || exclusive_owner(error, capacity)) return -1;
     imp_state *s = calloc(1, sizeof *s);
     if (!s) return failure(error, capacity, "cannot allocate IMP backend");
     s->lock_fd = -1;
     s->sensors = config.sensors;
-    s->width = config.width; s->height = config.height;
+    for (unsigned i = 0; i < 2; ++i) { s->width[i] = jipc_video_width(&config, i*2); s->height[i] = jipc_video_height(&config, i*2); }
     s->sub_width = config.sub_width; s->sub_height = config.sub_height;
-    s->fps = config.fps; s->bitrate = config.bitrate; s->audio = config.audio;
+    s->fps = config.fps; s->audio = config.audio;
+    s->gop = config.gop_frames ? config.gop_frames : config.fps * 2;
+    for (unsigned i = 0; i < 4; ++i) s->bitrate[i] = jipc_video_bitrate(&config, i);
     s->frame = malloc(JIPC_MAX_FRAME);
     if (!s->frame) { failure(error, capacity, "cannot allocate encoder copy buffer"); goto failed; }
     char lock_path[640];
@@ -404,8 +410,8 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         STEP(s->fs_set(0, &holder), "IMP_FrameSource_SetWorkspace");
     }
     for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        unsigned width = i % 2 ? s->sub_width : s->width;
-        unsigned height = i % 2 ? s->sub_height : s->height;
+        unsigned width = i % 2 ? s->sub_width : s->width[i/2];
+        unsigned height = i % 2 ? s->sub_height : s->height[i/2];
         jipc_imp_fs fs = {
             .width = width, .height = height, .pixel_format = 10,
             .crop_enable = !s->openimp_fullframe, .crop_width = width, .crop_height = height,
@@ -420,12 +426,12 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         jipc_imp_encoder_attr encoder = {{0}};
         uint32_t *w = encoder.words;
         w[0] = 1; /* Recovered payload enum: H.264. */
-        w[3] = i % 2 ? s->sub_width : s->width;
-        w[4] = i % 2 ? s->sub_height : s->height;
-        w[12] = s->fps; w[13] = 1; w[14] = s->fps * 2;
+        w[3] = i % 2 ? s->sub_width : s->width[i/2];
+        w[4] = i % 2 ? s->sub_height : s->height[i/2];
+        w[12] = s->fps; w[13] = 1; w[14] = s->gop;
         /* OEM rate-control mode 1 branch, offsets +0x3c..+0x54. */
         w[15] = 1; w[16] = 45; w[17] = 15;
-        w[18] = i % 2 && s->bitrate > 256 ? s->bitrate / 2 : s->bitrate;
+        w[18] = s->bitrate[i];
         w[20] = 3; w[21] = 15;
         w[40] = !s->openimp_fullframe && !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
         STEP(s->enc_create(enc_channels[i], &encoder), "IMP_Encoder_CreateChn"); s->enc_created[i] = 1;
@@ -440,6 +446,10 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         if (!s->openimp_fullframe && !(i % 2) && s->sensors == 2)
             STEP(s->fs_direct(source_channel(s, i), 540), "IMP_FrameSource_SetDirectModeAttr");
         STEP(s->fs_enable(source_channel(s, i)), "IMP_FrameSource_EnableChn"); s->fs_enabled[i] = 1;
+    }
+    /* Finish configuring the shared ISP outputs before any GetFd pump can
+     * allocate/run the VPU concurrently with a later channel's STREAMON. */
+    for (unsigned i = 0; i < s->sensors * 2; ++i) {
         unsigned max_bytes = i % 2 ? 0x10000 : 0x40000;
         jipc_imp_super super = {2, max_bytes * 8, max_bytes * 80 / 14, 0, 2};
         STEP(s->super_frame(enc_channels[i], &super), "IMP_Encoder_SetSuperFrameCfg");
@@ -585,6 +595,17 @@ static int audio_output_open(imp_state *s, char *error, size_t capacity)
         s->ao_channel = 1;
     }
     return 0;
+}
+
+/* Descriptor identities are immutable until media shutdown joins its thread.
+ * This OS wait makes no SDK calls and must run outside control_mutex. */
+int jipc_imp_wait(void *state, unsigned timeout_ms)
+{
+    imp_state *s = state;
+    struct pollfd fds[4];
+    for (unsigned i = 0; i < s->sensors * 2; ++i) fds[i] = (struct pollfd){s->fds[i], POLLIN, 0};
+    int rc = poll(fds, s->sensors * 2, (int)timeout_ms);
+    return rc < 0 && errno != EINTR ? -1 : 0;
 }
 
 int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,

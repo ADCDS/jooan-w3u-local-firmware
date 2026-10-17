@@ -8,11 +8,17 @@ kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 **Native dual-sensor capture works on the physical T23N with our OpenIMP
 OEM80 fork:** four H.264 streams decode, physical pan/tilt and persistent
 presets work, and Frigate records both views. The tested main streams are
-640×360 at 15 fps, with 320×240 substreams and audio disabled. See the
-[hardware receipt](docs/camera-native-test-20261017.json) for exact artifacts
-and qualification limits. Automatic startup and the native watchdog passed
-a controlled reboot test; OEM bootstrap remains for network setup and motor
-homing. This is a local-services replacement, with the
+1280×720 at 15 fps, with 320×240 substreams and audio disabled.
+The mains use 2048/1536 kbps and a one-second GOP. The original 2304×1296
+primary resolution is not restored: the current full-frame encoder exceeds
+reserved memory at that size, and asymmetric 1080p/360p capture produced visual
+corruption despite decodable H.264. The native profile therefore enforces
+matching main dimensions through 1280×720. See the
+[hardware receipt](docs/camera-quality-test-20261017.json) for exact artifacts
+and qualification limits. The updated profile passed live watchdog and control
+checks; its reboot verification is currently pending network recovery. The
+previous 640×360 deployment passed a controlled reboot. OEM bootstrap remains
+for network setup and motor homing. This is a local-services replacement, with the
 feature boundaries below; full OEM feature parity is not claimed.
 
 ## Implemented services
@@ -25,7 +31,7 @@ feature boundaries below; full OEM feature parity is not claimed.
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery |
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
-| PTZ | Native motor-driver commands, 1.2-second manual lease, 16 persisted position presets; replay control simulation |
+| PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
 | Audio | Native microphone PCM to 8 kHz PCMA, PCMA speaker input; replay produces labeled simulated silence |
 | Snapshots | Native JPEG encoder path at the relevant sensor's substream resolution |
@@ -36,8 +42,11 @@ zoom, vendor provisioning/cloud, proprietary command compatibility, ONVIF
 encoder-setting writes and firmware flashing are not implemented. Replay has
 no sensor/JPEG encoder or speaker; unavailable operations return errors. ONVIF
 is a documented subset, not a certification claim. RTSP is IPv4 and live-only;
-multicast, SRTP, tunneling and seeking are not supported. PTZ preset positions
-persist; custom preset labels and arbitrary movement timeouts do not.
+multicast, SRTP, tunneling and seeking are not supported. HTTPS connections
+are reused and idle connections park outside the request workers. Motor
+commands and readiness checks do not wait on encoder polling. JPEG snapshots
+still serialize their SDK transaction, so taking one can briefly pause video. PTZ preset positions
+and custom labels persist; arbitrary movement timeouts are unsupported.
 
 ## Build on the workstation
 

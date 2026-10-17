@@ -59,6 +59,7 @@ _Static_assert(offsetof(jipc_imp_audio_frame, timestamp) == 16, "audio timestamp
 _Static_assert(offsetof(jipc_imp_audio_frame, bytes) == 28, "audio frame length");
 
 int jipc_imp_open(jipc_app *app, void **state, char *error, size_t capacity);
+int jipc_imp_wait(void *state, unsigned timeout_ms);
 int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
                   char *error, size_t capacity);
 void jipc_imp_close(void *state);

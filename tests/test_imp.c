@@ -321,6 +321,10 @@ static void test_provider(void)
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     config.audio = 0; config.sensors = 2;
     CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    config.width=1280;config.height=720;config.width1=640;config.height1=360;
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    config.width1=1280;config.height1=720;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
     config.fps = 10;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     unsetenv("OPENIMP_T23_DRIVER_ABI");

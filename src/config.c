@@ -19,6 +19,15 @@ static int printable(const char *text, int quoted)
             (quoted && (*text == '"' || *text == '\\'))) return 0;
     return 1;
 }
+unsigned jipc_video_width(const jipc_config *c, unsigned ch)
+{ return ch % 2 ? c->sub_width : ch == 2 && c->width1 ? c->width1 : c->width; }
+unsigned jipc_video_height(const jipc_config *c, unsigned ch)
+{ return ch % 2 ? c->sub_height : ch == 2 && c->height1 ? c->height1 : c->height; }
+unsigned jipc_video_bitrate(const jipc_config *c, unsigned ch)
+{
+    unsigned primary = ch >= 2 && c->bitrate1 ? c->bitrate1 : c->bitrate;
+    return ch % 2 ? (c->sub_bitrate ? c->sub_bitrate : primary > 256 ? primary / 2 : primary) : primary;
+}
 void jipc_config_defaults(jipc_config *c)
 {
     memset(c, 0, sizeof(*c)); strcpy(c->bind, "127.0.0.1"); strcpy(c->username, "admin");
@@ -44,12 +53,15 @@ static const setting settings[] = {
     NUMBER_SETTING("http_port", http_port), NUMBER_SETTING("rtsp_port", rtsp_port),
     NUMBER_SETTING("max_clients", max_clients), NUMBER_SETTING("fps", fps), NUMBER_SETTING("bitrate", bitrate),
     NUMBER_SETTING("width", width), NUMBER_SETTING("height", height), NUMBER_SETTING("sub_width", sub_width),
+    NUMBER_SETTING("width1", width1), NUMBER_SETTING("height1", height1),
+    NUMBER_SETTING("bitrate1", bitrate1), NUMBER_SETTING("sub_bitrate", sub_bitrate),
+    NUMBER_SETTING("gop_frames", gop_frames),
     NUMBER_SETTING("sub_height", sub_height), NUMBER_SETTING("sensors", sensors),
     NUMBER_SETTING("flip0", flip0), NUMBER_SETTING("flip1", flip1),
     NUMBER_SETTING("record_seconds", record_seconds), NUMBER_SETTING("record_max_mb", record_max_mb),
     BOOL_SETTING("audio", audio), BOOL_SETTING("recording", recording), BOOL_SETTING("allow_plain_http", allow_plain_http),
     BOOL_SETTING("discovery", discovery), NUMBER_SETTING("discovery_port", discovery_port),
-    BOOL_SETTING("watchdog", watchdog),
+    BOOL_SETTING("watchdog", watchdog), BOOL_SETTING("onvif_nudge", onvif_nudge),
 };
 static const setting *find_setting(const char *name)
 {
@@ -115,6 +127,17 @@ int jipc_config_validate(const jipc_config *c, char *error, size_t capacity)
     if (c->width < 160 || c->width > 4096 || c->height < 120 || c->height > 2160 || c->width % 2 || c->height % 2 ||
         c->sub_width < 160 || c->sub_width > c->width || c->sub_height < 120 || c->sub_height > c->height || c->sub_width % 2 || c->sub_height % 2)
         return fail(error, capacity, "invalid even video dimensions");
+    if (!!c->width1 != !!c->height1 ||
+        (c->width1 && (c->width1 < c->sub_width || c->width1 > 4096 || c->width1 % 2 ||
+         c->height1 < c->sub_height || c->height1 > 2160 || c->height1 % 2)) ||
+        (c->bitrate1 && (c->bitrate1 < 64 || c->bitrate1 > 8192)) ||
+        (c->sub_bitrate && (c->sub_bitrate < 64 || c->sub_bitrate > 8192)) || c->gop_frames > 300)
+        return fail(error, capacity, "invalid secondary sensor geometry, bitrate or GOP");
+    const char *native = getenv("OPENIMP_T23_ENCODER"), *abi = getenv("OPENIMP_T23_DRIVER_ABI");
+    if (!strcmp(c->backend,"imp") && native && !strcmp(native,"native") && abi && !strcmp(abi,"oem80") &&
+        (c->width > 1280 || c->height > 720 || (c->sensors == 2 &&
+         (jipc_video_width(c,0) != jipc_video_width(c,2) || jipc_video_height(c,0) != jipc_video_height(c,2)))))
+        return fail(error, capacity, "native dual-sensor profile requires matching main dimensions up to 1280x720");
     if (c->record_seconds < 1 || c->record_seconds > 3600 || c->record_max_mb < 1 || c->record_max_mb > 4096)
         return fail(error, capacity, "invalid recording retention or segment duration");
     if (!c->discovery_port || c->discovery_port > 65535) return fail(error, capacity, "invalid discovery port");

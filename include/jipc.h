@@ -37,11 +37,13 @@ typedef struct {
     char tls_cert[512], tls_key[512];
     unsigned http_port, rtsp_port, max_clients, fps, bitrate;
     unsigned width, height, sub_width, sub_height;
+    unsigned width1, height1, bitrate1, sub_bitrate, gop_frames;
     unsigned sensors, record_seconds, record_max_mb;
     unsigned flip0, flip1;
     int audio, recording, allow_plain_http;
     int discovery;
     int watchdog;
+    int onvif_nudge;
     unsigned discovery_port;
 } jipc_config;
 typedef struct jipc_app {
@@ -60,13 +62,14 @@ typedef struct jipc_app {
     pthread_t discovery_thread;
     int discovery_started;
     pthread_mutex_t control_mutex;
-    int backend_ready;
+    atomic_int backend_ready;
+    atomic_int control_waiters;
     char backend_error[256];
     uint64_t produced[JIPC_STREAMS];
     int record_active;
     char record_error[256];
 } jipc_app;
-typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; } jipc_ptz_status;
+typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
 
 uint64_t jipc_now_us(void);
 void jipc_sleep_ms(unsigned milliseconds);
@@ -85,6 +88,9 @@ int jipc_json_string(const char *json, const char *key, char *out, size_t capaci
 int jipc_json_integer(const char *json, const char *key, int *out);
 int jipc_json_escape(const char *text, char *out, size_t capacity);
 
+unsigned jipc_video_width(const jipc_config *c, unsigned channel);
+unsigned jipc_video_height(const jipc_config *c, unsigned channel);
+unsigned jipc_video_bitrate(const jipc_config *c, unsigned channel);
 void jipc_config_defaults(jipc_config *config);
 int jipc_config_load(jipc_config *config, const char *path, char *error, size_t capacity);
 int jipc_config_save(const jipc_config *config);
@@ -115,6 +121,9 @@ int jipc_backend_talk(jipc_app *app, const void *pcma, size_t size,
                       char *error, size_t capacity);
 int jipc_platform_control(jipc_app *app, const char *operation, int value,
                           int value2, char *error, size_t capacity);
+int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacity);
+int jipc_platform_preset_create(jipc_app *app, int *slot, const char *name, char *error, size_t capacity);
+int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *error, size_t capacity);
 void jipc_platform_stop(jipc_app *app);
 int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, size_t capacity);
 int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity);

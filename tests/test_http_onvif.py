@@ -113,6 +113,37 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(json.loads(body), {"ok": True})
 
+    def test_persistent_connection_authentication(self):
+        client = self.connection()
+        auth = "Basic " + base64.b64encode(f"{self.settings.username}:{self.settings.password}".encode()).decode()
+        try:
+            client.request("GET", "/api/v1/status", headers={"Authorization": auth})
+            reply = client.getresponse(); self.assertEqual(reply.status, 200); reply.read()
+            original = client.sock; self.assertIsNotNone(original)
+            client.request("GET", "/api/v1/status")
+            reply = client.getresponse(); self.assertEqual(reply.status, 401); reply.read()
+            self.assertIs(client.sock, original)
+            client.request("GET", "/api/v1/status", headers={"Authorization": auth})
+            reply = client.getresponse(); self.assertEqual(reply.status, 200); reply.read()
+            self.assertIs(client.sock, original)
+        finally:
+            client.close()
+
+    def test_idle_connections_release_workers(self):
+        clients = []
+        try:
+            for _ in range(6):
+                client = self.connection(); clients.append(client)
+                client.request("GET", "/health")
+                reply = client.getresponse(); self.assertEqual(reply.status, 200); reply.read()
+            self.assertEqual(self.request("GET", "/health", auth=False)[0], 200)
+            for client in clients:
+                client.request("GET", "/health")
+                reply = client.getresponse(); self.assertEqual(reply.status, 200); reply.read()
+        finally:
+            for client in clients:
+                client.close()
+
     def test_time_only_is_public(self):
         self.assertEqual(self.soap("GetSystemDateAndTime", auth=False,
                                    namespace=DEVICE)[0], 200)

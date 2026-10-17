@@ -68,6 +68,10 @@ if(JIPC_BUILD_TESTS)
   target_link_options(test-platform-motor PRIVATE -Wl,--wrap=ioctl)
   target_link_libraries(test-platform-motor PRIVATE jipc_core)
   add_test(NAME native-motor COMMAND test-platform-motor)
+  add_executable(test-platform-presets tests/test_platform_presets.c)
+  target_compile_options(test-platform-presets PRIVATE -UNDEBUG)
+  target_link_libraries(test-platform-presets PRIVATE jipc_core)
+  add_test(NAME named-presets COMMAND test-platform-presets)
   add_executable(test-watchdog tests/test_watchdog.c src/watchdog.c)
   target_compile_definitions(test-watchdog PRIVATE JIPC_TEST_WATCHDOG=1)
   target_compile_options(test-watchdog PRIVATE -UNDEBUG)
@@ -91,7 +95,7 @@ install(FILES docs/hardware.md docs/platform.md docs/third-party.md
   docs/verification.json docs/verification-initial-20261017.json
   docs/camera-test-20261017.json docs/camera-openimp-test-20261017.json
   docs/camera-ivdc-test-20261017.json
-  docs/camera-native-test-20261017.json
+  docs/camera-native-test-20261017.json docs/camera-quality-test-20261017.json
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)

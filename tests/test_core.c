@@ -29,6 +29,11 @@ int main(void)
     pthread_mutex_init(&app.config_mutex, NULL); pthread_mutex_init(&app.control_mutex, NULL);
     strcpy(app.config.password, "test-credential"); strcpy(app.config.replay[0], "/tmp/fixture.h264");
     app.config.flip0=3;app.config.flip1=1;
+    app.config.width1=640;app.config.height1=360;app.config.bitrate1=768;
+    app.config.sub_bitrate=256;app.config.gop_frames=15;
+    CHECK(jipc_video_width(&app.config,0)==2304 && jipc_video_width(&app.config,2)==640);
+    CHECK(jipc_video_height(&app.config,2)==360 && jipc_video_bitrate(&app.config,2)==768);
+    CHECK(jipc_video_bitrate(&app.config,1)==256 && jipc_video_bitrate(&app.config,3)==256);
     snprintf(app.config.state_dir, sizeof(app.config.state_dir), "%s/state", temporary);
     snprintf(app.config.record_dir, sizeof(app.config.record_dir), "%s/recordings", temporary);
     snprintf(app.config.config_path, sizeof(app.config.config_path), "%s/settings.ini", temporary);
@@ -37,6 +42,7 @@ int main(void)
     jipc_config loaded; jipc_config_defaults(&loaded); CHECK(!jipc_config_load(&loaded, app.config.config_path, error, sizeof(error)));
     CHECK(!strcmp(loaded.password, app.config.password)); CHECK(loaded.fps == 15);
     CHECK(loaded.flip0==3&&loaded.flip1==1);
+    CHECK(loaded.width1==640&&loaded.height1==360&&loaded.bitrate1==768&&loaded.gop_frames==15);
     CHECK(jipc_config_json(&app, encoded, sizeof(encoded)) < 0);
     char json[8192]; CHECK(jipc_config_json(&app, json, sizeof(json)) > 0); CHECK(!strstr(json, "test-credential"));
     CHECK(jipc_config_patch(&app, "{\"fps\":12,\"bitrate\":512}", error, sizeof(error)) == 0); CHECK(app.restart == 1);

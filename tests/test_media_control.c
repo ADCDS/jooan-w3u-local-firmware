@@ -29,6 +29,12 @@ int main(void)
     jipc_config loaded;jipc_config_defaults(&loaded);
     assert(!jipc_config_load(&loaded,app.config.config_path,error,sizeof(error)));
     assert(loaded.flip0==0&&loaded.flip1==1);
+    /* Motor Stop must not wait behind any encoder or JPEG SDK operation. */
+    strcpy(app.config.backend,"replay");strcpy(app.config.state_dir,temporary);
+    pthread_mutex_lock(&app.control_mutex);
+    assert(!jipc_backend_control(&app,"ptz_stop",0,0,error,sizeof(error)));
+    pthread_mutex_unlock(&app.control_mutex);
+    jipc_platform_stop(&app);
     unlink(app.config.config_path);rmdir(temporary);
     pthread_mutex_destroy(&app.control_mutex);pthread_mutex_destroy(&app.config_mutex);
     puts("Orientation controls persist per-sensor bits and request ordered restart");

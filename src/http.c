@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,15 +31,19 @@
 #define HTTP_WORKERS 4
 #define HTTP_QUEUE 8
 #define HTTP_REPLY_LIMIT 65536
+#define HTTP_IDLE 8
+#define HTTP_IDLE_US UINT64_C(15000000)
+typedef struct connection connection;
 
 typedef struct http_server {
     jipc_app *app;
-    int listener, stopping, secure;
+    int listener, stopping, secure, wake[2];
     pthread_mutex_t mutex;
     pthread_cond_t ready;
     pthread_t worker[HTTP_WORKERS];
     unsigned started, count, head, tail;
-    int queue[HTTP_QUEUE], active[HTTP_WORKERS];
+    connection *queue[HTTP_QUEUE], *idle[HTTP_IDLE];
+    int active[HTTP_WORKERS];
 #ifdef JIPC_WITH_MBEDTLS
     pthread_mutex_t random_mutex;
     int tls_initialized;
@@ -49,20 +54,22 @@ typedef struct http_server {
     mbedtls_ssl_config tls_config;
 #endif
 } http_server;
-typedef struct {
+struct connection {
     http_server *server;
-    int fd;
-    uint64_t deadline;
+    int fd, initialized, keepalive, failed;
+    unsigned requests;
+    uint64_t deadline, idle_until;
 #ifdef JIPC_WITH_MBEDTLS
     mbedtls_ssl_context ssl;
     int ssl_initialized;
 #endif
-} connection;
+};
 typedef struct { http_server *server; unsigned index; } worker_arg;
 typedef struct {
     char method[12], target[1024], host[256], authorization[512], type[128], origin[384];
     char *body;
     size_t length;
+    int keepalive;
 } request;
 
 static int wait_socket(connection *c,int write_ready){
@@ -167,11 +174,11 @@ static int send_all(connection *c,const void *data,size_t n){
 }
 static const char *reason(int code){switch(code){case 200:return "OK";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
 static int header(connection *c,int status,const char *type,uint64_t length){
-    char out[1024];int n=snprintf(out,sizeof(out),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %llu\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n%s\r\n",status,reason(status),type,(unsigned long long)length,status==401?"WWW-Authenticate: Basic realm=\"jooanipc-open\", charset=\"UTF-8\"\r\n":"");
+    char out[1024];int n=snprintf(out,sizeof(out),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %llu\r\nConnection: %s\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n%s\r\n",status,reason(status),type,(unsigned long long)length,c->keepalive?"keep-alive":"close",status==401?"WWW-Authenticate: Basic realm=\"jooanipc-open\", charset=\"UTF-8\"\r\n":"");
     if(n<0||(size_t)n>=sizeof(out))return -1;
     return send_all(c,out,(size_t)n);
 }
-static int response(connection *c,int status,const char *type,const void *data,size_t n){return header(c,status,type,n)<0?-1:send_all(c,data,n);}
+static int response(connection *c,int status,const char *type,const void *data,size_t n){int rc=header(c,status,type,n)<0?-1:send_all(c,data,n);if(rc)c->failed=1;return rc;}
 static void error_response(connection *c,int status,const char *message){
     char escaped[1024],out[1200];if(jipc_json_escape(message,escaped,sizeof(escaped))<0)snprintf(escaped,sizeof(escaped),"\"Request failed\"");
     int n=snprintf(out,sizeof(out),"{\"error\":%s}\n",escaped);if(n>0&&(size_t)n<sizeof(out))response(c,status,"application/json",out,(size_t)n);
@@ -191,6 +198,7 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
     char *space=strchr(buffer,' ');if(!space)return 400;*space++=0;char *version=strchr(space,' ');if(!version)return 400;*version++=0;
     if(strcmp(version,"HTTP/1.0")&&strcmp(version,"HTTP/1.1"))return 400;
     int needs_host=!strcmp(version,"HTTP/1.1");
+    r->keepalive=needs_host;
     if(strlen(buffer)>=sizeof(r->method)||strlen(space)>=sizeof(r->target)||*space!='/')return 400;
     for(const char *p=space;*p;++p)if((unsigned char)*p<=32||*p=='\\'||*p=='#'||*p=='%')return 400;
     strcpy(r->method,buffer);strcpy(r->target,space);
@@ -207,6 +215,13 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
             length=0;
             for(char *q=colon;*q;++q){if(!isdigit((unsigned char)*q))return 400;if(length>(JIPC_MAX_JSON-(size_t)(*q-'0'))/10)return 413;length=length*10+(size_t)(*q-'0');}
         }else if(!strcasecmp(p,"Transfer-Encoding")){transfer_seen=1;}
+        else if(!strcasecmp(p,"Connection")){
+            if(seen&16)return 400;
+            seen|=16;
+            if(!strcasecmp(colon,"close"))r->keepalive=0;
+            else if(!strcasecmp(colon,"keep-alive"))r->keepalive=1;
+            else return 400;
+        }
         else if(!strcasecmp(p,"Expect"))return 417;
         else if(!strcasecmp(p,"Host")){if((seen&1)||copy_header(r->host,sizeof(r->host),colon)<0)return 400;seen|=1;}
         else if(!strcasecmp(p,"Authorization")){if((seen&2)||copy_header(r->authorization,sizeof(r->authorization),colon)<0)return 400;seen|=2;}
@@ -257,6 +272,7 @@ static void recording_download(connection *c,const char *name){
     if(fd<0){error_response(c,404,"Recording not found");return;}
     if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||st.st_size<0){close(fd);error_response(c,404,"Recording not found");return;}
     c->deadline=jipc_now_us()+30000000;
+    c->keepalive=0; /* A streamed download never reuses partially sent framing. */
     if(header(c,200,"application/octet-stream",(uint64_t)st.st_size)==0){
         unsigned char data[16384];off_t left=st.st_size;
         while(left>0){size_t want=(uint64_t)left>sizeof(data)?sizeof(data):(size_t)left;ssize_t n=read(fd,data,want);if(n<0&&errno==EINTR)continue;if(n<=0||send_all(c,data,(size_t)n)<0)break;left-=n;}
@@ -267,7 +283,7 @@ static const char page[]="<!doctype html><meta charset=utf-8><meta name=viewport
 static void dispatch(connection *c,request *r){
     jipc_app *app=c->server->app;
     int soap=!strcmp(r->target,"/onvif/device_service")||!strcmp(r->target,"/onvif/media_service")||!strcmp(r->target,"/onvif/ptz_service");
-    if((!strcmp(r->target,"/health")||!strcmp(r->target,"/healthz"))&&!strcmp(r->method,"GET")){pthread_mutex_lock(&app->control_mutex);int ready=app->backend_ready&&!app->stop;pthread_mutex_unlock(&app->control_mutex);
+    if((!strcmp(r->target,"/health")||!strcmp(r->target,"/healthz"))&&!strcmp(r->method,"GET")){int ready=app->backend_ready&&!app->stop;
         if(ready)response(c,200,"application/json","{\"ok\":true}\n",12);else error_response(c,503,"Not ready");return;}
     int authorized=basic_authorized(app,r->authorization);
     if(!authorized&&soap&&!strcmp(r->method,"POST"))authorized=jipc_onvif_public_time(r->body)||jipc_onvif_authorize(app,r->body);
@@ -295,7 +311,11 @@ static void dispatch(connection *c,request *r){
         if(jipc_json_string(r->body,"operation",operation,sizeof(operation))!=0||!*operation){error_response(c,400,"A control operation is required");return;}
         for(const char *p=operation;*p;++p)if(!islower((unsigned char)*p)&&*p!='_'){error_response(c,400,"Invalid control operation");return;}
         if(jipc_json_integer(r->body,"value",&value)<0||jipc_json_integer(r->body,"value2",&value2)<0){error_response(c,400,"Control values must be integers");return;}
-        if(jipc_backend_control(app,operation,value,value2,error,sizeof(error))<0)error_response(c,409,error[0]?error:"Control is unavailable");
+        char name[65];int named=jipc_json_string(r->body,"name",name,sizeof(name));
+        if(named<0){error_response(c,400,"Invalid preset name");return;}
+        int result=!strcmp(operation,"preset_set") ? jipc_platform_preset_set(app,value,named?NULL:name,error,sizeof(error)) :
+            jipc_backend_control(app,operation,value,value2,error,sizeof(error));
+        if(result<0)error_response(c,409,error[0]?error:"Control is unavailable");
         else response(c,200,"application/json","{\"ok\":true}\n",12);
         return;
     }
@@ -322,36 +342,89 @@ static void dispatch(connection *c,request *r){
     }
     error_response(c,404,"Endpoint not found");
 }
-static void handle(http_server *s,int fd){
-    connection c={.server=s,.fd=fd,.deadline=jipc_now_us()+5000000};
-    if(handshake(&c)==0){
-        size_t capacity=HTTP_HEADER_LIMIT+JIPC_MAX_JSON+1;char *buffer=malloc(capacity);
-        if(buffer){request r;int status=parse_request(&c,buffer,capacity,&r);c.deadline=jipc_now_us()+10000000;if(status)error_response(&c,status,reason(status));else dispatch(&c,&r);free(buffer);}
-    }
+static void connection_close(connection *c){
+    if(!c)return;
 #ifdef JIPC_WITH_MBEDTLS
-    if(c.ssl_initialized)mbedtls_ssl_free(&c.ssl);
+    if(c->ssl_initialized)mbedtls_ssl_free(&c->ssl);
 #endif
+    close(c->fd);free(c);
+}
+static void wake_server(http_server *s){
+    const char byte=0; ssize_t ignored=write(s->wake[1],&byte,1);(void)ignored;
+}
+static void handle(connection *c){
+    c->deadline=jipc_now_us()+5000000;c->keepalive=0;c->failed=0;
+    if(!c->initialized){if(handshake(c))return;c->initialized=1;}
+    size_t capacity=HTTP_HEADER_LIMIT+JIPC_MAX_JSON+1;char *buffer=malloc(capacity);
+    if(!buffer)return;
+    request r;int status=parse_request(c,buffer,capacity,&r);
+    c->deadline=jipc_now_us()+10000000;
+    c->keepalive=!status&&r.keepalive&&++c->requests<256;
+    if(status)error_response(c,status,reason(status));else dispatch(c,&r);
+    free(buffer);
+    if(c->failed)c->keepalive=0;
 }
 static void *worker_main(void *arg){
     worker_arg info=*(worker_arg*)arg;free(arg);http_server *s=info.server;
     for(;;){
         pthread_mutex_lock(&s->mutex);while(!s->stopping&&!s->count)pthread_cond_wait(&s->ready,&s->mutex);
         if(s->stopping){pthread_mutex_unlock(&s->mutex);break;}
-        int fd=s->queue[s->head];s->head=(s->head+1)%HTTP_QUEUE;--s->count;s->active[info.index]=fd;pthread_mutex_unlock(&s->mutex);
-        handle(s,fd);
-        pthread_mutex_lock(&s->mutex);s->active[info.index]=-1;pthread_mutex_unlock(&s->mutex);close(fd);
+        connection *c=s->queue[s->head];s->head=(s->head+1)%HTTP_QUEUE;--s->count;
+        s->active[info.index]=c->fd;wake_server(s);pthread_mutex_unlock(&s->mutex);
+        handle(c);
+        pthread_mutex_lock(&s->mutex);s->active[info.index]=-1;
+        if(c->keepalive&&!s->stopping&&!s->app->stop){
+            for(unsigned i=0;i<HTTP_IDLE;++i)if(!s->idle[i]){
+                c->idle_until=jipc_now_us()+HTTP_IDLE_US;s->idle[i]=c;c=NULL;wake_server(s);break;
+            }
+        }
+        pthread_mutex_unlock(&s->mutex);connection_close(c);
     }
     return NULL;
 }
+/* Persistent connections park here, outside the worker pool. One owner at a
+ * time touches an SSL context. Requests are authenticated afresh on every use;
+ * ambiguous/pipelined framing closes the connection instead of losing bytes. */
 static void *server_main(void *arg){
     http_server *s=arg;
     for(;;){
-        pthread_mutex_lock(&s->mutex);int stop=s->stopping;pthread_mutex_unlock(&s->mutex);if(stop||s->app->stop)break;
-        struct pollfd p={s->listener,POLLIN,0};int ret=poll(&p,1,250);if(ret<0&&errno==EINTR)continue;if(ret<=0)continue;
-        if(!(p.revents&POLLIN))break;
-        int fd=accept(s->listener,NULL,NULL);if(fd<0){if(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK)continue;break;}
-        int flags=fcntl(fd,F_GETFL,0);if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0||fcntl(fd,F_SETFD,FD_CLOEXEC)<0){close(fd);continue;}
-        pthread_mutex_lock(&s->mutex);if(s->stopping||s->count==HTTP_QUEUE)close(fd);else{s->queue[s->tail]=fd;s->tail=(s->tail+1)%HTTP_QUEUE;++s->count;pthread_cond_signal(&s->ready);}pthread_mutex_unlock(&s->mutex);
+        struct pollfd fds[HTTP_IDLE+2]={{s->listener,POLLIN,0},{s->wake[0],POLLIN,0}};
+        int pending[HTTP_IDLE]={0},immediate=0;
+        pthread_mutex_lock(&s->mutex);
+        if(s->stopping||s->app->stop){pthread_mutex_unlock(&s->mutex);break;}
+        for(unsigned i=0;i<HTTP_IDLE;++i){
+            connection *c=s->count<HTTP_QUEUE?s->idle[i]:NULL;fds[i+2]=(struct pollfd){c?c->fd:-1,POLLIN,0};
+#ifdef JIPC_WITH_MBEDTLS
+            if(c&&s->secure)pending[i]=mbedtls_ssl_check_pending(&c->ssl);
+#endif
+            immediate|=pending[i];
+        }
+        pthread_mutex_unlock(&s->mutex);
+        int ret=poll(fds,HTTP_IDLE+2,immediate?0:250);
+        if(ret<0&&errno==EINTR)continue;
+        if(ret<0)break;
+        if(fds[1].revents&POLLIN){char bytes[64];while(read(s->wake[0],bytes,sizeof(bytes))>0){}}
+        pthread_mutex_lock(&s->mutex);
+        if(s->stopping||s->app->stop){pthread_mutex_unlock(&s->mutex);break;}
+        uint64_t now=jipc_now_us();
+        for(unsigned i=0;i<HTTP_IDLE;++i){
+            connection *c=s->idle[i];if(!c||c->fd!=fds[i+2].fd)continue;
+            if(now>=c->idle_until||(fds[i+2].revents&(POLLERR|POLLHUP|POLLNVAL))){s->idle[i]=NULL;connection_close(c);}
+            else if((pending[i]||(fds[i+2].revents&POLLIN))&&s->count<HTTP_QUEUE){
+                s->idle[i]=NULL;s->queue[s->tail]=c;s->tail=(s->tail+1)%HTTP_QUEUE;++s->count;pthread_cond_signal(&s->ready);
+            }
+        }
+        pthread_mutex_unlock(&s->mutex);
+        if(!(fds[0].revents&POLLIN))continue;
+        int fd=accept(s->listener,NULL,NULL);if(fd<0)continue;
+        int flags=fcntl(fd,F_GETFL,0),yes=1;
+        if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0||fcntl(fd,F_SETFD,FD_CLOEXEC)<0){close(fd);continue;}
+        setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&yes,sizeof(yes));
+        connection *c=calloc(1,sizeof(*c));if(!c){close(fd);continue;}c->server=s;c->fd=fd;
+        pthread_mutex_lock(&s->mutex);
+        if(s->stopping||s->count==HTTP_QUEUE)connection_close(c);
+        else{s->queue[s->tail]=c;s->tail=(s->tail+1)%HTTP_QUEUE;++s->count;pthread_cond_signal(&s->ready);}
+        pthread_mutex_unlock(&s->mutex);
     }
     return NULL;
 }
@@ -379,13 +452,15 @@ static void destroy_server(http_server *s){
 #ifdef JIPC_WITH_MBEDTLS
     tls_free(s);pthread_mutex_destroy(&s->random_mutex);
 #endif
+    if(s->wake[0]>=0)close(s->wake[0]);
+    if(s->wake[1]>=0)close(s->wake[1]);
     pthread_cond_destroy(&s->ready);pthread_mutex_destroy(&s->mutex);free(s);
 }
 int jipc_http_start(jipc_app *app){
     if(app->http_started||app->http_state)return -1;
     jipc_config config;jipc_config_copy(app,&config);
     if(!!config.tls_cert[0]!=!!config.tls_key[0]){jipc_log("error","HTTPS requires both tls_cert and tls_key");return -1;}
-    http_server *s=calloc(1,sizeof(*s));if(!s)return -1;s->app=app;s->listener=-1;
+    http_server *s=calloc(1,sizeof(*s));if(!s)return -1;s->app=app;s->listener=-1;s->wake[0]=s->wake[1]=-1;
     if(pthread_mutex_init(&s->mutex,NULL)){free(s);return -1;}
     if(pthread_cond_init(&s->ready,NULL)){pthread_mutex_destroy(&s->mutex);free(s);return -1;}
 #ifdef JIPC_WITH_MBEDTLS
@@ -394,6 +469,7 @@ int jipc_http_start(jipc_app *app){
 #else
     if(config.tls_cert[0]){jipc_log("error","Configured HTTPS requires a build with JIPC_WITH_MBEDTLS");destroy_server(s);return -1;}
 #endif
+    if(pipe2(s->wake,O_CLOEXEC|O_NONBLOCK)){destroy_server(s);return -1;}
     s->listener=listener(&config,s->secure);if(s->listener<0){jipc_log("error","HTTP bind failed; LAN plaintext requires allow_plain_http");destroy_server(s);return -1;}
     for(unsigned i=0;i<HTTP_WORKERS;++i)s->active[i]=-1;
     pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,512*1024);
@@ -410,7 +486,9 @@ int jipc_http_start(jipc_app *app){
 void jipc_http_stop(jipc_app *app){
     http_server *s=app->http_state;if(!s)return;
     pthread_mutex_lock(&s->mutex);s->stopping=1;shutdown(s->listener,SHUT_RDWR);
-    while(s->count){close(s->queue[s->head]);s->head=(s->head+1)%HTTP_QUEUE;--s->count;}
+    while(s->count){connection_close(s->queue[s->head]);s->head=(s->head+1)%HTTP_QUEUE;--s->count;}
+    for(unsigned i=0;i<HTTP_IDLE;++i){connection_close(s->idle[i]);s->idle[i]=NULL;}
+    wake_server(s);
     for(unsigned i=0;i<s->started;++i)if(s->active[i]>=0)shutdown(s->active[i],SHUT_RDWR);
     pthread_cond_broadcast(&s->ready);pthread_mutex_unlock(&s->mutex);
     if(app->http_started)pthread_join(app->http_thread,NULL);

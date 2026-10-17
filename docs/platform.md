@@ -35,34 +35,37 @@ int32 fields; `motor_ops_move_not_stop` establishes request 8's behavior.
 
 The verified OEM startup script `jzstart.sh:297–309` loads the driver with
 maximum X=8600, maximum Y=2000, and the shared motor-coil switch GPIO17.
-OEM homing on this installed profile subsequently reports calibrated maxima
-4080/1230. The application currently uses the module-load bounds 8600/2000
-for its normalized status scale and preset-file validation; the retained driver
-enforces its calibrated travel. Displayed percentages therefore do not measure
-the full calibrated travel range. Presets store raw coordinates and are not
-rescaled by this display limitation.
+OEM homing on this installed profile reports calibrated maxima 4080/1230.
+The replacement reads those limits from `/proc/jz/motor/motor_info` when it
+opens the motor. Normalized status uses the calibrated limits. Imported
+presets remain in raw driver steps and are checked against live limits before
+recall; they are never scaled or flipped during migration.
 
-The replacement opens `/dev/motor` exclusively as enforced by the driver,
-sets speed 450, reads real positions, and submits at most 90 steps on one axis
-at a time using request **3**. This request is asynchronous when exactly one
-axis is nonzero; only its simultaneous-axis path blocks. Request 8 failed real
-mixed-axis preset return because its Y path does not restore the driver’s
-swapped-axis bookkeeping. A driver-contract test covers this difference.
-The controller alternates axes for diagonal requests because this board shares
-the motor coils. It never directly manipulates motor GPIO17 or the coil pins.
+The replacement submits one finite displacement on one axis through request
+**3**. This path is asynchronous for a single axis and restores the driver's
+axis bookkeeping. Request 8's Y path does not restore that bookkeeping. The
+worker checks deadlines every 10 ms, outside the encoder SDK lock. No motor
+GPIOs are manipulated directly.
 
-Manual `ptz(x,y)` takes signed normalized velocities from -100 through 100.
-Each request expires after 1200 ms; a worker checks at 25 ms intervals and
-requests a stop. A finite chunk that remains active after one second also
-requests a stop and records an error. `ptz_stop` cancels manual and preset
-movement, and shutdown requests a stop before closing the device.
+Manual `ptz(x,y)` chooses the dominant axis, maps normalized velocity to the
+OEM speed range 100–900, and moves toward its calibrated travel limit. A
+1200 ms lease enforces Stop. Repeated identical commands renew the lease
+without stopping and restarting the coils. Direction changes cancel the old
+job. `ptz_stop` cancels all manual and preset motion.
 
-Preset travel consists of finite bounded chunks and has a separate 45-second
-total limit, reported as a timeout error if exceeded. It is an explicit autonomous move; manual request renewal is not
-required during preset travel. The service measures position between chunks
-and does not estimate native position from elapsed time. Presets outside the
-known board range are refused when loaded. Coordinates are the driver's
-open-loop step coordinates, not independently measured shaft angles.
+`onvif_nudge=1` selects compatibility with the previously deployed local
+Frigate controller: one steady 350 ms pulse at speed 540, followed by Stop.
+The old helper sent velocity 0.6; the OEM handler at `0x0057a458` scales it
+by 900, and the timer at `0x0048e2a0` starts the move once. Our nudge requests
+only enough finite travel for its deadline plus 100 ms, then explicitly
+stops. A concurrent identical nudge does not extend the pulse. SOAP replies
+after stopping, matching the old helper. With this setting off, ONVIF retains
+the 1200 ms continuous-move lease. Advertised timeouts match the selected mode.
+
+Preset recall uses one exact remaining displacement per axis, with a global
+45-second limit and position checks between axes. Stop normalizes the
+module's axis-switch state after natural completion. Coordinates are the
+driver's open-loop steps, not independently measured shaft angles.
 
 The OEM stop ioctl requests hardware stop before waiting for completion, but
 the driver's failure path may wait up to 15 seconds. The userspace deadman
@@ -82,11 +85,20 @@ successful complete `motor_step_reset` episode before stopping the bootstrap own
 
 `preset_set`, `preset_goto`, and `preset_remove` accept slots 1 through 16.
 Setting a slot stops current movement and reads the driver position first.
-Updates are atomic files, mode 0600, under configured `state_dir/presets.v1`;
-the configured state directory is created with mode 0700. The file begins with
-`JIPC_PRESETS_1 imp` or `JIPC_PRESETS_1 replay`, preventing simulated positions
-from being reused as native step coordinates. These files belong to this
-application; OEM configuration and persistent boot/flash settings are untouched.
+Updates use atomic mode-0600 files under `state_dir/presets.v2.json`; the
+state directory is mode 0700. The JSON catalog identifies version 2, backend,
+coordinate space (`motor_steps` or replay `normalized`), and records with
+`slot`, `name`, `x`, and `y`. Names contain 1–64 bytes of printable UTF-8 and
+must be unique ignoring ASCII case. ONVIF tokens remain `preset1` through
+`preset16`; names are escaped separately for XML and JSON.
+
+The old `presets.v1` format loads only when v2 is absent. Invalid or empty v2
+never restores deleted v1 records. Unnamed updates preserve existing labels;
+new unnamed slots receive `Preset N`. Persistence failure rolls back the
+in-memory change. OEM preset migration is an explicit deployment step:
+copy enabled OEM slot N to slot N+1 with its original name and raw coordinates,
+back up the previous application catalog privately, and restart the service.
+The application never writes OEM configuration.
 
 Status reports normalized pan/tilt -100 through 100, motion state and preset
 slots. Sensor 0’s `flip0` bits also reverse the corresponding manual-control

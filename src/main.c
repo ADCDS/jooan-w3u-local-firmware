@@ -22,10 +22,10 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     cJSON_AddStringToObject(o, "hardware_profile", "JA-A12-T23N-CV2005-CV2005S1");
     cJSON_AddBoolToObject(o, "hardware_validated", 0);
     cJSON_AddNumberToObject(o, "uptime_seconds", (double)(jipc_now_us() - app->started_us) / 1000000.0);
-    pthread_mutex_lock(&app->control_mutex);
+    pthread_mutex_lock(&app->config_mutex);
     cJSON_AddBoolToObject(o, "ready", app->backend_ready && !app->stop);
     cJSON_AddStringToObject(o, "backend_error", app->backend_error);
-    pthread_mutex_unlock(&app->control_mutex);
+    pthread_mutex_unlock(&app->config_mutex);
     pthread_mutex_lock(&app->config_mutex);
     cJSON_AddBoolToObject(o, "recording", app->record_active);
     cJSON_AddStringToObject(o, "record_error", app->record_error);
@@ -40,7 +40,7 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
         cJSON_AddBoolToObject(s, "codec_ready", i == JIPC_AUDIO_STREAM || (app->streams[i].sps_size && app->streams[i].pps_size));
         pthread_mutex_unlock(&app->streams[i].mutex); cJSON_AddItemToArray(streams, s);
     }
-    char status[2048]; if (jipc_platform_status_json(app, status, sizeof(status)) >= 0) {
+    char status[8192]; if (jipc_platform_status_json(app, status, sizeof(status)) >= 0) {
         cJSON *platform = cJSON_Parse(status); if (platform) cJSON_AddItemToObject(o, "platform", platform);
     }
     char *text = cJSON_PrintUnformatted(o); int rc = -1;
@@ -133,13 +133,14 @@ int main(int argc, char **argv)
         app->config = config; app->started_us = jipc_now_us();
         atomic_init(&app->stop, 0); atomic_init(&app->restart, 0);
         pthread_mutex_init(&app->config_mutex, NULL); pthread_mutex_init(&app->control_mutex, NULL);
+        atomic_init(&app->backend_ready, 0); atomic_init(&app->control_waiters, 0);
         if (jipc_mkdirs(config.state_dir, 0700) || jipc_streams_init(app)) { free(app); return 1; }
         if (jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {
             jipc_log("error", "startup failed: %s", app->backend_error[0] ? app->backend_error : "see previous service diagnostics"); result = 1;
         } else {
             jipc_log("info", "ready: backend=%s, %u video streams", config.backend, config.sensors * 2);
             while (!interrupted && !reload_requested && !app->restart && (!deadline || jipc_now_us() < deadline)) {
-                pthread_mutex_lock(&app->control_mutex); int ready = app->backend_ready; pthread_mutex_unlock(&app->control_mutex);
+                int ready = app->backend_ready;
                 if (!ready) { jipc_log("error", "media backend stopped; shutting down services"); result = 1; break; }
                 if(watchdog_fd>=0&&jipc_now_us()-watchdog_last>=1000000){
                     int fresh=1;uint64_t now=jipc_now_us();
