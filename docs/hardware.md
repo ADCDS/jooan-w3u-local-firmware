@@ -174,7 +174,14 @@ fi
 
 The root-owned 0600 `deployment.env` specifies `JIPC_RELEASE` (the versioned
 SD release directory), `JIPC_LIBIMP_SHA256`, and `JIPC_APP_MD5`, `JIPC_IMP_MD5`,
-`JIPC_ATOMIC_MD5` for the three release files. MD5 checks detect deployment
+`JIPC_ATOMIC_MD5` for the three release files. Optional `JIPC_WIFI_BSSID` plus `JIPC_WIFI_FREQ` (its proven frequency in MHz)
+select a proven AP for this camera: after the retained controller applies its
+committed network, the helper pins that existing network and waits for a stable
+association to that BSSID. Frequency is applied before selection so an existing
+5GHz network block cannot prevent a chosen 2.4GHz AP from being reached. An
+explicit reassociation is required when the selected network was already active.
+It changes no Wi-Fi credentials or AP/router
+configuration. Omit it to keep ordinary AP selection. MD5 checks detect deployment
 corruption; they are not a signature or adversarial integrity guarantee. The
 client additionally verifies the library's pinned SHA-256. Keep SD access
 limited to trusted administrators. The private camera config must use that
@@ -191,7 +198,11 @@ and media processes, and checks every task's descriptors, IVDC address zero
 and absence of Linux TAINT_DIE. It launches the replacement with the explicit
 OEM80/native/no-fallback flags. The new process owns `/dev/watchdog`, sets its
 OEM 180-second timeout and feeds it only while all four streams remain fresh.
-After 185 seconds of process/watchdog health the helper clears `boot-trial`.
+After stopping OEM media, a bounded45-second network recheck catches late
+bootstrap network changes before native ownership. After185 seconds of
+process/watchdog health, final controller/network readiness
+is retried for up to60 attempts while native health remains mandatory; then the
+helper clears `boot-trial`. A single lost ARP response does not end the trial.
 
 The installed OEM wrapper also redirects its bootstrap stdout to the private
 `/tmp/jooan-oem-bootstrap.log` for diagnosis. Preserve the guarded preload and
@@ -212,3 +223,11 @@ encoding. Configure ONVIF host as HTTPS and the actual 18443 port. Native RTSP
 on 18554 uses ch0 for the movable view and ch2 for the second lens. Frigate's
 recording timeline uses the NVR host's clock. No camera egress or router changes
 are required for this arrangement.
+
+The deployed Frigate inputs use `preset-rtsp-restream` against go2rtc on
+`127.0.0.1:8554`: each lens has one camera producer shared by recording,
+detection and live clients. This avoids duplicate camera traffic on Wi-Fi.
+A later native test ran into poor service on the initially selected AP;
+reassociation to the stronger gateway AP restored both NVR views at5fps with
+zero skipped frames. Media encoding and kernel health remained good during
+that network incident. The AP choice is kept in the private deployment manifest.

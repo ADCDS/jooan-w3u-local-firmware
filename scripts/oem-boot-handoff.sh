@@ -57,12 +57,23 @@ until calibrated; do
 done
 log 'fresh OEM motor calibration observed'
 
+[ -r "$root/deployment.env" ] || fail 'deployment manifest missing'
+# Root-owned JFFS2 data: paths/hashes and optional proven AP BSSID, no passwords.
+# shellcheck disable=SC1091
+. "$root/deployment.env"
+if [ -n "$JIPC_WIFI_BSSID" ]; then
+    printf '%s\n' "$JIPC_WIFI_BSSID" | grep -Eq '^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$' || fail 'invalid Wi-Fi BSSID'
+    JIPC_WIFI_BSSID=$(printf '%s' "$JIPC_WIFI_BSSID" | tr '[:upper:]' '[:lower:]')
+    case "$JIPC_WIFI_FREQ" in ''|*[!0-9]*) fail 'Wi-Fi AP pin requires its proven frequency in MHz' ;; esac
+    [ "$JIPC_WIFI_FREQ" -gt 0 ] || fail 'invalid Wi-Fi frequency'
+    [ "$JIPC_WIFI_FREQ" -lt 10000 ] || fail 'invalid Wi-Fi frequency'
+fi
 common=/run/jooan-local/controller/boot/common.sh
 [ -r "$common" ] || fail 'existing network controller unavailable'
 # Trusted, retained controller helpers, already verified by the original hook.
 # shellcheck disable=SC1090
 . "$common"
-wifi_key='' wifi_since=0
+wifi_key='' wifi_since=0 wifi_pin_key='' wifi_pin_at=0
 control_ready() {
     jl_read_selection || return 1
     case "$JL_STABLE" in A|B) ;; *) return 1 ;; esac
@@ -76,15 +87,39 @@ control_ready() {
     d=$(cat /run/jooan-local/dropbear.pid 2>/dev/null) || return 1
     case "$d" in ''|*[!0-9]*) return 1 ;; esac
     [ "$(cat "/proc/$d/comm" 2>/dev/null)" = dropbear ] || return 1
-    w=$(jl_wpa_pid) || return 1
-    [ "$(cat /run/jooan-local/wifi-applied 2>/dev/null)" = "$w" ] || return 1
-    wt=$(awk '{print $22}' "/proc/$w/stat") || return 1
+    w=$(jl_wpa_pid) || { wifi_key=''; return 1; }
+    [ "$(cat /run/jooan-local/wifi-applied 2>/dev/null)" = "$w" ] || { wifi_key=''; return 1; }
+    wt=$(awk '{print $22}' "/proc/$w/stat") || { wifi_key=''; return 1; }
+    wpa_cli -iwlan0 status > "$run/wifi-status" 2>/dev/null || { wifi_key=''; return 1; }
+    if ! grep -q '^wpa_state=COMPLETED$' "$run/wifi-status"; then wifi_key=''; return 1; fi
+    grep -q '^ip_address=[0-9]' "$run/wifi-status" || { wifi_key=''; return 1; }
+    bssid=$(awk -F= '$1=="bssid" {print $2; exit}' "$run/wifi-status")
+    if [ -n "$JIPC_WIFI_BSSID" ]; then
+        network=$(awk -F= '$1=="id" {print $2; exit}' "$run/wifi-status")
+        case "$network" in ''|*[!0-9]*) return 1 ;; esac
+        now=$(awk '{print int($1)}' /proc/uptime) || return 1
+        if [ "$wifi_pin_key" != "$w:$wt:$network" ] ||
+           { [ "$bssid" != "$JIPC_WIFI_BSSID" ] && [ "$((now - wifi_pin_at))" -ge 10 ]; }; then
+            # The controller creates separate band-restricted blocks. Set the
+            # proven AP frequency before selecting, even if the current block
+            # initially connected on a different band.
+            wpa_cli -iwlan0 set_network "$network" freq_list "$JIPC_WIFI_FREQ" | grep -q OK || return 1
+            wpa_cli -iwlan0 set_network "$network" bssid "$JIPC_WIFI_BSSID" | grep -q OK || return 1
+            # Select the existing committed network/credential; do not rewrite
+            # the controller config or change any router/AP setting.
+            wpa_cli -iwlan0 select_network "$network" | grep -q OK || return 1
+            wpa_cli -iwlan0 reassociate | grep -q OK || return 1
+            wifi_pin_key=$w:$wt:$network
+            wifi_pin_at=$now
+            wifi_key=''
+            log 'selected the deployment-configured Wi-Fi AP'
+            return 1
+        fi
+        [ "$bssid" = "$JIPC_WIFI_BSSID" ] || { wifi_key=''; return 1; }
+    fi
     now=$(awk '{print int($1)}' /proc/uptime) || return 1
-    if [ "$wifi_key" != "$w:$wt" ]; then wifi_key=$w:$wt; wifi_since=$now; return 1; fi
+    if [ "$wifi_key" != "$w:$wt:$bssid" ]; then wifi_key=$w:$wt:$bssid; wifi_since=$now; return 1; fi
     [ "$((now - wifi_since))" -ge 30 ] || return 1
-    wpa_cli -iwlan0 status > "$run/wifi-status" 2>/dev/null || return 1
-    grep -q '^wpa_state=COMPLETED$' "$run/wifi-status" || return 1
-    grep -q '^ip_address=[0-9]' "$run/wifi-status" || return 1
     read -r gateway interface < /run/jooan-local/default-gateway || return 1
     [ "$interface" = wlan0 ] || return 1
     arping -c 1 -w 2 -I "$interface" "$gateway" >/dev/null 2>&1 || return 1
@@ -97,10 +132,6 @@ until control_ready; do
     sleep 1; i=$((i + 1))
 done
 
-[ -r "$root/deployment.env" ] || fail 'deployment manifest missing'
-# This root-owned JFFS2 file contains paths and expected hashes, never passwords.
-# shellcheck disable=SC1091
-. "$root/deployment.env"
 case "$JIPC_RELEASE" in /mnt/sd_card/jooanipc-open/releases/*) ;; *) fail 'invalid release path' ;; esac
 [ -x "$JIPC_RELEASE/jooanipc-open" ] || fail 'release missing'
 for name in jooanipc-open libimp.so libatomic.so.1; do
@@ -172,6 +203,12 @@ i=0
 until clean_media; do
     [ "$i" -lt 10 ] || fail 'kernel/IVDC/media descriptors did not detach; reset required'
     sleep 1; i=$((i + 1))
+done
+net_wait=$(awk '{print int($1)}' /proc/uptime) || fail 'cannot time final network handoff'
+until control_ready; do
+    now=$(awk '{print int($1)}' /proc/uptime) || exit 1
+    [ "$((now - net_wait))" -lt 45 ] || fail 'network did not settle after OEM stop; armed watchdog will recover'
+    sleep 1
 done
 log 'OEM media detached; transferring the armed watchdog to native media'
 (
