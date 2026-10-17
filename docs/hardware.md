@@ -1,11 +1,22 @@
 # JA A12 hardware integration
 
-The physical T23N runs the rebuilt daemon with file-backed media; see the
-[camera test receipt](camera-test-20261017.json). Native IMP startup correctly
-refused the active OEM owner before loading an SDK. Sensor/encoder
-initialization remains unqualified. The SDK contract tests use function
-pointers replaced with doubles. Replay and SDK doubles do not establish that
-the replacement can capture or encode a fresh sensor frame.
+Native sensor capture remains unqualified. The [OpenIMP physical trial](camera-openimp-test-20261017.json)
+reached sensor/tuning and encoder setup, but failed at FrameSource REQBUFS with
+ENOMEM. The missing OEM reserved-memory IVDC workspace handshake forced a
+contiguous normal-RAM allocation that could not succeed. A separate secondary
+AE-slot NULL dereference and teardown fault required a reboot.
+
+The source now registers both physical sensors and avoids duplicate global ISP
+startup. The guarded retry found no suitable contiguous block even after
+compaction and stopped before ISP initialization. The next port requirement is
+the IVDC workspace's setup and verified release lifecycle. This final retry
+left OEM stopped under bounded watchdog custody, as requested; the trial
+receipt records its reboot deadline.
+
+In the [earlier replay run](camera-test-20261017.json), the physical T23N ran the
+rebuilt daemon with file-backed media. Native IMP startup correctly refused the
+active OEM owner before loading an SDK. The SDK contract tests replace calls
+with doubles. Replay and SDK doubles do not establish native capture or encoding.
 
 ## Required runtime arrangement
 
@@ -49,6 +60,27 @@ incompatibilities; they do not prove complete compatibility. A cleanup failure
 poisons further hardware initialization in the same process and retains the SDK
 mapping to avoid unloading code beneath potentially live SDK threads.
 
+The [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi)
+now has an explicit provider path. Its T23 public records match the recovered
+FS84/encoder164/stream16/pack32 layout. Select it with all three variables:
+
+```sh
+export OPENIMP_T23_DRIVER_ABI=oem80
+export OPENIMP_T23_ENCODER=native
+export OPENIMP_T23_NATIVE_FALLBACK=0
+```
+
+Set `sensors=1` and `audio=0` for this bring-up path; this publishes the first
+sensor's main/sub streams. The adapter registers both physical sensors because
+the retained `direct_mode=2` ISP runs AE for both slots. Registering only the
+first slot caused a kernel NULL dereference in the secondary AE path. Other
+OpenIMP publication configurations are rejected while dual-sensor IVDC and
+audio remain unqualified. Use an explicit `libimp` path and pin the built library using
+`JIPC_LIBIMP_SHA256`. Recognition of the provider and matching public records
+does not establish functioning sensor capture or hardware encoding. Startup
+logs identify the next SDK operation before entering it, including operations
+that can block inside the retained driver.
+
 ## Recovered layouts
 
 | Record | Bytes | Important facts |
@@ -79,7 +111,7 @@ timing, exercise microphone/speaker and native JPEG, verify controls against
 the real driver, and prove teardown restores the known OEM baseline. LAN
 multicast discovery and a real NVR also require interoperability testing.
 
-The 2026-10-17 run passed 73 native core checks, offline SDK contracts, six RTSP
+The earlier 2026-10-17 replay run passed 73 native core checks, offline SDK contracts, six RTSP
 and eight HTTP/ONVIF protocol tests, local-subnet discovery probes, TCP/UDP
 FFmpeg replay decoding, RAM recording/download, controls in replay, and
 credential reload. The process sampled 1776 KiB RSS and 1832 KiB high-water RSS.
@@ -87,7 +119,7 @@ Its temporary files were removed; OEM PID 393 and the local controller stayed
 running. The camera clock was approximately 68340 seconds behind the client;
 WSSE tests compensated client-side without changing the camera clock.
 
-The only locally available external library, SHA-256
+The earlier generic external library, SHA-256
 `bd904ec8f4123965ded8c0c57c25ad5c3ae0fdc17aa4a6374278a7c822cb31d9`,
 uses the 88-byte `0xc05863xx` VPU ioctl family. The retained OEM driver implements
 the 80-byte `0xc05063xx` family. Stopping the OEM application does not resolve

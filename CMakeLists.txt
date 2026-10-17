@@ -70,7 +70,8 @@ install(FILES config/replay.example.ini config/ja-a12.example.ini
 install(FILES README.md dependencies.lock.json DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES docs/hardware.md docs/platform.md docs/third-party.md
   docs/verification.json docs/verification-initial-20261017.json
-  docs/camera-test-20261017.json DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
+  docs/camera-test-20261017.json docs/camera-openimp-test-20261017.json
+  DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/jooanipc-open)

@@ -28,7 +28,7 @@ typedef struct {
     int lock_fd, isp, system, tuning, enabled, added[2];
     int fs_created[4], enc_created[4], registered[4], bound[4], fs_enabled[4], receiving[4];
     int groups[4], fds[4], ai_enabled, ai_channel, ao_enabled, ao_channel;
-    unsigned sensors, width, height, sub_width, sub_height, fps, bitrate;
+    unsigned sensors, sensor_count, width, height, sub_width, sub_height, fps, bitrate;
     int audio;
     unsigned char *frame;
     uint64_t last_video[4], last_audio, next_owner_check;
@@ -96,7 +96,7 @@ static int media_node(const char *path)
     static const char *const names[] = {
         "/dev/tx-isp", "/dev/isp-m", "/dev/framechan", "/dev/misc-ivdc",
         "/dev/vpu", "/dev/jz-vpu", "/dev/ipu", "/dev/dsp", "/dev/audio",
-        "/dev/jz-audio", "/dev/jz-dmic", "/dev/ingenic-vpu"
+        "/dev/jz-audio", "/dev/jz-dmic", "/dev/ingenic-vpu", "/dev/soc_vpu", "/dev/rmem"
     };
     for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i)
         if (!strncmp(path, names[i], strlen(names[i]))) return 1;
@@ -271,7 +271,26 @@ static int sdk_result(int rc, const char *operation, char *error, size_t capacit
     return rc ? failure(error, capacity, "%s failed (%d)", operation, rc) : 0;
 }
 
-#define STEP(call, name) do { if (sdk_result((call), name, error, capacity)) goto failed; } while (0)
+static int validate_provider(const char *version, const jipc_config *config,
+                             char *error, size_t capacity)
+{
+    if (!strcmp(version, "libimp.so T23 openimp")) {
+        const char *abi = getenv("OPENIMP_T23_DRIVER_ABI");
+        const char *encoder = getenv("OPENIMP_T23_ENCODER");
+        const char *fallback = getenv("OPENIMP_T23_NATIVE_FALLBACK");
+        if (!abi || strcmp(abi, "oem80") || !encoder || strcmp(encoder, "native") ||
+            !fallback || strcmp(fallback, "0"))
+            return failure(error, capacity, "OpenIMP requires OPENIMP_T23_DRIVER_ABI=oem80, OPENIMP_T23_ENCODER=native and OPENIMP_T23_NATIVE_FALLBACK=0");
+        if (config->sensors != 1 || config->audio)
+            return failure(error, capacity, "OpenIMP bring-up currently requires one sensor and audio disabled; dual-sensor IVDC/audio are unqualified");
+        return 0;
+    }
+    if (!strstr(version, "1.3.0") && !strstr(version, "1.0.1"))
+        return failure(error, capacity, "unrecognized libimp version: %.100s", version);
+    return 0;
+}
+
+#define STEP(call, name) do { jipc_log("info", "libimp begin %s", name); if (sdk_result((call), name, error, capacity)) goto failed; } while (0)
 int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
 {
     *out = NULL;
@@ -323,10 +342,11 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     char version[128] = {0};
     STEP(s->version(version), "IMP_System_GetVersion");
     version[sizeof version - 1] = '\0';
-    if (!strstr(version, "1.3.0") && !strstr(version, "1.0.1")) {
-        failure(error, capacity, "unrecognized libimp version: %.100s", version);
-        goto failed;
-    }
+    if (validate_provider(version, &config, error, capacity)) goto failed;
+    /* This OEM module runs both AE sensor slots in direct_mode=2, even when
+     * the consumer publishes only sensor 0. Leaving slot 1 unregistered lets
+     * its firmware worker dereference a NULL sensor attribute. */
+    s->sensor_count = !strcmp(version, "libimp.so T23 openimp") ? 2 : s->sensors;
     jipc_log("info", "libimp version %s; required private ABI: FS84/encoder164/stream16/pack32", version);
     /* These are recovered allocator setters, not replacements for unknown
      * driver initialization. Absent optional setters retain the SDK defaults. */
@@ -336,7 +356,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     if (s->vb_pool) STEP(s->vb_pool(0xac800), "IMP_Set_Vbmpool1_Size");
     if (exclusive_owner(error, capacity)) goto failed;
     STEP(s->isp_open(), "IMP_ISP_Open"); s->isp = 1;
-    for (unsigned i = 0; i < s->sensors; ++i) {
+    for (unsigned i = 0; i < s->sensor_count; ++i) {
         jipc_imp_sensor *sensor = &s->sensor[i];
         snprintf(sensor->name, sizeof sensor->name, "%s", i ? "cv2005s1" : "cv2005");
         snprintf(sensor->i2c_name, sizeof sensor->i2c_name, "%s", sensor->name);
@@ -348,7 +368,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         STEP(s->add_sensor(sensor), "IMP_ISP_AddSensor"); s->added[i] = 1;
     }
     STEP(s->enable_sensor(), "IMP_ISP_EnableSensor"); s->enabled = 1;
-    if (s->sensors == 1) {
+    if (s->sensor_count == 1) {
         if (!s->stream_out) { failure(error, capacity, "single sensor mode requires IMP_ISP_SetStreamOut"); goto failed; }
         int stream_out = 1;
         STEP(s->stream_out(&stream_out), "IMP_ISP_SetStreamOut");
@@ -356,7 +376,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     STEP(s->system_init(), "IMP_System_Init"); s->system = 1;
     STEP(s->enable_tuning(), "IMP_ISP_EnableTuning"); s->tuning = 1;
     if (s->set_fps) STEP(s->set_fps(s->fps, 1), "IMP_ISP_Tuning_SetSensorFPS");
-    if (s->sensors == 2 && s->set_fps_sec) STEP(s->set_fps_sec(s->fps, 1), "IMP_ISP_Tuning_SetSensorFPS_Sec");
+    if (s->sensor_count == 2 && s->set_fps_sec) STEP(s->set_fps_sec(s->fps, 1), "IMP_ISP_Tuning_SetSensorFPS_Sec");
     for (unsigned i = 0; i < s->sensors * 2; ++i) {
         unsigned width = i % 2 ? s->sub_width : s->width;
         unsigned height = i % 2 ? s->sub_height : s->height;

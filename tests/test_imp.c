@@ -271,9 +271,40 @@ static void test_microphone(void)
     CHECK(!munmap(pcm, 4096));
 }
 
+static void test_provider(void)
+{
+    jipc_config config = {0};
+    char error[512];
+    config.sensors = 1;
+    CHECK(!validate_provider("IMP-1.3.0", &config, error, sizeof error));
+    CHECK(validate_provider("unknown", &config, error, sizeof error) == -1);
+    unsetenv("OPENIMP_T23_DRIVER_ABI");
+    unsetenv("OPENIMP_T23_ENCODER");
+    unsetenv("OPENIMP_T23_NATIVE_FALLBACK");
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    setenv("OPENIMP_T23_DRIVER_ABI", "sdk88", 1);
+    setenv("OPENIMP_T23_ENCODER", "native", 1);
+    setenv("OPENIMP_T23_NATIVE_FALLBACK", "0", 1);
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    setenv("OPENIMP_T23_DRIVER_ABI", "oem80", 1);
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    setenv("OPENIMP_T23_NATIVE_FALLBACK", "1", 1);
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    setenv("OPENIMP_T23_NATIVE_FALLBACK", "0", 1);
+    config.audio = 1;
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    config.audio = 0; config.sensors = 2;
+    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    unsetenv("OPENIMP_T23_DRIVER_ABI");
+    unsetenv("OPENIMP_T23_ENCODER");
+    unsetenv("OPENIMP_T23_NATIVE_FALLBACK");
+    CHECK(media_node("/dev/rmem") && media_node("/dev/soc_vpu"));
+    CHECK(!media_node("/dev/watchdog"));
+}
+
 int main(void)
 {
-    test_cleanup(); test_packs(); test_speaker(); test_microphone();
+    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone();
     puts("IMP offline adapter contracts passed");
     return 0;
 }

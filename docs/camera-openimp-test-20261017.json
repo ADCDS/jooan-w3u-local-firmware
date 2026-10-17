@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-17",
+  "target": "camera.example, JA-A12/T23N, retained OEM Linux 3.10.14 and sensor modules",
+  "result": "Native capture failed; replacement is not yet a working hardware camera service.",
+  "tested_components": {
+    "jooanipc_open_sha256": "0c5ebf825d6858852b662653239db2669cadf6d2c84e664540804e7df4e1ce72",
+    "openimp_sha256": "e6e063a2eef41e237bc38701e574a0724c330bad6cd75ce703e701f61e887896",
+    "openimp_source_base": "dd3115210e3ae97f578d6f1a8276e1eeffb5734b"
+  },
+  "configuration": {
+    "published_sensors": 1,
+    "physically_registered_sensors_in_first_trial": 1,
+    "main": [
+      640,
+      360
+    ],
+    "sub": [
+      320,
+      240
+    ],
+    "fps": 10,
+    "audio": false,
+    "OPENIMP_T23_DRIVER_ABI": "oem80",
+    "OPENIMP_T23_ENCODER": "native",
+    "OPENIMP_T23_NATIVE_FALLBACK": "0"
+  },
+  "physical_trial": {
+    "exclusive_ownership": "OEM survived 60 seconds of SIGTERM; one PID/start-time-verified SIGKILL released the process and all media handles. No new kernel faults occurred during handover.",
+    "completed_api_steps": [
+      "ELF/hash/version checks and RTLD_NOW loading",
+      "ISP open and CV2005 registration",
+      "sensor enable, system init and tuning enable",
+      "FrameSource channel creation/attributes",
+      "both encoder channel creations, registrations and bindings",
+      "framechan0 format setup"
+    ],
+    "failure": {
+      "api": "IMP_FrameSource_EnableChn(0)",
+      "ioctl": "REQBUFS 0xc0145608",
+      "errno": "ENOMEM",
+      "normal_ram_allocation_order": 8,
+      "normal_ram_free_kib_at_failure": 14284,
+      "largest_free_normal_ram_block_kib": 256,
+      "reserved_arena_largest_free_bytes": 19042304,
+      "driver_workspace_bytes_derived_from_oem_formula": 622080
+    },
+    "kernel_faults": [
+      {
+        "number": 1,
+        "fault": "sensor_set_integration_time+0x20 dereferenced sensor 1 attributes at NULL+0xb0. Only sensor 0 had been registered under dual direct_mode=2."
+      },
+      {
+        "number": 2,
+        "fault": "NULL dereference during cleanup after the firmware worker fault; teardown did not complete."
+      }
+    ],
+    "readiness": false,
+    "encoded_video_independently_decoded": false,
+    "encoder_start_recv_pic_reached": false,
+    "recovery": "Forced SSH reboot after kernel Oops; changed boot ID and both original streams independently decoded afterwards; external power was not used."
+  },
+  "source_changes_after_trial": [
+    "Recognize the exact OpenIMP T23 provider and require OEM80/native/no proprietary fallback.",
+    "Register both physical sensors while publishing only sensor 0; set both sensor FPS controls and omit the single-sensor stream-out call.",
+    "Record successful OEM80 global ISP stream/link setup to prevent FrameSource replaying it.",
+    "Include /dev/rmem and /dev/soc_vpu in media ownership checks; log SDK startup stages."
+  ],
+  "validation_after_changes": {
+    "host_core_and_adapter_contracts": "2/2 CTest tests passed",
+    "mips_adapter_contracts": "Passed in QEMU and on the camera CPU, with SDK calls replaced by test doubles.",
+    "openimp_t23_suite": "make -C tests/t23 --jobs=2 check passed",
+    "openimp_uclibc_build": "Passed",
+    "changed_hardware_initialization": "Not yet qualified: the guarded retry stopped before ISP initialization."
+  },
+  "guarded_retry": {
+    "candidate_jooanipc_open_sha256": "b713fb8a7c4ee2755db27006b56a2c8f2f37ad2632318cd024f19f02931e6ed7",
+    "candidate_openimp_sha256": "a581051dee7ad001e3fe851d01ec0fa84d067303b0fa6dfcfd191dccb5a28a17",
+    "normal_ram_compaction": "No order-8-or-higher block available after writing compact_memory; normal ISP initialization was refused.",
+    "normal_buddy_orders_after_compaction": [
+      656,
+      403,
+      140,
+      54,
+      15,
+      1,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "new_kernel_oops": false,
+    "oem_left_stopped": true,
+    "watchdog_guard_reboot_deadline_utc": "2026-10-17T18:45:27.390751+00:00"
+  },
+  "required_next_port": {
+    "workspace": "Recover cached direct mode and line count through misc-IVDC, allocate the FS0 global workspace from reserved RAM and install its physical address before REQBUFS.",
+    "release": "STREAMOFF, REQBUFS(0), verify IVDC DDR Addr is zero, close frame channel, then free the user-owned workspace. Retain allocation on uncertain detach.",
+    "full_nv12_guards": "Remain unchanged; IVDC scratch memory is separate from full-frame native encoder input."
+  },
+  "camera_changes": "RAM-only test payload/state, process signals, kernel memory compaction and recovery reboot; no firmware, boot configuration or kernel-module changes. The tomada script was not used or modified.",
+  "private_evidence_directories": [
+    "build/camera-openimp-20261017",
+    "build/camera-openimp-20261017-attempt2",
+    "build/camera-openimp-20261017-attempt3"
+  ]
+}
