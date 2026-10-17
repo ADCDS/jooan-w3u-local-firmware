@@ -202,7 +202,12 @@ while [ "$i" -lt 185 ]; do
     sleep 1; i=$((i + 1))
     native_ready || fail 'native trial lost health; armed watchdog will recover'
 done
-control_ready || fail 'final controller health check failed'
+i=0
+until control_ready; do
+    native_ready || fail 'native health lost during final network qualification'
+    [ "$i" -lt 60 ] || fail 'final controller health did not recover'
+    sleep 1; i=$((i + 1))
+done
 native_ready || fail 'final native health check failed'
 printf '%s\n' "$boot $native" > "$run/qualified"
 rm -f "$root/boot-trial"
