@@ -5,8 +5,8 @@ streaming, administration, camera controls and recording, with a workstation
 replay backend and an external-IMP hardware backend for the retained OEM Linux
 kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 
-**The software builds and runs on x86-64 and MIPS32/uClibc under QEMU. The hardware
-backend has not been qualified on the physical camera.** A successful replay or
+**Host, MIPS QEMU and physical T23N replay tests pass. Native sensor capture
+has not been qualified on the camera.** A successful replay or
 SDK-double test does not establish sensor, ISP, encoder or motor operation.
 This is not yet complete OEM feature parity; the feature boundaries below are
 part of the project contract.
@@ -136,6 +136,10 @@ make integration-tls
 Run full builds/stacks sequentially. The default build has two compiler jobs;
 CTest and integration tests run serially. The [verification record](docs/verification.json)
 separates build/replay evidence from physical-camera qualification.
+The [camera test receipt](docs/camera-test-20261017.json) records on-device
+TLS, RTSP, recording and discovery checks, the fixed entropy wait, and the
+remaining incompatible-SDK capture blocker. The OEM services remained running
+and all temporary camera test files were removed.
 
 A local staging tree includes the binary, example configurations, documentation
 and dependency licenses:

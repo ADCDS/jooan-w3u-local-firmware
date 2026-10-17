@@ -6,6 +6,7 @@ move the motor, start recording, or access the camera directly.
 """
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
 import http.client
@@ -87,7 +88,7 @@ class HTTPTests(unittest.TestCase):
     def wsse(self, offset=0, password=None):
         nonce = secrets.token_bytes(16)
         created = (datetime.datetime.now(datetime.timezone.utc) +
-                   datetime.timedelta(seconds=offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                   datetime.timedelta(seconds=self.settings.clock_offset + offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
         password = self.settings.password if password is None else password
         digest = base64.b64encode(hashlib.sha1(
             nonce + created.encode() + password.encode()).digest()).decode()
@@ -115,6 +116,13 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.soap("GetProfiles", auth=False)[0], 401)
         self.assertEqual(self.soap("SetSystemDateAndTime", auth=False,
                                    namespace=DEVICE)[0], 401)
+
+    def test_parallel_authenticated_status_reads(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replies = list(pool.map(lambda _: self.request("GET", "/api/v1/status"), range(4)))
+        for status, _, body in replies:
+            self.assertEqual(status, 200, body)
+            self.assertIsInstance(json.loads(body), dict)
 
     def test_profiles_and_stream_uri(self):
         status, _, body = self.soap("GetProfiles")
@@ -181,6 +189,8 @@ if __name__ == "__main__":
     parser.add_argument("--tls", action="store_true")
     parser.add_argument("--ca")
     parser.add_argument("--insecure", action="store_true")
+    parser.add_argument("--clock-offset", type=float, default=0,
+                        help="Camera UTC clock minus client UTC clock, in seconds")
     settings, remaining = parser.parse_known_args()
     HTTPTests.settings = settings
     unittest.main(argv=[__file__, *remaining])

@@ -234,12 +234,12 @@ class ProtocolTests(unittest.TestCase):
         for _ in range(100):
             rtp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             rtcp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            rtp.bind((self.settings.host, 0))
+            rtp.bind((self.settings.local_bind, 0))
             port = rtp.getsockname()[1]
             if port & 1 or port == 65535:
                 rtp.close(); rtcp.close(); continue
             try:
-                rtcp.bind((self.settings.host, port + 1))
+                rtcp.bind((self.settings.local_bind, port + 1))
                 sockets = rtp, rtcp
                 break
             except OSError:
@@ -254,6 +254,12 @@ class ProtocolTests(unittest.TestCase):
             {"Transport": f"RTP/AVP;unicast;client_port={port}-{port + 1}"})
         self.assertEqual(code, 200)
         self.assertIn("server_port=", headers["transport"])
+        ports = re.search(r"server_port=(\d+)-(\d+)", headers["transport"])
+        self.assertIsNotNone(ports)
+        # Open both return paths through a stateful bench-network firewall.
+        # The server accepts no media input on these playback sockets.
+        rtp.sendto(b"\x80\x60" + bytes(10), (self.settings.host, int(ports[1])))
+        rtcp.sendto(b"\x80\xc9\x00\x01" + bytes(4), (self.settings.host, int(ports[2])))
         self.assertEqual(client.request("PLAY")[0], 200)
         packet, _ = rtp.recvfrom(2048)
         self.assertEqual(packet[0] >> 6, 2)
@@ -292,6 +298,7 @@ class ProtocolTests(unittest.TestCase):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--local-bind", default="0.0.0.0", help="Local interface for receiving UDP media")
     parser.add_argument("--port", type=int, default=8554)
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", required=True)

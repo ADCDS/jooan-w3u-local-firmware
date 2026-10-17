@@ -1,9 +1,11 @@
 # JA A12 hardware integration
 
-The hardware backend is implemented but has not been run on the physical
-camera. The SDK contract tests replace function pointers with doubles; QEMU
-tests execute the rebuilt MIPS application with file-backed media. Neither
-establishes that the target can capture a fresh sensor frame or encode it.
+The physical T23N runs the rebuilt daemon with file-backed media; see the
+[camera test receipt](camera-test-20261017.json). Native IMP startup correctly
+refused the active OEM owner before loading an SDK. Sensor/encoder
+initialization remains unqualified. The SDK contract tests use function
+pointers replaced with doubles. Replay and SDK doubles do not establish that
+the replacement can capture or encode a fresh sensor frame.
 
 ## Required runtime arrangement
 
@@ -23,6 +25,15 @@ configuration, TLS keys and `state_dir` private. Discovery refuses identity
 files with group/world permissions, so an unsuitable mount prevents startup.
 The daemon never changes mount options. A volatile state directory loses its
 discovery identity and PTZ presets at reboot.
+
+The retained boot environment must initialize the kernel CSPRNG before this
+daemon generates credentials or serves TLS. MbedTLS uses `/dev/urandom` as the
+fallback on kernels without `getrandom()`, including this Linux 3.10 target;
+this applies to both its HTTPS and PSA random generators. This fixes the
+observed blocking `/dev/random` reads. The on-device test used the already
+running OEM system; early-boot entropy readiness remains a cold-boot
+qualification requirement. MbedTLS pthread locking is enabled for concurrent
+HTTPS workers and PSA state.
 
 The original `jooanipc` statically contains its IMP implementation; there is no
 reusable OEM `libimp.so` in the dump. Supply a separately obtained compatible
@@ -67,6 +78,29 @@ capture and decode native H.264 from both sensors, check frame freshness and
 timing, exercise microphone/speaker and native JPEG, verify controls against
 the real driver, and prove teardown restores the known OEM baseline. LAN
 multicast discovery and a real NVR also require interoperability testing.
+
+The 2026-10-17 run passed 73 native core checks, offline SDK contracts, six RTSP
+and eight HTTP/ONVIF protocol tests, local-subnet discovery probes, TCP/UDP
+FFmpeg replay decoding, RAM recording/download, controls in replay, and
+credential reload. The process sampled 1776 KiB RSS and 1832 KiB high-water RSS.
+Its temporary files were removed; OEM PID 393 and the local controller stayed
+running. The camera clock was approximately 68340 seconds behind the client;
+WSSE tests compensated client-side without changing the camera clock.
+
+The only locally available external library, SHA-256
+`bd904ec8f4123965ded8c0c57c25ad5c3ae0fdc17aa4a6374278a7c822cb31d9`,
+uses the 88-byte `0xc05863xx` VPU ioctl family. The retained OEM driver implements
+the 80-byte `0xc05063xx` family. Stopping the OEM application does not resolve
+this ABI mismatch. No SDK initialization was attempted with that known
+incompatible candidate, and no capture or physical PTZ/light/audio success is
+claimed.
+
+Remote protocol checks accept `test_rtsp.py --host ADDRESS --local-bind 0.0.0.0`
+and `test_http_onvif.py --clock-offset SECONDS` for a camera whose clock differs
+from the client. The latter is the camera's UTC clock minus the client's.
+`build/mips/udp-probe ADDRESS PORT` exchanges one bounded datagram over
+stdin/stdout for discovery checks through SSH when the client is outside the
+camera's local subnet. It accesses no camera devices and exits 2 on timeout.
 
 The source build installs nothing on a camera. It performs no rootfs writes,
 flashing, module reload or automatic termination of existing media processes.

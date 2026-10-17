@@ -20,6 +20,7 @@ set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
 set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/include/mbedtls_user_config.h" CACHE STRING "" FORCE)
 FetchContent_Declare(mbedtls URL "${mbedtls_url}"
   URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
@@ -48,6 +49,8 @@ if(JIPC_SANITIZERS)
 endif()
 if(JIPC_BUILD_TESTS)
   enable_testing()
+  add_executable(udp-probe tests/udp_probe.c)
+  target_compile_options(udp-probe PRIVATE -Wall -Wextra -Werror)
   if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test_core.c")
     add_executable(test-core tests/test_core.c)
     target_compile_options(test-core PRIVATE -UNDEBUG)
@@ -66,7 +69,8 @@ install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DATADIR}/jooanipc-open/examples)
 install(FILES README.md dependencies.lock.json DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES docs/hardware.md docs/platform.md docs/third-party.md
-  docs/verification.json DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
+  docs/verification.json docs/verification-initial-20261017.json
+  docs/camera-test-20261017.json DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/jooanipc-open)
