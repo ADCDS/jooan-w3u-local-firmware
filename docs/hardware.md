@@ -191,9 +191,10 @@ configuration reload is rejected with an explicit process-restart requirement;
 closing an owned FD leaves the hardware timer armed.
 
 Create the 0600 `enabled` file only after checking configuration and shell syntax.
-The helper requires a boot-specific syslog marker followed by `motor reset
-finish`, a committed/stable retained controller, live SSH, SD mount and adequate
-JFFS2 space. It then persists `boot-trial`, stops identity-checked OEM watchdog
+The helper requires a boot-specific syslog marker followed by the complete
+successful `motor_step_reset` sequence: stages 418, 427, 449 (idle), 459 and
+555 (idle), with no reset error or return timeout. It also requires a committed,
+stable retained controller, live SSH, SD mount and adequate JFFS2 space. It then persists `boot-trial`, stops identity-checked OEM watchdog
 and media processes, and checks every task's descriptors, IVDC address zero
 and absence of Linux TAINT_DIE. It launches the replacement with the explicit
 OEM80/native/no-fallback flags. The new process owns `/dev/watchdog`, sets its
@@ -227,7 +228,16 @@ are required for this arrangement.
 The deployed Frigate inputs use `preset-rtsp-restream` against go2rtc on
 `127.0.0.1:8554`: each lens has one camera producer shared by recording,
 detection and live clients. This avoids duplicate camera traffic on Wi-Fi.
-A later native test ran into poor service on the initially selected AP;
-reassociation to the stronger gateway AP restored both NVR views at5fps with
-zero skipped frames. Media encoding and kernel health remained good during
-that network incident. The AP choice is kept in the private deployment manifest.
+An earlier test improved an initially weak connection by selecting a stronger
+AP. Subsequent reboot tests exposed a different problem: forcing the working
+5 GHz association onto that 2.4 GHz AP was followed by lost IP access. The
+current deployment leaves `JIPC_WIFI_BSSID` and `JIPC_WIFI_FREQ` empty, preserving
+the retained network controller's association. Recovery and native qualification
+succeeded on 5 GHz. Do not reinstate the old AP pin without testing its boot
+behavior; a healthy running association does not establish safe cross-band
+reassociation during bootstrap.
+
+The Frigate CPU detector can temporarily fill its two-frame processing queue
+during full-scene motion. Observed processing drops recovered to the configured
+5 fps; live capture/recording remained available. SHM had more than 115 MiB free,
+so its sizing recommendation did not indicate an exhausted frame store.

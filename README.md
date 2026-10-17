@@ -15,10 +15,11 @@ reserved memory at that size, and asymmetric 1080p/360p capture produced visual
 corruption despite decodable H.264. The native profile therefore enforces
 matching main dimensions through 1280×720. See the
 [hardware receipt](docs/camera-quality-test-20261017.json) for exact artifacts
-and qualification limits. The updated profile passed live watchdog and control
-checks; its reboot verification is currently pending network recovery. The
-previous 640×360 deployment passed a controlled reboot. OEM bootstrap remains
-for network setup and motor homing. This is a local-services replacement, with the
+and qualification limits. The updated profile passed physical controls,
+preset persistence, Frigate recording and automatic reboot qualification.
+The deployment preserves the network controller's working association instead
+of forcing an AP switch. OEM bootstrap remains for network setup and motor
+homing. This is a local-services replacement, with the
 feature boundaries below; full OEM feature parity is not claimed.
 
 ## Implemented services
