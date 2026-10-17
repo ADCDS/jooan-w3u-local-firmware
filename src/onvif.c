@@ -172,8 +172,16 @@ static int created_time(const char *s, int64_t *value) {
     unsigned max=md[m-1]+(m==2&&y%4==0&&(y%100!=0||y%400==0)); if ((unsigned)d>max) return -1;
     const char *p=s+n;
     if (*p=='.') { unsigned digits=0; ++p; while (isdigit((unsigned char)*p)) { ++p; if (++digits>9)return -1; } if(!digits)return -1; }
-    if (*p!='Z'||p[1]) return -1;
-    *value=civil_days(y,(unsigned)m,(unsigned)d)*86400+h*3600+mi*60+se;
+    int offset=0;
+    if(*p=='Z'&&!p[1]){}
+    else if((*p=='+'||*p=='-')&&strlen(p)==6&&p[3]==':'&&
+            isdigit((unsigned char)p[1])&&isdigit((unsigned char)p[2])&&
+            isdigit((unsigned char)p[4])&&isdigit((unsigned char)p[5])){
+        int hours=(p[1]-'0')*10+p[2]-'0',minutes=(p[4]-'0')*10+p[5]-'0';
+        if(hours>14||minutes>59||(hours==14&&minutes))return -1;
+        offset=(hours*3600+minutes*60)*(*p=='+'?1:-1);
+    }else return -1;
+    *value=civil_days(y,(unsigned)m,(unsigned)d)*86400+h*3600+mi*60+se-offset;
     return 0;
 }
 /* The daemon owns one camera. Keep used tokens across SIGHUP/app recreation. */

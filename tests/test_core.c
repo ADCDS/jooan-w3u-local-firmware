@@ -28,6 +28,7 @@ int main(void)
     jipc_app app; memset(&app, 0, sizeof(app)); jipc_config_defaults(&app.config);
     pthread_mutex_init(&app.config_mutex, NULL); pthread_mutex_init(&app.control_mutex, NULL);
     strcpy(app.config.password, "test-credential"); strcpy(app.config.replay[0], "/tmp/fixture.h264");
+    app.config.flip0=3;app.config.flip1=1;
     snprintf(app.config.state_dir, sizeof(app.config.state_dir), "%s/state", temporary);
     snprintf(app.config.record_dir, sizeof(app.config.record_dir), "%s/recordings", temporary);
     snprintf(app.config.config_path, sizeof(app.config.config_path), "%s/settings.ini", temporary);
@@ -35,10 +36,12 @@ int main(void)
     CHECK(jipc_config_save(&app.config) == 0); struct stat st; CHECK(!stat(app.config.config_path, &st)); CHECK((st.st_mode & 0777) == 0600);
     jipc_config loaded; jipc_config_defaults(&loaded); CHECK(!jipc_config_load(&loaded, app.config.config_path, error, sizeof(error)));
     CHECK(!strcmp(loaded.password, app.config.password)); CHECK(loaded.fps == 15);
+    CHECK(loaded.flip0==3&&loaded.flip1==1);
     CHECK(jipc_config_json(&app, encoded, sizeof(encoded)) < 0);
     char json[8192]; CHECK(jipc_config_json(&app, json, sizeof(json)) > 0); CHECK(!strstr(json, "test-credential"));
     CHECK(jipc_config_patch(&app, "{\"fps\":12,\"bitrate\":512}", error, sizeof(error)) == 0); CHECK(app.restart == 1);
     CHECK(jipc_config_patch(&app, "{\"fps\":0}", error, sizeof(error)) < 0); CHECK(app.config.fps == 12);
+    CHECK(jipc_config_patch(&app, "{\"flip0\":4}", error, sizeof(error)) < 0); CHECK(app.config.flip0==3);
     CHECK(jipc_config_patch(&app, "{\"unknown\":1}", error, sizeof(error)) < 0);
     CHECK(jipc_config_patch(&app, "{\"password\":\"x\",\"password\":\"y\"}", error, sizeof(error)) < 0);
     CHECK(jipc_config_patch(&app, "{\"password\":\" secret \"}", error, sizeof(error)) < 0);

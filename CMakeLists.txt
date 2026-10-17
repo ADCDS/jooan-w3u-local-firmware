@@ -31,7 +31,7 @@ set_property(DIRECTORY "${mbedtls_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
-add_library(jipc_core STATIC src/util.c src/crypto.c src/config.c src/media.c src/imp_backend.c
+add_library(jipc_core STATIC src/util.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
   src/platform.c src/rtsp.c src/http.c src/onvif.c src/discovery.c src/record.c)
 target_include_directories(jipc_core PUBLIC include)
 target_compile_definitions(jipc_core PUBLIC JIPC_WITH_MBEDTLS _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE _LARGEFILE64_SOURCE)
@@ -63,6 +63,25 @@ if(JIPC_BUILD_TESTS)
     target_link_libraries(test-imp PRIVATE jipc_core)
     add_test(NAME imp-contract COMMAND test-imp)
   endif()
+  add_executable(test-platform-motor tests/test_platform_motor.c)
+  target_compile_options(test-platform-motor PRIVATE -UNDEBUG)
+  target_link_options(test-platform-motor PRIVATE -Wl,--wrap=ioctl)
+  target_link_libraries(test-platform-motor PRIVATE jipc_core)
+  add_test(NAME native-motor COMMAND test-platform-motor)
+  add_executable(test-watchdog tests/test_watchdog.c src/watchdog.c)
+  target_compile_definitions(test-watchdog PRIVATE JIPC_TEST_WATCHDOG=1)
+  target_compile_options(test-watchdog PRIVATE -UNDEBUG)
+  target_link_options(test-watchdog PRIVATE -Wl,--wrap=open,--wrap=open64,--wrap=close,--wrap=write,--wrap=ioctl)
+  target_link_libraries(test-watchdog PRIVATE jipc_core)
+  add_test(NAME watchdog COMMAND test-watchdog)
+  add_executable(test-media-control tests/test_media_control.c)
+  target_compile_options(test-media-control PRIVATE -UNDEBUG)
+  target_link_libraries(test-media-control PRIVATE jipc_core)
+  add_test(NAME media-control COMMAND test-media-control)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME boot-calibration COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_boot_calibration.py
+    ${CMAKE_SOURCE_DIR}/scripts/oem-boot-handoff.sh)
 endif()
 install(TARGETS jooanipc-open RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/replay.example.ini config/ja-a12.example.ini
@@ -72,6 +91,7 @@ install(FILES docs/hardware.md docs/platform.md docs/third-party.md
   docs/verification.json docs/verification-initial-20261017.json
   docs/camera-test-20261017.json docs/camera-openimp-test-20261017.json
   docs/camera-ivdc-test-20261017.json
+  docs/camera-native-test-20261017.json
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)

@@ -448,9 +448,25 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
             state->speaker_enabled = value;
             if (value) state->speaker_enabled_us = jipc_now_us();
         }
+    } else if (state->imp && (!strcmp(operation, "flip") || !strcmp(operation, "hflip") || !strcmp(operation, "vflip"))) {
+        if (value2 < 0 || (unsigned)value2 >= state->config.sensors || value < 0 ||
+            value > (!strcmp(operation,"flip") ? 3 : 1)) {
+            rc = fail(error,capacity,"invalid sensor or flip bitmask");
+        } else {
+            /* Apply orientation and PTZ signs together on ordered restart.
+             * Direct SDK writes would leave platform direction state stale. */
+            jipc_config config; jipc_config_copy(app,&config);
+            unsigned flip=value2?config.flip1:config.flip0;
+            if (!strcmp(operation,"flip")) flip=(unsigned)value;
+            else {
+                unsigned bit=!strcmp(operation,"hflip")?1u:2u;
+                flip=(flip&~bit)|(value?bit:0u);
+            }
+            char patch[32];snprintf(patch,sizeof(patch),"{\"flip%d\":%u}",value2,flip);
+            rc=jipc_config_patch(app,patch,error,capacity);
+        }
     } else if (state->imp && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation") || !strcmp(operation, "sharpness") ||
-               !strcmp(operation, "flip") || !strcmp(operation, "hflip") || !strcmp(operation, "vflip") ||
                !strcmp(operation, "isp_night") || !strcmp(operation, "volume"))) {
         rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
     } else rc = jipc_platform_control(app, operation, value, value2, error, capacity);

@@ -1,0 +1,104 @@
+{
+  "date": "2026-10-17",
+  "target": "Physical JOOAN JA-A12, T23N, CV2005/CV2005S1, retained OEM Linux3.10.14/modules/IQ",
+  "scope": "Local camera services with source-built OpenIMP OEM80/native/no-proprietary-fallback",
+  "runtime_sha256": {
+    "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+    "jooanipc-open": "fa902773d7fc55974c80122255468e666f42f2c42d6c2c53462cdb9d70e0ba01",
+    "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb"
+  },
+  "native_video": {
+    "logical_to_framesource": [
+      1,
+      2,
+      4,
+      5
+    ],
+    "logical_to_encoder": [
+      0,
+      4,
+      1,
+      5
+    ],
+    "workspace_holder": "FS0 unbound, enabled first and disabled after dependents",
+    "sensors": 2,
+    "main": [
+      640,
+      360
+    ],
+    "sub": [
+      320,
+      240
+    ],
+    "configured_fps": 15,
+    "audio": false,
+    "bitrate_main_kbps": 512,
+    "flip0": 3,
+    "flip1": 3,
+    "actual_views": "Distinct real outdoor sensor views visually checked; no private frames committed",
+    "all_four_ffmpeg_decoded": true
+  },
+  "clean_native_cycle": {
+    "tested_client_sha256": "f4cfb74ce0157c133c630a96411603c92e35252f005709d73d68fef426b199d9",
+    "library_sha256": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+    "ffmpeg_frames_decoded_per_channel": 3,
+    "process_exit": 0,
+    "all_thread_media_fd_holders": 0,
+    "consumed_ivdc_address_after_close": 0,
+    "kernel_oops": false,
+    "subsequent_same_boot_native_restart": true
+  },
+  "platform": {
+    "physical_pan_and_tilt": true,
+    "manual_deadman_stop": true,
+    "request": "3, exactly one nonzero axis per chunk; request8 Y bookkeeping bug avoided",
+    "presets_persisted_across_process_restart": true,
+    "repeated_preset_sequence": [
+      1,
+      2,
+      1
+    ],
+    "preset_return_both_axes": true,
+    "positions": "Raw open-loop driver coordinates, not independently measured shaft angles",
+    "normalization_limit": "Application display uses historical module-load8600/2000 scale, while OEM homing reports4080/1230; retained driver enforces travel, raw presets remain accurate"
+  },
+  "frigate": {
+    "host": "nvr.example",
+    "version": "0.18.0-77a66e7",
+    "cameras": {
+      "jooan_main": "laboratory camera:18554/live/ch0",
+      "jooan_sub": "laboratory camera:18554/live/ch2"
+    },
+    "recording": "New positive-size recording segments observed for both views",
+    "detection_fps_per_view": 5,
+    "onvif": "HTTPS18443, WSSE PasswordDigest, pt and two presets recognized",
+    "ignore_time_mismatch": true,
+    "tls_insecure": false
+  },
+  "boot": {
+    "result": "Final reviewed release reboot qualification in progress",
+    "arrangement": "Guarded OEM bootstrap retains Wi-Fi, SD mount and full motor homing; source handoff then stops only OEM media/watchdog",
+    "failed_attempt": "Initial gate used a completion message from a different OEM reset path and refused takeover; corrected normal startup requires ordered418/427/449/459/555 status0 and no reset error/timeout",
+    "trial_latch": "Unqualified transfer retains boot-trial for guarded OEM rescue on next boot",
+    "watchdog_seconds": 180,
+    "qualification_seconds": 185,
+    "private_config_state_tls": "JFFS2 /opt/jooanipc-open, directories0700/files0600",
+    "public_runtime": "Versioned SD directory; compatible libatomic.so.1 included"
+  },
+  "verification": {
+    "host_unit_tests": 6,
+    "mips_qemu_contract_executables": 5,
+    "camera_cpu_contract_tests": "Native motor/watchdog contracts passed earlier; final per-sensor orientation persistence/restart contract also passed on the camera CPU",
+    "host_tls_integration": "Passed: RTSP6, HTTP/ONVIF9, discovery4, FFmpeg TCP/UDP decode, recording/download, credential persistence/reload",
+    "openimp": "Full T23 and T30 suites passed; optional T30.so export check skipped because that library was not built; metadata ASan+UBSan passed",
+    "boot_shell": "Local shellcheck/sh-n and target BusyBox sh-n passed; stale/incomplete/error/timeout/retry calibration fixtures passed"
+  },
+  "limits": [
+    "High resolutions beyond640x360main/320x240sub, audio, JPEG, GPIO/light/IR-cut behavior and long soak remain unqualified",
+    "Controlled reboot is not a cold power-cycle/early-boot entropy qualification",
+    "Kernel/modules, sensor IQ and guarded OEM network/motor bootstrap remain dependencies",
+    "The broad hardware_validated API field staysfalse until the full feature matrix is qualified"
+  ],
+  "secrets": "No credentials, factory identities, private keys, raw OEM logs or camera frames included",
+  "openimp_source_commit": "9386ad38b037ea74892b8d53981fd9d2042f2474"
+}

@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "jipc.h"
+#include "jipc_watchdog.h"
 #include "cJSON.h"
 #include <errno.h>
 #include <getopt.h>
@@ -120,6 +121,13 @@ int main(int argc, char **argv)
     struct sigaction action; memset(&action, 0, sizeof(action)); action.sa_handler = signal_handler; sigemptyset(&action.sa_mask);
     sigaction(SIGINT, &action, NULL); sigaction(SIGTERM, &action, NULL); sigaction(SIGHUP, &action, NULL);
     signal(SIGPIPE, SIG_IGN); uint64_t deadline = duration ? jipc_now_us() + (uint64_t)duration * 1000000u : 0; int result = 0;
+    int watchdog_fd=-1;uint64_t watchdog_last=0;
+    const int watchdog_enabled=config.watchdog;
+    if(config.watchdog){
+        watchdog_fd=jipc_watchdog_open();
+        if(watchdog_fd<0){perror("watchdog ownership/configuration");return 1;}
+        watchdog_last=jipc_now_us();
+    }
     do {
         reload_requested = 0; jipc_app *app = calloc(1, sizeof(*app)); if (!app) return 1;
         app->config = config; app->started_us = jipc_now_us();
@@ -133,6 +141,20 @@ int main(int argc, char **argv)
             while (!interrupted && !reload_requested && !app->restart && (!deadline || jipc_now_us() < deadline)) {
                 pthread_mutex_lock(&app->control_mutex); int ready = app->backend_ready; pthread_mutex_unlock(&app->control_mutex);
                 if (!ready) { jipc_log("error", "media backend stopped; shutting down services"); result = 1; break; }
+                if(watchdog_fd>=0&&jipc_now_us()-watchdog_last>=1000000){
+                    int fresh=1;uint64_t now=jipc_now_us();
+                    for(unsigned i=0;i<config.sensors*2;++i){
+                        pthread_mutex_lock(&app->streams[i].mutex);
+                        uint64_t sequence=app->streams[i].sequence;
+                        uint64_t stamp=sequence?app->streams[i].slots[(sequence-1)%JIPC_RING_SLOTS].pts_us:0;
+                        pthread_mutex_unlock(&app->streams[i].mutex);
+                        if(!stamp||now<stamp||now-stamp>15000000)fresh=0;
+                    }
+                    if(!fresh||jipc_watchdog_feed(watchdog_fd)){
+                        jipc_log("error","watchdog health check failed; stopping service");result=1;break;
+                    }
+                    watchdog_last=now;
+                }
                 jipc_sleep_ms(100);
             }
         }
@@ -145,7 +167,12 @@ int main(int argc, char **argv)
         if (jipc_config_load(&config, config_path, error, sizeof(error)) ||
             apply_overrides(&config, input, backend, library, bind, record_dir, http, rtsp, plain) ||
             jipc_config_validate(&config, error, sizeof(error))) { jipc_log("error", "reload: %s", error); result = 1; break; }
+        if(config.watchdog!=watchdog_enabled){
+            jipc_log("error","watchdog ownership cannot change on reload; arrange ownership and restart the process");
+            result=1;break;
+        }
     } while (!interrupted);
+    if(watchdog_fd>=0)close(watchdog_fd); /* remains armed until handoff/reset */
     return result;
 bad:
     usage(stderr); return 2;

@@ -30,6 +30,7 @@ typedef struct {
     int groups[4], fds[4], ai_enabled, ai_channel, ao_enabled, ao_channel;
     unsigned sensors, sensor_count, width, height, sub_width, sub_height, fps, bitrate;
     int audio;
+    int openimp_fullframe, workspace_created, workspace_enabled;
     unsigned char *frame;
     uint64_t last_video[4], last_audio, next_owner_check;
     int16_t talk_buffer[320];
@@ -68,6 +69,13 @@ typedef struct {
 static const int fs_channels[4] = {0, 1, 3, 4};
 static const int enc_channels[4] = {0, 4, 1, 5};
 static const int enc_groups[4] = {0, 2, 1, 3};
+static int source_channel(const imp_state *s, unsigned int stream)
+{
+    /* OEM direct_mode=2 uses line rings on FS0/3. Ordinary outputs 1/2
+     * and 4/5 carry complete NV12 for OpenIMP's native encoder. */
+    static const int ordinary[4] = {1, 2, 4, 5};
+    return s->openimp_fullframe ? ordinary[stream] : fs_channels[stream];
+}
 /* Startup/shutdown are serialized by the application. A failed SDK teardown
  * prevents this process from reusing potentially live SDK global state. */
 static int sdk_poisoned;
@@ -240,9 +248,10 @@ void jipc_imp_close(void *state)
     for (int i = 3; i >= 0; --i)
         if (s->receiving[i]) cleanup_result("Encoder_StopRecvPic", s->stop(enc_channels[i]));
     for (int i = 3; i >= 0; --i)
-        if (s->fs_enabled[i]) cleanup_result("FrameSource_DisableChn", s->fs_disable(fs_channels[i]));
+        if (s->fs_enabled[i]) cleanup_result("FrameSource_DisableChn", s->fs_disable(source_channel(s, i)));
+    if (s->workspace_enabled) cleanup_result("FrameSource_DisableWorkspace", s->fs_disable(0));
     for (int i = 3; i >= 0; --i) {
-        jipc_imp_cell source = {0, fs_channels[i], 0}, destination = {1, enc_groups[i], 0};
+        jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
         if (s->bound[i]) cleanup_result("System_UnBind", s->unbind(&source, &destination));
         if (s->registered[i]) cleanup_result("Encoder_UnRegisterChn", s->enc_unregister(enc_channels[i]));
         if (s->enc_created[i]) cleanup_result("Encoder_DestroyChn", s->enc_destroy(enc_channels[i]));
@@ -250,7 +259,8 @@ void jipc_imp_close(void *state)
     for (int i = 3; i >= 0; --i)
         if (s->groups[i]) cleanup_result("Encoder_DestroyGroup", s->group_destroy(i));
     for (int i = 3; i >= 0; --i)
-        if (s->fs_created[i]) cleanup_result("FrameSource_DestroyChn", s->fs_destroy(fs_channels[i]));
+        if (s->fs_created[i]) cleanup_result("FrameSource_DestroyChn", s->fs_destroy(source_channel(s, i)));
+    if (s->workspace_created) cleanup_result("FrameSource_DestroyWorkspace", s->fs_destroy(0));
     /* OEM shutdown order differs from generic SDK examples. */
     if (s->system) cleanup_result("System_Exit", s->system_exit());
     if (s->enabled) cleanup_result("ISP_DisableSensor", s->disable_sensor());
@@ -281,8 +291,10 @@ static int validate_provider(const char *version, const jipc_config *config,
         if (!abi || strcmp(abi, "oem80") || !encoder || strcmp(encoder, "native") ||
             !fallback || strcmp(fallback, "0"))
             return failure(error, capacity, "OpenIMP requires OPENIMP_T23_DRIVER_ABI=oem80, OPENIMP_T23_ENCODER=native and OPENIMP_T23_NATIVE_FALLBACK=0");
-        if (config->sensors != 1 || config->audio)
-            return failure(error, capacity, "OpenIMP bring-up currently requires one sensor and audio disabled; dual-sensor IVDC/audio are unqualified");
+        if (config->audio)
+            return failure(error, capacity, "OpenIMP bring-up requires audio disabled");
+        if (config->fps != 15)
+            return failure(error, capacity, "OpenIMP OEM sensor activation is qualified at 15 fps");
         return 0;
     }
     if (!strstr(version, "1.3.0") && !strstr(version, "1.0.1"))
@@ -346,7 +358,8 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     /* This OEM module runs both AE sensor slots in direct_mode=2, even when
      * the consumer publishes only sensor 0. Leaving slot 1 unregistered lets
      * its firmware worker dereference a NULL sensor attribute. */
-    s->sensor_count = !strcmp(version, "libimp.so T23 openimp") ? 2 : s->sensors;
+    s->openimp_fullframe = !strcmp(version, "libimp.so T23 openimp");
+    s->sensor_count = s->openimp_fullframe ? 2 : s->sensors;
     jipc_log("info", "libimp version %s; required private ABI: FS84/encoder164/stream16/pack32", version);
     /* These are recovered allocator setters, not replacements for unknown
      * driver initialization. Absent optional setters retain the SDK defaults. */
@@ -377,17 +390,30 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     STEP(s->enable_tuning(), "IMP_ISP_EnableTuning"); s->tuning = 1;
     if (s->set_fps) STEP(s->set_fps(s->fps, 1), "IMP_ISP_Tuning_SetSensorFPS");
     if (s->sensor_count == 2 && s->set_fps_sec) STEP(s->set_fps_sec(s->fps, 1), "IMP_ISP_Tuning_SetSensorFPS_Sec");
+    for (unsigned sensor = 0; sensor < s->sensors; ++sensor) {
+        unsigned flip = sensor ? config.flip1 : config.flip0;
+        if (flip && (!s->hflip[sensor] || !s->vflip[sensor])) { failure(error, capacity, "SDK lacks configured sensor flip controls"); goto failed; }
+        if (s->hflip[sensor]) STEP(s->hflip[sensor](flip & 1), "IMP_ISP_Tuning_SetISPHflip");
+        if (s->vflip[sensor]) STEP(s->vflip[sensor]((flip >> 1) & 1), "IMP_ISP_Tuning_SetISPVflip");
+    }
+    if (s->openimp_fullframe) {
+        jipc_imp_fs holder = {.width = 640, .height = 360, .pixel_format = 10,
+            .scaler_enable = 1, .scaler_width = 640, .scaler_height = 360,
+            .fps_num = s->fps, .fps_den = 1, .buffer_count = 1};
+        STEP(s->fs_create(0, &holder), "IMP_FrameSource_CreateWorkspace"); s->workspace_created = 1;
+        STEP(s->fs_set(0, &holder), "IMP_FrameSource_SetWorkspace");
+    }
     for (unsigned i = 0; i < s->sensors * 2; ++i) {
         unsigned width = i % 2 ? s->sub_width : s->width;
         unsigned height = i % 2 ? s->sub_height : s->height;
         jipc_imp_fs fs = {
             .width = width, .height = height, .pixel_format = 10,
-            .crop_enable = 1, .crop_width = width, .crop_height = height,
+            .crop_enable = !s->openimp_fullframe, .crop_width = width, .crop_height = height,
             .scaler_enable = 1, .scaler_width = width, .scaler_height = height,
             .fps_num = s->fps, .fps_den = 1, .buffer_count = 1, .channel_type = 0
         };
-        STEP(s->fs_create(fs_channels[i], &fs), "IMP_FrameSource_CreateChn"); s->fs_created[i] = 1;
-        STEP(s->fs_set(fs_channels[i], &fs), "IMP_FrameSource_SetChnAttr");
+        STEP(s->fs_create(source_channel(s, i), &fs), "IMP_FrameSource_CreateChn"); s->fs_created[i] = 1;
+        STEP(s->fs_set(source_channel(s, i), &fs), "IMP_FrameSource_SetChnAttr");
     }
     for (unsigned i = 0; i < 4; ++i) { STEP(s->group_create(i), "IMP_Encoder_CreateGroup"); s->groups[i] = 1; }
     for (unsigned i = 0; i < s->sensors * 2; ++i) {
@@ -401,16 +427,19 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         w[15] = 1; w[16] = 45; w[17] = 15;
         w[18] = i % 2 && s->bitrate > 256 ? s->bitrate / 2 : s->bitrate;
         w[20] = 3; w[21] = 15;
-        w[40] = !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
+        w[40] = !s->openimp_fullframe && !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
         STEP(s->enc_create(enc_channels[i], &encoder), "IMP_Encoder_CreateChn"); s->enc_created[i] = 1;
         STEP(s->enc_register(enc_groups[i], enc_channels[i]), "IMP_Encoder_RegisterChn"); s->registered[i] = 1;
-        jipc_imp_cell source = {0, fs_channels[i], 0}, destination = {1, enc_groups[i], 0};
+        jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
         STEP(s->bind(&source, &destination), "IMP_System_Bind"); s->bound[i] = 1;
     }
+    if (s->openimp_fullframe) {
+        STEP(s->fs_enable(0), "IMP_FrameSource_EnableWorkspace"); s->workspace_enabled = 1;
+    }
     for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        if (!(i % 2) && s->sensors == 2)
-            STEP(s->fs_direct(fs_channels[i], 540), "IMP_FrameSource_SetDirectModeAttr");
-        STEP(s->fs_enable(fs_channels[i]), "IMP_FrameSource_EnableChn"); s->fs_enabled[i] = 1;
+        if (!s->openimp_fullframe && !(i % 2) && s->sensors == 2)
+            STEP(s->fs_direct(source_channel(s, i), 540), "IMP_FrameSource_SetDirectModeAttr");
+        STEP(s->fs_enable(source_channel(s, i)), "IMP_FrameSource_EnableChn"); s->fs_enabled[i] = 1;
         unsigned max_bytes = i % 2 ? 0x10000 : 0x40000;
         jipc_imp_super super = {2, max_bytes * 8, max_bytes * 80 / 14, 0, 2};
         STEP(s->super_frame(enc_channels[i], &super), "IMP_Encoder_SetSuperFrameCfg");

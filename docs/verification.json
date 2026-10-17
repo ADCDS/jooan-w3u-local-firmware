@@ -95,5 +95,10 @@
     "Retained boot must initialize the kernel CSPRNG; early-boot entropy readiness and cold boot are not qualified.",
     "LAN multicast and real NVR interoperability remain unqualified.",
     "No OEM process was stopped, and all temporary camera test files were removed."
-  ]
+  ],
+  "native_followup": {
+    "receipt": "camera-native-test-20261017.json",
+    "scope": "Later source-built OpenIMP native capture, hardware PTZ and Frigate work supersedes the historical replay-only limits below"
+  },
+  "scope": "Historical host/QEMU/replay verification; see native_followup for later hardware results"
 }

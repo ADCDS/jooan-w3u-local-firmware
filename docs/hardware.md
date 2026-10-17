@@ -1,25 +1,26 @@
 # JA A12 hardware integration
 
-Native sensor capture remains unqualified. The [reserved-memory IVDC implementation](camera-ivdc-test-20261017.json)
-now allocates FS0's separate scratch workspace from rmem, verifies driver
-adoption, and verifies detach before freeing it. A dedicated native probe
-completed those resource operations twice. The first cycle was kernel-clean;
-the repeat hit a secondary AE kernel fault despite registering both sensors.
-The camera was reset after that fault.
+Native dual-sensor capture and native encoding now work on the physical target
+with the [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi).
+Four H.264 channels decoded with FFmpeg: both main views at 640×360 and both
+substreams at 320×240, configured at 15 fps with audio disabled. Physical pan,
+tilt, deadman stop and repeated two-axis preset return passed. Frigate on NVR host
+records the two main views and recognizes ONVIF pan/tilt and saved presets.
+See the [native qualification receipt](camera-native-test-20261017.json).
 
-The combined daemon currently stops before FrameSource at
-`IMP_ISP_Tuning_SetSensorFPS_Sec`. Secondary sensor activation/initialization
-and the tuning ABI remain separate porting work. No live H.264 success is claimed.
+The historical [IVDC receipt](camera-ivdc-test-20261017.json) records an initial
+secondary AE fault. Replaying the OEM input-enumeration handshake initializes
+the secondary runtime index and fixes that fault. Subsequent work keeps the
+IVDC line-ring workspace on FS0 and uses ordinary full-frame outputs FS1/2/4/5
+for native encoding. Direct completions are never treated as complete NV12.
+The matching GNU atomic runtime is also required; the old loader did not reject
+an unresolved 64-bit atomic symbol, causing a userspace failure after first IDR.
+The OpenIMP build now rejects undefined symbols and supplies `libatomic.so.1`.
 
-The [earlier OpenIMP trial](camera-openimp-test-20261017.json) exposed the
-missing IVDC workspace handshake and fragmented normal-RAM fallback. Its
-subsequent guarded retry stopped before ISP initialization. The current
-implementation supplies the workspace and quarantines uncertain ownership;
-starting another process alone is not recovery from failed detach.
-
-In the [earlier replay run](camera-test-20261017.json), the physical T23N ran the
-rebuilt daemon with file-backed media. Replay and SDK doubles do not establish
-native capture or encoding.
+Earlier [OpenIMP](camera-openimp-test-20261017.json) and
+[replay](camera-test-20261017.json) receipts describe those earlier stages,
+not the final native state. Uncertain DMA detachment still requires a verified
+driver close or a kernel reset before reserved memory can be reused.
 
 ## Required runtime arrangement
 
@@ -29,16 +30,15 @@ modules and existing per-device IQ/calibration files. Network interfaces must
 already be configured by the retained operating system. This daemon does not
 replace the kernel, Wi-Fi firmware or boot environment.
 
-The example paths use an SD card, but its filesystem must support the program's
-private files and atomic updates. The retained kernel supports VFAT, JFFS2 and
-SquashFS; do not assume ext4 support. On VFAT, permissions come from mount
-options: use an operator-controlled mount with `fmask=0177,dmask=0077` so files
-appear as 0600 and directories as 0700, or choose a suitable private writable
-filesystem. `chmod` alone does not establish private VFAT permissions. Keep
-configuration, TLS keys and `state_dir` private. Discovery refuses identity
-files with group/world permissions, so an unsuitable mount prevents startup.
-The daemon never changes mount options. A volatile state directory loses its
-discovery identity and PTZ presets at reboot.
+Put public executable/library files on SD and private files on JFFS2: the
+qualified deployment uses `/opt/jooanipc-open` (0700) for the 0600 configuration,
+TLS key and preset file. Its state directory is 0700. The SD card is VFAT with
+public mount permissions; `chmod` there cannot make credentials private. The
+small `/opt` partition must retain at least 64 KiB free; OEM startup can delete
+most writable directories when it falls below 50 KiB. Store bulk backups and
+logs off-camera. The daemon does not change mount options. Volatile state
+would lose presets and discovery identity on reboot. Discovery remains off in
+the tested deployment to coexist with the retained local controller.
 
 The retained boot environment must initialize the kernel CSPRNG before this
 daemon generates credentials or serves TLS. MbedTLS uses `/dev/urandom` as the
@@ -78,16 +78,21 @@ export OPENIMP_T23_ENCODER=native
 export OPENIMP_T23_NATIVE_FALLBACK=0
 ```
 
-Set `sensors=1` and `audio=0` for this bring-up path; this publishes the first
-sensor's main/sub streams. The adapter registers both physical sensors because
-the retained `direct_mode=2` ISP runs AE for both slots. Registering only the
-first slot caused a kernel NULL dereference in the secondary AE path. Other
-OpenIMP publication configurations are rejected while dual-sensor IVDC and
-audio remain unqualified. Use an explicit `libimp` path and pin the built library using
-`JIPC_LIBIMP_SHA256`. Recognition of the provider and matching public records
-does not establish functioning sensor capture or hardware encoding. Startup
-logs identify the next SDK operation before entering it, including operations
-that can block inside the retained driver.
+Set `sensors=2`, `fps=15`, `audio=0`, `flip0=3` and `flip1=3` for the tested
+profile. One published sensor is also permitted, but both physical slots are
+registered and enumerated because `direct_mode=2` AE visits both. Other FPS
+settings and OpenIMP audio are explicitly rejected. Both installed sensors need
+horizontal and vertical flip for an upright scene. These bits also align manual
+PTZ controls with the displayed image; stored presets remain raw coordinates.
+
+Place the compiler-matched `libatomic.so.1` beside `libimp.so` and set
+`LD_LIBRARY_PATH` to that directory. Pin the library with `JIPC_LIBIMP_SHA256`.
+Startup logs identify each SDK operation before entering it. The client creates
+an unbound FS0 workspace first, enables it before normal outputs, and releases
+it after stopping dependent streams. Main/sub logical channels 0/1 use FS1/2;
+logical 2/3 use FS4/5. Crop is disabled so the scaler shows the complete scene.
+High-resolution profiles beyond the tested dimensions need separate reserved
+memory/performance qualification.
 
 ## Recovered layouts
 
@@ -111,13 +116,15 @@ project uses 84 bytes and compile-time assertions, with evidence derived from
 the OEM getter/setter/creator copies and field dump. `include/imp_abi.h`
 records exact target layouts.
 
-## Qualification still required
+## Qualification boundaries
 
-Before treating the hardware backend as a working replacement, independently
-capture and decode native H.264 from both sensors, check frame freshness and
-timing, exercise microphone/speaker and native JPEG, verify controls against
-the real driver, and prove teardown restores the known OEM baseline. LAN
-multicast discovery and a real NVR also require interoperability testing.
+Four native H.264 channels, both real sensor views, physical PTZ/presets, clean
+native shutdown/restart and Frigate recording/ONVIF interoperability have been
+exercised. Audio is disabled. Native JPEG, microphone/speaker, light/IR-cut
+behavior, arbitrary resolutions, long-duration soak and cold power-cycle
+recovery are not qualified by this run. The broad `hardware_validated` status
+field remains false because that complete hardware feature matrix is pending;
+`ready` and actual stream counters report current capture state.
 
 The earlier 2026-10-17 replay run passed 73 native core checks, offline SDK contracts, six RTSP
 and eight HTTP/ONVIF protocol tests, local-subnet discovery probes, TCP/UDP
@@ -132,8 +139,7 @@ The earlier generic external library, SHA-256
 uses the 88-byte `0xc05863xx` VPU ioctl family. The retained OEM driver implements
 the 80-byte `0xc05063xx` family. Stopping the OEM application does not resolve
 this ABI mismatch. No SDK initialization was attempted with that known
-incompatible candidate, and no capture or physical PTZ/light/audio success is
-claimed.
+incompatible candidate; later capture/PTZ results use the source-built OEM80 fork.
 
 Remote protocol checks accept `test_rtsp.py --host ADDRESS --local-bind 0.0.0.0`
 and `test_http_onvif.py --clock-offset SECONDS` for a camera whose clock differs
@@ -147,3 +153,62 @@ flashing, module reload or automatic termination of existing media processes.
 The IMP backend refuses a concurrent OEM media owner. Begin physical tests from
 volatile storage using the established recovery procedure; keep firmware and
 factory artifacts outside this repository.
+
+## Optional guarded boot handoff
+
+`scripts/oem-boot-handoff.sh` is an opt-in JA-A12 deployment helper. It is not
+installed or activated by the normal build. Keep the existing guarded
+`/opt/etc/local.rc`, network/SSH controller, kernel/modules and factory data.
+The OEM application still performs Wi-Fi setup, SD mounting and motor homing;
+the helper replaces media ownership after that bootstrap, rather than replacing
+the entire boot environment.
+
+Install the reviewed script at `/opt/jooanipc-open/boot-handoff.sh` (0700) and
+append this additive hook to the existing local.rc, keeping an exact backup:
+
+```sh
+if [ -f /opt/jooanipc-open/enabled ] && [ -r /opt/jooanipc-open/boot-handoff.sh ]; then
+    /bin/sh /opt/jooanipc-open/boot-handoff.sh </dev/null >/tmp/jipc-handoff.log 2>&1 &
+fi
+```
+
+The root-owned 0600 `deployment.env` specifies `JIPC_RELEASE` (the versioned
+SD release directory), `JIPC_LIBIMP_SHA256`, and `JIPC_APP_MD5`, `JIPC_IMP_MD5`,
+`JIPC_ATOMIC_MD5` for the three release files. MD5 checks detect deployment
+corruption; they are not a signature or adversarial integrity guarantee. The
+client additionally verifies the library's pinned SHA-256. Keep SD access
+limited to trusted administrators. The private camera config must use that
+release's library and `watchdog=1`. This setting is local-only and defaults off;
+the daemon never terminates other owners itself. Changing `watchdog` on a
+configuration reload is rejected with an explicit process-restart requirement;
+closing an owned FD leaves the hardware timer armed.
+
+Create the 0600 `enabled` file only after checking configuration and shell syntax.
+The helper requires a boot-specific syslog marker followed by `motor reset
+finish`, a committed/stable retained controller, live SSH, SD mount and adequate
+JFFS2 space. It then persists `boot-trial`, stops identity-checked OEM watchdog
+and media processes, and checks every task's descriptors, IVDC address zero
+and absence of Linux TAINT_DIE. It launches the replacement with the explicit
+OEM80/native/no-fallback flags. The new process owns `/dev/watchdog`, sets its
+OEM 180-second timeout and feeds it only while all four streams remain fresh.
+After 185 seconds of process/watchdog health the helper clears `boot-trial`.
+
+The installed OEM wrapper also redirects its bootstrap stdout to the private
+`/tmp/jooan-oem-bootstrap.log` for diagnosis. Preserve the guarded preload and
+existing library search path when adding that redirection.
+
+A failure before transfer leaves OEM running if it is still alive. A failure after transfer retains
+the trial latch and the armed watchdog provides reset recovery. The next boot
+keeps guarded OEM rescue instead of repeatedly attempting native startup.
+Inspect `/tmp/jipc-handoff.log`, `/tmp/jooanipc-open.log`, kernel health and all
+thread FDs before removing a failed trial latch. Removing `enabled` disables
+future handoff; do not revive another media owner on uncertain DMA state.
+
+The board has no RTC. Preserve the retained controller's `last-time` mechanism.
+For Frigate set `onvif.ignore_time_mismatch: true`; its client reads the camera's
+public UTC and offsets WSSE timestamps while retaining PasswordDigest. Use
+`tls_insecure: false` on this Frigate version: its option also changes token
+encoding. Configure ONVIF host as HTTPS and the actual 18443 port. Native RTSP
+on 18554 uses ch0 for the movable view and ch2 for the second lens. Frigate's
+recording timeline uses the NVR host's clock. No camera egress or router changes
+are required for this arrangement.

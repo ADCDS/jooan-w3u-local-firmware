@@ -34,10 +34,13 @@ static int ai_channel_off(int device, int channel) { CHECK(device == 1 && !chann
 static int ai_off(int device) { CHECK(device == 1); return remember(13); }
 static int encoder_stop(int channel) { return remember(100 + channel); }
 static int source_off(int channel) { return remember(200 + channel); }
+static int ordinary_sources;
 static int unbind_cells(jipc_imp_cell *source, jipc_imp_cell *destination)
 {
     CHECK(source->device == 0 && destination->device == 1 && !source->output && !destination->output);
-    int expected_group = source->group == 0 ? 0 : source->group == 1 ? 2 : source->group == 3 ? 1 : 3;
+    int expected_group = ordinary_sources ?
+        (source->group == 1 ? 0 : source->group == 2 ? 2 : source->group == 4 ? 1 : 3) :
+        (source->group == 0 ? 0 : source->group == 1 ? 2 : source->group == 3 ? 1 : 3);
     CHECK(destination->group == expected_group);
     return remember(300 + source->group);
 }
@@ -89,6 +92,28 @@ static void test_cleanup(void)
     CHECK(call_count == (int)(sizeof expected / sizeof expected[0]));
     CHECK(!memcmp(calls, expected, sizeof expected));
     CHECK(!sdk_poisoned);
+
+    /* Native ordinary outputs must stop before their global FS0 owner. */
+    static const int ordinary[] = {
+        105,101,104,100,205,204,202,201,200,
+        305,405,505,304,401,501,302,404,504,301,400,500,
+        603,602,601,600,705,704,702,701,700,800,801,803,802,804,805
+    };
+    state = cleanup_state(); ordinary_sources = 1;
+    state->openimp_fullframe = state->workspace_created = state->workspace_enabled = 1;
+    state->system = state->enabled = state->tuning = state->isp = 1;
+    state->added[0] = state->added[1] = 1;
+    for (unsigned i = 0; i < 4; ++i)
+        state->receiving[i] = state->fs_enabled[i] = state->bound[i] = state->registered[i] =
+        state->enc_created[i] = state->groups[i] = state->fs_created[i] = 1;
+    call_count = 0; jipc_imp_close(state);
+    CHECK(call_count == (int)(sizeof ordinary / sizeof ordinary[0]));
+    CHECK(!memcmp(calls, ordinary, sizeof ordinary)); CHECK(!sdk_poisoned);
+    ordinary_sources = 0;
+
+    state = cleanup_state(); state->openimp_fullframe = state->workspace_created = state->isp = 1;
+    call_count = 0; jipc_imp_close(state);
+    CHECK(call_count == 2 && calls[0] == 700 && calls[1] == 805);
 
     /* A failure before registration must not invoke receive-stop, unbind or
      * unregister against resources never acquired. */
@@ -276,6 +301,7 @@ static void test_provider(void)
     jipc_config config = {0};
     char error[512];
     config.sensors = 1;
+    config.fps = 15;
     CHECK(!validate_provider("IMP-1.3.0", &config, error, sizeof error));
     CHECK(validate_provider("unknown", &config, error, sizeof error) == -1);
     unsetenv("OPENIMP_T23_DRIVER_ABI");
@@ -294,6 +320,8 @@ static void test_provider(void)
     config.audio = 1;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     config.audio = 0; config.sensors = 2;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    config.fps = 10;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     unsetenv("OPENIMP_T23_DRIVER_ABI");
     unsetenv("OPENIMP_T23_ENCODER");

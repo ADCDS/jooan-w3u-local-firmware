@@ -38,8 +38,10 @@ typedef struct {
     unsigned http_port, rtsp_port, max_clients, fps, bitrate;
     unsigned width, height, sub_width, sub_height;
     unsigned sensors, record_seconds, record_max_mb;
+    unsigned flip0, flip1;
     int audio, recording, allow_plain_http;
     int discovery;
+    int watchdog;
     unsigned discovery_port;
 } jipc_config;
 typedef struct jipc_app {

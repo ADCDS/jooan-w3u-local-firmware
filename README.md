@@ -5,11 +5,13 @@ streaming, administration, camera controls and recording, with a workstation
 replay backend and an external-IMP hardware backend for the retained OEM Linux
 kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 
-**Host, MIPS QEMU and physical T23N replay tests pass. Native sensor capture
-has not been qualified on the camera.** A successful replay or
-SDK-double test does not establish sensor, ISP, encoder or motor operation.
-This is not yet complete OEM feature parity; the feature boundaries below are
-part of the project contract.
+**Native dual-sensor capture works on the physical T23N with our OpenIMP
+OEM80 fork:** four H.264 streams decode, physical pan/tilt and persistent
+presets work, and Frigate records both views. The tested main streams are
+640×360 at 15 fps, with 320×240 substreams and audio disabled. See the
+[hardware receipt](docs/camera-native-test-20261017.json) for exact artifacts
+and qualification limits. This is a local-services replacement, with the
+feature boundaries below; full OEM feature parity is not claimed.
 
 ## Implemented services
 
@@ -98,7 +100,9 @@ file build/mips/jooanipc-open
 
 The resulting ELF uses `/lib/ld-uClibc.so.0`. MbedTLS and cJSON are built into the
 program; only the normal OEM C/POSIX libraries are linked dynamically. `libimp`
-is supplied separately at runtime and is never copied into a build or release.
+is supplied separately at runtime. Our OpenIMP build requires its matching
+compiler-provided `libatomic.so.1` beside the library, on `LD_LIBRARY_PATH`.
+No vendor IMP binary is distributed in this repository.
 An optional `JIPC_LIBIMP_SHA256` environment variable pins that external file.
 
 Read [hardware integration](docs/hardware.md) before trying the IMP backend.
@@ -106,7 +110,9 @@ Use the [target configuration template](config/ja-a12.example.ini), choose a new
 private password, provide TLS files and a compatible external library, and
 retain the known OEM modules, sensor IQ data, reserved-memory setup and motor
 calibration. The daemon refuses a running OEM media owner; it does not kill
-`jooanipc`, load modules, rewrite boot scripts or flash the camera.
+`jooanipc`, load modules, rewrite boot scripts or flash the camera. An optional
+[reviewed boot handoff script](scripts/oem-boot-handoff.sh) can be installed
+separately by the operator; its arrangement is documented in hardware integration.
 
 ## Test the actual MIPS build under QEMU
 
@@ -135,11 +141,13 @@ make integration-tls
 
 Run full builds/stacks sequentially. The default build has two compiler jobs;
 CTest and integration tests run serially. The [verification record](docs/verification.json)
-separates build/replay evidence from physical-camera qualification.
+separates the original build/replay evidence from physical-camera qualification;
+[the native receipt](docs/camera-native-test-20261017.json) records subsequent hardware work.
 The [camera test receipt](docs/camera-test-20261017.json) records on-device
 TLS, RTSP, recording and discovery checks, the fixed entropy wait, and the
-remaining incompatible-SDK capture blocker. The OEM services remained running
-and all temporary camera test files were removed.
+then-current incompatible-SDK capture blocker. OEM services remained running
+during that historical replay test. The later native deployment uses OpenIMP
+and replaces OEM media ownership.
 
 A local staging tree includes the binary, example configurations, documentation
 and dependency licenses:

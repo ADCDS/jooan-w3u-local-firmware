@@ -45,9 +45,11 @@ static const setting settings[] = {
     NUMBER_SETTING("max_clients", max_clients), NUMBER_SETTING("fps", fps), NUMBER_SETTING("bitrate", bitrate),
     NUMBER_SETTING("width", width), NUMBER_SETTING("height", height), NUMBER_SETTING("sub_width", sub_width),
     NUMBER_SETTING("sub_height", sub_height), NUMBER_SETTING("sensors", sensors),
+    NUMBER_SETTING("flip0", flip0), NUMBER_SETTING("flip1", flip1),
     NUMBER_SETTING("record_seconds", record_seconds), NUMBER_SETTING("record_max_mb", record_max_mb),
     BOOL_SETTING("audio", audio), BOOL_SETTING("recording", recording), BOOL_SETTING("allow_plain_http", allow_plain_http),
     BOOL_SETTING("discovery", discovery), NUMBER_SETTING("discovery_port", discovery_port),
+    BOOL_SETTING("watchdog", watchdog),
 };
 static const setting *find_setting(const char *name)
 {
@@ -109,6 +111,7 @@ int jipc_config_validate(const jipc_config *c, char *error, size_t capacity)
         return fail(error, capacity, "LAN HTTP requires TLS or explicit allow_plain_http=1");
     if (c->sensors < 1 || c->sensors > 2 || c->max_clients < 1 || c->max_clients > 8 || c->fps < 1 || c->fps > 30 || c->bitrate < 64 || c->bitrate > 8192)
         return fail(error, capacity, "invalid sensors, clients, frame rate or bitrate");
+    if (c->flip0 > 3 || c->flip1 > 3) return fail(error, capacity, "sensor flips require bitmasks 0..3");
     if (c->width < 160 || c->width > 4096 || c->height < 120 || c->height > 2160 || c->width % 2 || c->height % 2 ||
         c->sub_width < 160 || c->sub_width > c->width || c->sub_height < 120 || c->sub_height > c->height || c->sub_width % 2 || c->sub_height % 2)
         return fail(error, capacity, "invalid even video dimensions");
@@ -119,6 +122,7 @@ int jipc_config_validate(const jipc_config *c, char *error, size_t capacity)
         return fail(error, capacity, "invalid state/recording directory");
     if (!strcmp(c->backend, "replay") && !c->replay[0][0]) return fail(error, capacity, "replay backend requires input0 Annex-B H.264 file");
     if (!strcmp(c->backend, "imp") && !c->libimp[0]) return fail(error, capacity, "imp backend requires an explicit compatible external libimp path");
+    if (c->watchdog && strcmp(c->backend,"imp")) return fail(error,capacity,"hardware watchdog requires the IMP backend");
     return 0;
 }
 int jipc_config_save(const jipc_config *c)
@@ -163,7 +167,7 @@ int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capac
         /* Filesystem roots, listener endpoints and input/plugin paths are local-administrator settings. */
         if (!s || !strcmp(s->name, "bind") || strstr(s->name, "port") || !strcmp(s->name, "backend") ||
             !strcmp(s->name, "realm") || strstr(s->name, "dir") || !strcmp(s->name, "libimp") ||
-            !strncmp(s->name, "input", 5) || !strncmp(s->name, "tls_", 4) || !strcmp(s->name, "allow_plain_http")) goto invalid;
+            !strncmp(s->name, "input", 5) || !strncmp(s->name, "tls_", 4) || !strcmp(s->name, "allow_plain_http") || !strcmp(s->name,"watchdog")) goto invalid;
         unsigned char *dest = (unsigned char *)&next + s->offset;
         if (!s->numeric) { if (!cJSON_IsString(v) || strlen(v->valuestring) >= s->capacity) goto invalid; strcpy((char *)dest, v->valuestring); }
         else if (s->numeric == 2) { if (!cJSON_IsBool(v)) goto invalid; *(int *)dest = cJSON_IsTrue(v); }

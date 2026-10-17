@@ -85,10 +85,13 @@ class HTTPTests(unittest.TestCase):
             response.begin()
             return response.status, response.read()
 
-    def wsse(self, offset=0, password=None):
+    def wsse(self, offset=0, password=None, timezone_minutes=None, created=None):
         nonce = secrets.token_bytes(16)
-        created = (datetime.datetime.now(datetime.timezone.utc) +
-                   datetime.timedelta(seconds=self.settings.clock_offset + offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        moment = (datetime.datetime.now(datetime.timezone.utc) +
+                  datetime.timedelta(seconds=self.settings.clock_offset + offset))
+        if created is None:
+            created = (moment.strftime("%Y-%m-%dT%H:%M:%SZ") if timezone_minutes is None else
+                       moment.astimezone(datetime.timezone(datetime.timedelta(minutes=timezone_minutes))).isoformat(timespec="seconds"))
         password = self.settings.password if password is None else password
         digest = base64.b64encode(hashlib.sha1(
             nonce + created.encode() + password.encode()).digest()).decode()
@@ -143,6 +146,18 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(password="incorrect"))[0], 401)
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=-601))[0], 401)
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=601))[0], 401)
+
+    def test_digest_timezone_offsets(self):
+        for minutes in (0, 330, -180, 840, -840):
+            with self.subTest(minutes=minutes):
+                self.assertEqual(self.soap("GetProfiles", auth=False,
+                                           header=self.wsse(timezone_minutes=minutes))[0], 200)
+        utc = (datetime.datetime.now(datetime.timezone.utc) +
+               datetime.timedelta(seconds=self.settings.clock_offset)).strftime("%Y-%m-%dT%H:%M:%S")
+        for suffix in ("+14:01", "+00:60", "+2:00", "+15:00", "-24:00"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(self.soap("GetProfiles", auth=False,
+                                           header=self.wsse(created=utc + suffix))[0], 401)
 
     def test_unknown_action_and_external_entities(self):
         status, _, body = self.soap("InventedWriteAction")

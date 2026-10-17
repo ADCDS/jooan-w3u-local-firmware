@@ -16,7 +16,7 @@
 #include <unistd.h>
 
 enum { MOTOR_STOP = 1, MOTOR_POSITION = 4, MOTOR_SPEED = 5,
-       MOTOR_MOVE_NONBLOCK = 8, PAN_MAX = 8600, TILT_MAX = 2000,
+       MOTOR_MOVE = 3, PAN_MAX = 8600, TILT_MAX = 2000,
        MOTOR_RATE = 450, CHUNK_STEPS = 90, PRESET_COUNT = 16 };
 #define MANUAL_LEASE_US UINT64_C(1200000)
 #define CHUNK_LIMIT_US UINT64_C(1000000)
@@ -30,6 +30,7 @@ typedef struct {
     pthread_t worker;
     int replay, quitting, motor_fd, x, y, known, moving, chunk_active, faulted;
     int vx, vy, axis, goto_active, target_x, target_y;
+    int pan_sign, tilt_sign;
     int night, white_light, pilot_led, speaker_enable, speaker_used, gpio_used;
     uint64_t lease_until, chunk_until, goto_until, replay_previous, next_chunk_us;
     double replay_x, replay_y;
@@ -210,8 +211,12 @@ static void native_tick(platform_state *state, uint64_t now)
     int delta_x = 0, delta_y = 0, amount;
     int32_t move[2];
     if (state->motor_fd < 0 || state->faulted) return;
-    if ((state->lease_until && now >= state->lease_until) ||
-        (state->goto_active && now >= state->goto_until)) {
+    if (state->goto_active && now >= state->goto_until) {
+        errno = ETIMEDOUT;
+        worker_error(state, "motor preset exceeded 45 seconds");
+        return;
+    }
+    if (state->lease_until && now >= state->lease_until) {
         if (motor_stop_motion(state)) worker_error(state, "motor deadman stop");
         return;
     }
@@ -242,8 +247,9 @@ static void native_tick(platform_state *state, uint64_t now)
         delta_x = clamp(state->x + delta_x, 0, PAN_MAX) - state->x;
         delta_y = clamp(state->y + delta_y, 0, TILT_MAX) - state->y;
     }
-    /* Both axes share coils through GPIO17. Never submit simultaneous axes:
-     * the driver's command8 may replace the first axis with the second. */
+    /* Both axes share coils through GPIO17. Request3 restores the driver's
+     * swapped axis bookkeeping; request8's Y path does not. Request3 is
+     * asynchronous when exactly one axis is nonzero, as submitted here. */
     state->axis = !state->axis;
     if (delta_x && (!delta_y || state->axis)) delta_y = 0;
     else if (delta_y) delta_x = 0;
@@ -251,7 +257,7 @@ static void native_tick(platform_state *state, uint64_t now)
     if (!amount) { state->moving = 0; return; }
     move[0] = delta_x;
     move[1] = delta_y;
-    if (ioctl(state->motor_fd, MOTOR_MOVE_NONBLOCK, move)) {
+    if (ioctl(state->motor_fd, MOTOR_MOVE, move)) {
         worker_error(state, "motor move");
         return;
     }
@@ -341,6 +347,8 @@ static platform_state *platform_get(jipc_app *app, char *error, size_t capacity)
     if (!state) { fail(error, capacity, "platform allocation failed"); return NULL; }
     state->app = app;
     state->replay = !strcmp(config.backend, "replay");
+    state->pan_sign = state->replay || !(config.flip0 & 1) ? 1 : -1;
+    state->tilt_sign = state->replay || !(config.flip0 & 2) ? 1 : -1;
     state->motor_fd = -1;
     state->known = state->replay;
     state->night = state->white_light = state->pilot_led = state->speaker_enable = -1;
@@ -394,10 +402,11 @@ int jipc_platform_control(jipc_app *app, const char *operation, int value,
         rc = fail(error, capacity, "motor device: %s", strerror(errno)); goto done;
     }
     if (motion) {
-        if ((state->goto_active || state->vx != value || state->vy != value2 || (!value && !value2)) &&
+        int vx=value*state->pan_sign,vy=value2*state->tilt_sign;
+        if ((state->goto_active || state->vx != vx || state->vy != vy || (!value && !value2)) &&
             motor_stop_motion(state)) { rc = fail(error, capacity, "stop previous motion: %s", strerror(errno)); goto done; }
-        state->vx = value;
-        state->vy = value2;
+        state->vx = vx;
+        state->vy = vy;
         state->lease_until = (value || value2) ? jipc_now_us() + MANUAL_LEASE_US : 0;
         state->last_error[0] = 0;
         state->faulted = 0;
@@ -463,8 +472,8 @@ int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, si
         fail(error, capacity, "motor status: %s", strerror(errno));
         goto done;
     }
-    status->pan = state->replay ? state->x : state->x * 200 / PAN_MAX - 100;
-    status->tilt = state->replay ? state->y : state->y * 200 / TILT_MAX - 100;
+    status->pan = state->replay ? state->x : state->pan_sign*(state->x * 200 / PAN_MAX - 100);
+    status->tilt = state->replay ? state->y : state->tilt_sign*(state->y * 200 / TILT_MAX - 100);
     status->moving = state->moving || state->goto_active || state->vx || state->vy;
     status->night = state->night;
     status->white_light = state->white_light;
@@ -488,8 +497,8 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity)
     state = platform_get(app, error, sizeof(error));
     if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
     pthread_mutex_lock(&state->mutex);
-    x = state->replay ? state->x : state->x * 200 / PAN_MAX - 100;
-    y = state->replay ? state->y : state->y * 200 / TILT_MAX - 100;
+    x = state->replay ? state->x : state->pan_sign*(state->x * 200 / PAN_MAX - 100);
+    y = state->replay ? state->y : state->tilt_sign*(state->y * 200 / TILT_MAX - 100);
     if (jipc_json_escape(state->last_error, escaped, sizeof(escaped)) < 0)
         strcpy(escaped, "\"error encoding platform status\"");
     n = snprintf(out, capacity,
@@ -505,8 +514,8 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity)
     for (index = 0; index < PRESET_COUNT; ++index) {
         saved_preset *preset = &state->presets[index];
         if (!preset->valid) continue;
-        x = state->replay ? preset->x : preset->x * 200 / PAN_MAX - 100;
-        y = state->replay ? preset->y : preset->y * 200 / TILT_MAX - 100;
+        x = state->replay ? preset->x : state->pan_sign*(preset->x * 200 / PAN_MAX - 100);
+        y = state->replay ? preset->y : state->tilt_sign*(preset->y * 200 / TILT_MAX - 100);
         n = snprintf(out + used, capacity - used, "%s{\"slot\":%d,\"x\":%d,\"y\":%d}",
                      first ? "" : ",", index + 1, x, y);
         if (n < 0 || (size_t)n >= capacity - used) goto done;
