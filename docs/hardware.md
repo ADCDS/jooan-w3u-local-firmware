@@ -1,22 +1,25 @@
 # JA A12 hardware integration
 
-Native sensor capture remains unqualified. The [OpenIMP physical trial](camera-openimp-test-20261017.json)
-reached sensor/tuning and encoder setup, but failed at FrameSource REQBUFS with
-ENOMEM. The missing OEM reserved-memory IVDC workspace handshake forced a
-contiguous normal-RAM allocation that could not succeed. A separate secondary
-AE-slot NULL dereference and teardown fault required a reboot.
+Native sensor capture remains unqualified. The [reserved-memory IVDC implementation](camera-ivdc-test-20261017.json)
+now allocates FS0's separate scratch workspace from rmem, verifies driver
+adoption, and verifies detach before freeing it. A dedicated native probe
+completed those resource operations twice. The first cycle was kernel-clean;
+the repeat hit a secondary AE kernel fault despite registering both sensors.
+The camera was reset after that fault.
 
-The source now registers both physical sensors and avoids duplicate global ISP
-startup. The guarded retry found no suitable contiguous block even after
-compaction and stopped before ISP initialization. The next port requirement is
-the IVDC workspace's setup and verified release lifecycle. This final retry
-left OEM stopped under bounded watchdog custody, as requested; the trial
-receipt records its reboot deadline.
+The combined daemon currently stops before FrameSource at
+`IMP_ISP_Tuning_SetSensorFPS_Sec`. Secondary sensor activation/initialization
+and the tuning ABI remain separate porting work. No live H.264 success is claimed.
+
+The [earlier OpenIMP trial](camera-openimp-test-20261017.json) exposed the
+missing IVDC workspace handshake and fragmented normal-RAM fallback. Its
+subsequent guarded retry stopped before ISP initialization. The current
+implementation supplies the workspace and quarantines uncertain ownership;
+starting another process alone is not recovery from failed detach.
 
 In the [earlier replay run](camera-test-20261017.json), the physical T23N ran the
-rebuilt daemon with file-backed media. Native IMP startup correctly refused the
-active OEM owner before loading an SDK. The SDK contract tests replace calls
-with doubles. Replay and SDK doubles do not establish native capture or encoding.
+rebuilt daemon with file-backed media. Replay and SDK doubles do not establish
+native capture or encoding.
 
 ## Required runtime arrangement
 
@@ -59,6 +62,11 @@ for actual encoded data before publishing readiness. These checks reject some
 incompatibilities; they do not prove complete compatibility. A cleanup failure
 poisons further hardware initialization in the same process and retains the SDK
 mapping to avoid unloading code beneath potentially live SDK threads.
+The reserved arena's allocation ledger is process-local. After uncertain DMA
+detachment, restarting the consumer or unloading the library can reuse memory
+still referenced by the kernel. Verify driver detachment or reset the camera
+before another process uses reserved memory; a process restart alone is not
+recovery.
 
 The [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi)
 now has an explicit provider path. Its T23 public records match the recovered

@@ -103,7 +103,7 @@ static void test_cleanup(void)
     imp_state poisoned = {0};
     char error[256] = {0};
     CHECK(jipc_imp_poll(NULL, &poisoned, 0, error, sizeof error) == -1);
-    CHECK(strstr(error, "restart"));
+    CHECK(strstr(error, "reset the camera"));
     sdk_poisoned = destruction_failure = 0;
 }
 

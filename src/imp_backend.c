@@ -225,7 +225,7 @@ static void cleanup_result(const char *operation, int result)
 {
     if (result) {
         sdk_poisoned = 1;
-        jipc_log("error", "libimp cleanup %s returned %d; process restart is required before retrying hardware", operation, result);
+        jipc_log("error", "libimp cleanup %s returned %d; verify driver detachment or reset the camera before reusing reserved memory", operation, result);
     }
 }
 
@@ -300,7 +300,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     jipc_config config;
     jipc_config_copy(app, &config);
     if (sdk_poisoned)
-        return failure(error, capacity, "a prior IMP teardown failed; process restart is required before hardware initialization");
+        return failure(error, capacity, "a prior IMP teardown failed; verify driver detachment or reset the camera before hardware initialization");
     if (config.sensors < 1 || config.sensors > 2 || !config.libimp[0])
         return failure(error, capacity, "IMP requires one or two sensors and an explicit libimp path");
     if (config.width > 2304 || config.height > 1296 || config.sub_width > config.width ||
@@ -562,7 +562,7 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
                   char *error, size_t capacity)
 {
     imp_state *s = state;
-    if (sdk_poisoned) return failure(error, capacity, "IMP SDK cleanup failed; hardware backend requires process restart");
+    if (sdk_poisoned) return failure(error, capacity, "IMP SDK cleanup failed; verify driver detachment or reset the camera before reusing hardware");
     struct pollfd fds[4];
     unsigned count = s->sensors * 2;
     for (unsigned i = 0; i < count; ++i) fds[i] = (struct pollfd){s->fds[i], POLLIN, 0};
