@@ -60,7 +60,9 @@
     ],
     "preset_return_both_axes": true,
     "positions": "Raw open-loop driver coordinates, not independently measured shaft angles",
-    "normalization_limit": "Application display uses historical module-load8600/2000 scale, while OEM homing reports4080/1230; retained driver enforces travel, raw presets remain accurate"
+    "normalization_limit": "Application display uses historical module-load8600/2000 scale, while OEM homing reports4080/1230; retained driver enforces travel, raw presets remain accurate",
+    "presets_persisted_across_reboot": true,
+    "frigate_control": "Real WS commands verified preset1/2/1, manual pan/stop and preset1 return on final client; preset1 recalled again on final qualified boot"
   },
   "frigate": {
     "host": "nvr.example",
@@ -73,17 +75,71 @@
     "detection_fps_per_view": 5,
     "onvif": "HTTPS18443, WSSE PasswordDigest, pt and two presets recognized",
     "ignore_time_mismatch": true,
-    "tls_insecure": false
+    "tls_insecure": false,
+    "capture_fps_observed": {
+      "jooan_main": 5.1,
+      "jooan_sub": 5.0
+    },
+    "new_closed_recording_segments_in_90_seconds": {
+      "jooan_main": 9,
+      "jooan_sub": 9
+    },
+    "recorded_mp4_strict_ffmpeg_decode": {
+      "jooan_main": {
+        "bytes": 553607,
+        "decoded_frames": 15,
+        "passed": true
+      },
+      "jooan_sub": {
+        "bytes": 549556,
+        "decoded_frames": 15,
+        "passed": true
+      }
+    },
+    "connection_arrangement": "One go2rtc camera producer per lens shared by recording, detection and live clients; Frigate input preset-rtsp-restream on local127.0.0.1:8554",
+    "producer_count_per_lens": 1,
+    "detection_limit": "Existing CPU detector may skip detection frames during heavy motion; capture/recording are separate"
   },
   "boot": {
-    "result": "Final reviewed release reboot qualification in progress",
+    "result": "Passed: automatic native boot handoff, stable preferred-AP association, full watchdog qualification, trial latch cleared",
     "arrangement": "Guarded OEM bootstrap retains Wi-Fi, SD mount and full motor homing; source handoff then stops only OEM media/watchdog",
     "failed_attempt": "Initial gate used a completion message from a different OEM reset path and refused takeover; corrected normal startup requires ordered418/427/449/459/555 status0 and no reset error/timeout",
     "trial_latch": "Unqualified transfer retains boot-trial for guarded OEM rescue on next boot",
     "watchdog_seconds": 180,
     "qualification_seconds": 185,
     "private_config_state_tls": "JFFS2 /opt/jooanipc-open, directories0700/files0600",
-    "public_runtime": "Versioned SD directory; compatible libatomic.so.1 included"
+    "public_runtime": "Versioned SD directory; compatible libatomic.so.1 included",
+    "tested_helper_sha256": "414d6d454ce5bc837a6014aa8b69859960d7999bf33bae4f88d83f096edabaff",
+    "tested_helper_md5": "c8d7e1c21c6a06b640e8aad2def737af",
+    "kernel_taint": 4096,
+    "kernel_oops": false,
+    "jffs2_free_kib": 100,
+    "post_boot_all_four_strict_ffmpeg_decode": [
+      {
+        "channel": 0,
+        "frames": 3,
+        "strict_decode": true
+      },
+      {
+        "channel": 2,
+        "frames": 3,
+        "strict_decode": true
+      },
+      {
+        "channel": 1,
+        "frames": 3,
+        "strict_decode": true
+      },
+      {
+        "channel": 3,
+        "frames": 3,
+        "strict_decode": true
+      }
+    ],
+    "post_boot_preset1_recalled_through_frigate": true,
+    "post_boot_presets_byte_exact": true,
+    "network": "Optional proven BSSID/frequency pin applies to existing committed camera network only, with explicit reassociation; no AP/router config changes",
+    "earlier_network_incident": "Initial AP selection led to stalled TCP while encoders/kernel stayed healthy. Reassociation to stronger gateway AP restored both NVR feeds. Guarded boot now selects this AP and rechecks network after OEM shutdown."
   },
   "verification": {
     "host_unit_tests": 6,
@@ -91,7 +147,7 @@
     "camera_cpu_contract_tests": "Native motor/watchdog contracts passed earlier; final per-sensor orientation persistence/restart contract also passed on the camera CPU",
     "host_tls_integration": "Passed: RTSP6, HTTP/ONVIF9, discovery4, FFmpeg TCP/UDP decode, recording/download, credential persistence/reload",
     "openimp": "Full T23 and T30 suites passed; optional T30.so export check skipped because that library was not built; metadata ASan+UBSan passed",
-    "boot_shell": "Local shellcheck/sh-n and target BusyBox sh-n passed; stale/incomplete/error/timeout/retry calibration fixtures passed"
+    "boot_shell": "ShellCheck, host/target sh-n, failed/stale/timeout calibration fixtures passed; exact final helper completed on-camera guarded bootstrap and185-second native-watchdog qualification"
   },
   "limits": [
     "High resolutions beyond640x360main/320x240sub, audio, JPEG, GPIO/light/IR-cut behavior and long soak remain unqualified",
@@ -100,5 +156,7 @@
     "The broad hardware_validated API field staysfalse until the full feature matrix is qualified"
   ],
   "secrets": "No credentials, factory identities, private keys, raw OEM logs or camera frames included",
-  "openimp_source_commit": "9386ad38b037ea74892b8d53981fd9d2042f2474"
+  "openimp_source_commit": "9386ad38b037ea74892b8d53981fd9d2042f2474",
+  "checked_utc": "2026-10-17T21:44:06.815402+00:00",
+  "application_source_commit": "24ef0dd"
 }

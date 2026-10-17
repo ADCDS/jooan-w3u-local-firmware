@@ -10,7 +10,9 @@ OEM80 fork:** four H.264 streams decode, physical pan/tilt and persistent
 presets work, and Frigate records both views. The tested main streams are
 640×360 at 15 fps, with 320×240 substreams and audio disabled. See the
 [hardware receipt](docs/camera-native-test-20261017.json) for exact artifacts
-and qualification limits. This is a local-services replacement, with the
+and qualification limits. Automatic startup and the native watchdog passed
+a controlled reboot test; OEM bootstrap remains for network setup and motor
+homing. This is a local-services replacement, with the
 feature boundaries below; full OEM feature parity is not claimed.
 
 ## Implemented services
