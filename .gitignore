@@ -1,0 +1,13 @@
+/build/
+/state/
+/recordings/
+/config/local*.ini
+*.pem
+*.key
+*.so
+*.a
+*.o
+*.h264
+*.alaw
+__pycache__/
+*.pyc
