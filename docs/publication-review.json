@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "reviewed_utc": "2026-10-18T02:04:03.959891+00:00",
+  "scope": "Publication privacy review of operator deployment data in tracked history; standard protocol constants and synthetic test credentials retained",
+  "privacy": {
+    "deployment_labels_and_hostnames": "anonymized",
+    "boot_identifiers_and_absolute_motor_positions": "omitted from public validation reports where present",
+    "author_attribution": "ADCDS with GitHub noreply address",
+    "qualified_binary_hashes": "preserved",
+    "historical_source_revision_ids": "Some earlier validation records retain pre-sanitization revision IDs; public commit IDs changed during the privacy rewrite"
+  },
+  "credentials": {
+    "known_live_credentials_found": false,
+    "confirmed_user_credentials_or_private_keys_found": false,
+    "limits": "Pattern and exact-match review is not proof that arbitrary undiscovered secrets never existed"
+  },
+  "device_effects": "No camera or NVR configuration, presets, secrets or running services changed by this publication review",
+  "project": "local-firmware",
+  "verification": [
+    "all public ref trees match only planned edits",
+    "independent read-only review",
+    "known live credential exact-match scan",
+    "runtime shell smoke checks on main and ONVIF branch",
+    "preset UI test",
+    "full host ONVIF authentication/replay/profile/PTZ/preset protocol check",
+    "gateway discovery tested with explicit override, retained route, live route fallback and missing-route failure",
+    "five release versions downloaded, checksums matched and payloads inspected without execution"
+  ],
+  "removed_images": "Four unit-label/QR-bearing image paths removed across all versions",
+  "release_assets": "No sensitive deployment content found in signed packages or manifests; existing signed release artifacts retained unchanged"
+}
