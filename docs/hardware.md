@@ -2,16 +2,20 @@
 
 Native dual-sensor capture and native encoding now work on the physical target
 with the [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi).
-Four H.264 channels decoded with FFmpeg: both main views at 1280×720 and both
-substreams at 320×240, configured at 15 fps with audio disabled. Physical pan,
+The current `main_only=1` profile encodes the movable view at 1920×1080 and
+the fixed view at 640×360, configured at 15 fps with audio disabled. All four
+logical H.264 URLs decode: channels 1/3 share the corresponding main feed.
+Physical pan,
 tilt, deadman stop and repeated two-axis preset return passed. Frigate on NVR host
 records the two main views and recognizes ONVIF pan/tilt and saved presets.
-See the [quality/control qualification receipt](camera-quality-test-20261017.json).
+See the [1080p qualification receipt](camera-1080-test-20261018.json).
+The [previous quality/control receipt](camera-quality-test-20261017.json)
+records the four-encoder profile with paired 720p mains and 320×240 substreams.
 
 The historical [IVDC receipt](camera-ivdc-test-20261017.json) records an initial
 secondary AE fault. Replaying the OEM input-enumeration handshake initializes
 the secondary runtime index and fixes that fault. Subsequent work keeps the
-IVDC line-ring workspace on FS0 and uses ordinary full-frame outputs FS1/2/4/5
+IVDC line-ring workspace on FS0 and uses ordinary full-frame outputs
 for native encoding. Direct completions are never treated as complete NV12.
 The matching GNU atomic runtime is also required; the old loader did not reject
 an unresolved 64-bit atomic symbol, causing a userspace failure after first IDR.
@@ -79,8 +83,9 @@ export OPENIMP_T23_NATIVE_FALLBACK=0
 ```
 
 Set `sensors=2`, `fps=15`, `audio=0`, `flip0=3` and `flip1=3` for the tested
-profile. One published sensor is also permitted, but both physical slots are
-registered and enumerated because `direct_mode=2` AE visits both. Other FPS
+profile. With `main_only=0`, one published sensor is also permitted, but both
+physical slots are registered and enumerated because `direct_mode=2` AE visits
+both. The current `main_only=1` mode requires two published sensors. Other FPS
 settings and OpenIMP audio are explicitly rejected. Both installed sensors need
 horizontal and vertical flip for an upright scene. These bits also align manual
 PTZ controls with the displayed image; stored presets remain raw coordinates.
@@ -89,10 +94,38 @@ Place the compiler-matched `libatomic.so.1` beside `libimp.so` and set
 `LD_LIBRARY_PATH` to that directory. Pin the library with `JIPC_LIBIMP_SHA256`.
 Startup logs identify each SDK operation before entering it. The client creates
 an unbound FS0 workspace first, enables it before normal outputs, and releases
-it after stopping dependent streams. Main/sub logical channels 0/1 use FS1/2;
-logical 2/3 use FS4/5. Crop is disabled so the scaler shows the complete scene.
-High-resolution profiles beyond the tested dimensions need separate reserved
-memory/performance qualification.
+it after stopping dependent streams. In `main_only=1`, logical 0/1 share
+FS1/group0/encoder0, and logical 2/3 share FS5/group1/encoder1. Only slots 0/2
+own SDK resources, and each encoded frame is dequeued once. Frame publication,
+IDR routing, metadata and watchdog freshness account for both aliases. Local
+recording skips the duplicate feeds. Crop is disabled so the scaler shows
+the complete scene.
+
+The retained driver's frame-switch path reloads scaler geometry but omits the
+shared DMA stride registers. Enabling FS1 and FS4 at different widths therefore
+overwrites the same scaler's stride. The new graph uses scaler 1 for the movable
+lens (FS1) and scaler 2 for the fixed lens (FS5), leaving FS2/4 unused. The earlier
+asymmetric graph produced repeated image regions even though H.264 decoded;
+the new graph's actual images were inspected as well as decoded. No kernel
+patch or new OpenIMP library is required for this application-side workaround.
+
+The qualified settings are `width=1920`, `height=1080`, `width1=640`,
+`height1=360`, `bitrate=3072`, `bitrate1=768` and `gop_frames=15`. Reserved-memory
+peak is 18,884 KiB of 21,988 KiB, leaving 3,104 KiB. Both sensor drivers advertise
+1920×1080 input; the fixed output is intentionally scaled down. OEM evidence
+shows 2304×1296 outputs with 1920×1080 sensor input, supporting ISP upscaling
+for that OEM mode. The full-frame native encoder still cannot fit that 3 MP
+profile with the fixed view in this reserved arena.
+
+With `main_only=0`, logical 0/1 use FS1/2 and 2/3 use FS4/5. This older native
+layout retains independent substreams and requires matching main dimensions
+through 1280×720. The new mode requires two sensors and rejects a primary
+larger than 1920×1080 or a fixed view larger than 640×360. Independent substream
+settings are unused. Other layouts need separate memory and image qualification.
+To return to the earlier four-encoder profile, set `main_only=0`,
+`width=1280`, `height=720`, `width1=0`, `height1=0`, `bitrate=2048`,
+`bitrate1=1536`, `sub_width=320`, `sub_height=240` and `sub_bitrate=256`
+together; changing only `main_only` leaves incompatible main dimensions.
 
 ## Recovered layouts
 
@@ -106,8 +139,11 @@ memory/performance qualification.
 | Audio frame | 32 | Pointer and physical address, 64-bit timestamp, length |
 
 Logical video streams 0/1 belong to sensor 0 and 2/3 to sensor 1. The recovered
-encoder-channel mapping is 0/4/1/5. JPEG uses the sensor's substream group, so
-snapshot resolution is the configured substream resolution. Native audio
+independent-encoder mapping is 0/4/1/5. In that layout JPEG uses the sensor's
+substream group, so snapshot resolution is the configured substream resolution.
+JPEG is explicitly unavailable in `main_only=1`: no extra JPEG resources are
+allocated, ONVIF advertises no snapshot capability, and RTSP frame extraction
+is the available still-image path. Native audio
 capture converts 16 kHz PCM into 8 kHz PCMA. Speaker input is 8 kHz PCMA; the backend
 assembles the SDK's 40 ms PCM blocks and enables GPIO63 with its settling delay.
 
@@ -118,13 +154,19 @@ records exact target layouts.
 
 ## Qualification boundaries
 
-Four native H.264 channels, both real sensor views, physical PTZ/presets, clean
+Both real sensor views through all four H.264 URLs, physical PTZ/presets, clean
 native shutdown/restart and Frigate recording/ONVIF interoperability have been
 exercised. Audio is disabled. Native JPEG, microphone/speaker, light/IR-cut
 behavior, arbitrary resolutions, long-duration soak and cold power-cycle
 recovery are not qualified by this run. The broad `hardware_validated` status
 field remains false because that complete hardware feature matrix is pending;
 `ready` and actual stream counters report current capture state.
+
+The 1080p control check observed 100 motor steps on the first nudge and 193 on
+the repeat. Both were single continuous runs with no delayed second movement;
+the saved-position recalls passed. The first-use variation is recorded for
+follow-up; its cause is not established, and this release does not change motor
+code. A 350 ms command should not be read as a guarantee of identical travel.
 
 The earlier 2026-10-17 replay run passed 73 native core checks, offline SDK contracts, six RTSP
 and eight HTTP/ONVIF protocol tests, local-subnet discovery probes, TCP/UDP
@@ -224,6 +266,13 @@ encoding. Configure ONVIF host as HTTPS and the actual 18443 port. Native RTSP
 on 18554 uses ch0 for the movable view and ch2 for the second lens. Frigate's
 recording timeline uses the NVR host's clock. No camera egress or router changes
 are required for this arrangement.
+
+That ONVIF offset is cached by the tested Frigate client. In the 1080p reboot
+test, the camera clock moved backward by about 967 seconds; video recovered
+automatically, but Frigate's old WSSE timestamps were rejected before any motor
+command ran. Restarting Frigate refreshes its ONVIF clock offset and profile
+metadata. A later camera reboot with another clock jump may require the same
+refresh. The daemon continues to enforce authentication and timestamp checks.
 
 The deployed Frigate inputs use `preset-rtsp-restream` against go2rtc on
 `127.0.0.1:8554`: each lens has one camera producer shared by recording,

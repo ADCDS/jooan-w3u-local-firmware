@@ -35,7 +35,9 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     for (unsigned i = 0; i < JIPC_STREAMS; ++i) {
         if ((i < JIPC_AUDIO_STREAM && i >= cfg.sensors * 2) || (i == JIPC_AUDIO_STREAM && !cfg.audio)) continue;
         cJSON *s = cJSON_CreateObject(); pthread_mutex_lock(&app->streams[i].mutex);
-        cJSON_AddNumberToObject(s, "channel", i); cJSON_AddNumberToObject(s, "frames", (double)app->produced[i]);
+        cJSON_AddNumberToObject(s, "channel", i);
+        if (jipc_video_owner(&cfg,i) != i) cJSON_AddNumberToObject(s,"alias_of",jipc_video_owner(&cfg,i));
+        cJSON_AddNumberToObject(s, "frames", (double)app->produced[i]);
         cJSON_AddNumberToObject(s, "width", app->streams[i].width); cJSON_AddNumberToObject(s, "height", app->streams[i].height);
         cJSON_AddBoolToObject(s, "codec_ready", i == JIPC_AUDIO_STREAM || (app->streams[i].sps_size && app->streams[i].pps_size));
         pthread_mutex_unlock(&app->streams[i].mutex); cJSON_AddItemToArray(streams, s);

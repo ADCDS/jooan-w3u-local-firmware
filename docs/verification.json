@@ -98,7 +98,9 @@
   ],
   "native_followup": {
     "receipt": "camera-native-test-20261017.json",
-    "scope": "Later source-built OpenIMP native capture, hardware PTZ and Frigate work supersedes the historical replay-only limits below"
+    "scope": "Later source-built OpenIMP native capture, hardware PTZ and Frigate work supersedes the historical replay-only limits below",
+    "latest_receipt": "camera-1080-test-20261018.json",
+    "latest_scope": "Two native encoders: 1080p movable view and 640x360 fixed view, four logical URLs, real image/recording checks and automatic boot qualification"
   },
   "scope": "Historical host/QEMU/replay verification; see native_followup for later hardware results"
 }

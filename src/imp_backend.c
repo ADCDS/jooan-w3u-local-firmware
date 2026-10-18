@@ -30,7 +30,7 @@ typedef struct {
     int groups[4], fds[4], ai_enabled, ai_channel, ao_enabled, ao_channel;
     unsigned sensors, sensor_count, width[2], height[2], sub_width, sub_height, fps, bitrate[4], gop;
     int audio;
-    int openimp_fullframe, workspace_created, workspace_enabled;
+    int openimp_fullframe, workspace_created, workspace_enabled, main_only;
     unsigned char *frame;
     uint64_t last_video[4], last_audio, next_owner_check;
     int16_t talk_buffer[320];
@@ -74,6 +74,7 @@ static int source_channel(const imp_state *s, unsigned int stream)
     /* OEM direct_mode=2 uses line rings on FS0/3. Ordinary outputs 1/2
      * and 4/5 carry complete NV12 for OpenIMP's native encoder. */
     static const int ordinary[4] = {1, 2, 4, 5};
+    if (s->main_only) return stream < 2 ? 1 : 5;
     return s->openimp_fullframe ? ordinary[stream] : fs_channels[stream];
 }
 /* Startup/shutdown are serialized by the application. A failed SDK teardown
@@ -295,18 +296,82 @@ static int validate_provider(const char *version, const jipc_config *config,
             return failure(error, capacity, "OpenIMP bring-up requires audio disabled");
         if (config->fps != 15)
             return failure(error, capacity, "OpenIMP OEM sensor activation is qualified at 15 fps");
-        if (config->width > 1280 || config->height > 720 ||
-            (config->sensors == 2 && (jipc_video_width(config,0) != jipc_video_width(config,2) ||
-             jipc_video_height(config,0) != jipc_video_height(config,2))))
-            return failure(error, capacity, "OpenIMP dual-sensor capture requires matching main geometry up to 1280x720; asymmetric DMA layouts are not qualified");
+        if (jipc_native_video_validate(config,error,capacity)) return -1;
         return 0;
     }
+    if (config->main_only) return failure(error, capacity, "main_only requires native OpenIMP or replay");
     if (!strstr(version, "1.3.0") && !strstr(version, "1.0.1"))
         return failure(error, capacity, "unrecognized libimp version: %.100s", version);
     return 0;
 }
 
 #define STEP(call, name) do { jipc_log("info", "libimp begin %s", name); if (sdk_result((call), name, error, capacity)) goto failed; } while (0)
+/* Resource flags belong to physical owners only. In main_only, slots0/2
+ * own FS1/FS5, encoder0/1 and group0/1; slots1/3 are publication aliases.
+ * Keep all ISP outputs enabled before any encoder GetFd pump can run. */
+static int video_graph_open(imp_state *s, char *error, size_t capacity)
+{
+    if (s->openimp_fullframe) {
+        jipc_imp_fs holder = {.width = 640, .height = 360, .pixel_format = 10,
+            .scaler_enable = 1, .scaler_width = 640, .scaler_height = 360,
+            .fps_num = s->fps, .fps_den = 1, .buffer_count = 1};
+        STEP(s->fs_create(0, &holder), "IMP_FrameSource_CreateWorkspace"); s->workspace_created = 1;
+        STEP(s->fs_set(0, &holder), "IMP_FrameSource_SetWorkspace");
+    }
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1) {
+        unsigned width = i % 2 ? s->sub_width : s->width[i/2];
+        unsigned height = i % 2 ? s->sub_height : s->height[i/2];
+        jipc_imp_fs fs = {
+            .width = width, .height = height, .pixel_format = 10,
+            .crop_enable = !s->openimp_fullframe, .crop_width = width, .crop_height = height,
+            .scaler_enable = 1, .scaler_width = width, .scaler_height = height,
+            .fps_num = s->fps, .fps_den = 1, .buffer_count = 1, .channel_type = 0
+        };
+        STEP(s->fs_create(source_channel(s, i), &fs), "IMP_FrameSource_CreateChn"); s->fs_created[i] = 1;
+        STEP(s->fs_set(source_channel(s, i), &fs), "IMP_FrameSource_SetChnAttr");
+    }
+    for (unsigned i = 0; i < (s->main_only ? 2u : 4u); ++i) { STEP(s->group_create(i), "IMP_Encoder_CreateGroup"); s->groups[i] = 1; }
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1) {
+        jipc_imp_encoder_attr encoder = {{0}};
+        uint32_t *w = encoder.words;
+        w[0] = 1; /* Recovered payload enum: H.264. */
+        w[3] = i % 2 ? s->sub_width : s->width[i/2];
+        w[4] = i % 2 ? s->sub_height : s->height[i/2];
+        w[12] = s->fps; w[13] = 1; w[14] = s->gop;
+        /* OEM rate-control mode 1 branch, offsets +0x3c..+0x54. */
+        w[15] = 1; w[16] = 45; w[17] = 15;
+        w[18] = s->bitrate[i];
+        w[20] = 3; w[21] = 15;
+        w[40] = !s->openimp_fullframe && !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
+        STEP(s->enc_create(enc_channels[i], &encoder), "IMP_Encoder_CreateChn"); s->enc_created[i] = 1;
+        STEP(s->enc_register(enc_groups[i], enc_channels[i]), "IMP_Encoder_RegisterChn"); s->registered[i] = 1;
+        jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
+        STEP(s->bind(&source, &destination), "IMP_System_Bind"); s->bound[i] = 1;
+    }
+    if (s->openimp_fullframe) {
+        STEP(s->fs_enable(0), "IMP_FrameSource_EnableWorkspace"); s->workspace_enabled = 1;
+    }
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1) {
+        if (!s->openimp_fullframe && !(i % 2) && s->sensors == 2)
+            STEP(s->fs_direct(source_channel(s, i), 540), "IMP_FrameSource_SetDirectModeAttr");
+        STEP(s->fs_enable(source_channel(s, i)), "IMP_FrameSource_EnableChn"); s->fs_enabled[i] = 1;
+    }
+    /* Finish configuring the shared ISP outputs before any GetFd pump can
+     * allocate/run the VPU concurrently with a later channel's STREAMON. */
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1) {
+        unsigned max_bytes = i % 2 ? 0x10000 : 0x40000;
+        jipc_imp_super super = {2, max_bytes * 8, max_bytes * 80 / 14, 0, 2};
+        STEP(s->super_frame(enc_channels[i], &super), "IMP_Encoder_SetSuperFrameCfg");
+        STEP(s->start(enc_channels[i]), "IMP_Encoder_StartRecvPic"); s->receiving[i] = 1;
+        s->fds[i] = s->get_fd(enc_channels[i]);
+        if (s->fds[i] < 0) { failure(error, capacity, "IMP_Encoder_GetFd(%d) failed", enc_channels[i]); goto failed; }
+        s->last_video[i] = jipc_now_us();
+    }
+    return 0;
+failed:
+    return -1;
+}
+
 int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
 {
     *out = NULL;
@@ -328,7 +393,8 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     imp_state *s = calloc(1, sizeof *s);
     if (!s) return failure(error, capacity, "cannot allocate IMP backend");
     s->lock_fd = -1;
-    s->sensors = config.sensors;
+    s->sensors = config.sensors; s->main_only = config.main_only;
+    for (unsigned i = 0; i < 4; ++i) s->fds[i] = -1;
     for (unsigned i = 0; i < 2; ++i) { s->width[i] = jipc_video_width(&config, i*2); s->height[i] = jipc_video_height(&config, i*2); }
     s->sub_width = config.sub_width; s->sub_height = config.sub_height;
     s->fps = config.fps; s->audio = config.audio;
@@ -402,62 +468,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         if (s->hflip[sensor]) STEP(s->hflip[sensor](flip & 1), "IMP_ISP_Tuning_SetISPHflip");
         if (s->vflip[sensor]) STEP(s->vflip[sensor]((flip >> 1) & 1), "IMP_ISP_Tuning_SetISPVflip");
     }
-    if (s->openimp_fullframe) {
-        jipc_imp_fs holder = {.width = 640, .height = 360, .pixel_format = 10,
-            .scaler_enable = 1, .scaler_width = 640, .scaler_height = 360,
-            .fps_num = s->fps, .fps_den = 1, .buffer_count = 1};
-        STEP(s->fs_create(0, &holder), "IMP_FrameSource_CreateWorkspace"); s->workspace_created = 1;
-        STEP(s->fs_set(0, &holder), "IMP_FrameSource_SetWorkspace");
-    }
-    for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        unsigned width = i % 2 ? s->sub_width : s->width[i/2];
-        unsigned height = i % 2 ? s->sub_height : s->height[i/2];
-        jipc_imp_fs fs = {
-            .width = width, .height = height, .pixel_format = 10,
-            .crop_enable = !s->openimp_fullframe, .crop_width = width, .crop_height = height,
-            .scaler_enable = 1, .scaler_width = width, .scaler_height = height,
-            .fps_num = s->fps, .fps_den = 1, .buffer_count = 1, .channel_type = 0
-        };
-        STEP(s->fs_create(source_channel(s, i), &fs), "IMP_FrameSource_CreateChn"); s->fs_created[i] = 1;
-        STEP(s->fs_set(source_channel(s, i), &fs), "IMP_FrameSource_SetChnAttr");
-    }
-    for (unsigned i = 0; i < 4; ++i) { STEP(s->group_create(i), "IMP_Encoder_CreateGroup"); s->groups[i] = 1; }
-    for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        jipc_imp_encoder_attr encoder = {{0}};
-        uint32_t *w = encoder.words;
-        w[0] = 1; /* Recovered payload enum: H.264. */
-        w[3] = i % 2 ? s->sub_width : s->width[i/2];
-        w[4] = i % 2 ? s->sub_height : s->height[i/2];
-        w[12] = s->fps; w[13] = 1; w[14] = s->gop;
-        /* OEM rate-control mode 1 branch, offsets +0x3c..+0x54. */
-        w[15] = 1; w[16] = 45; w[17] = 15;
-        w[18] = s->bitrate[i];
-        w[20] = 3; w[21] = 15;
-        w[40] = !s->openimp_fullframe && !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
-        STEP(s->enc_create(enc_channels[i], &encoder), "IMP_Encoder_CreateChn"); s->enc_created[i] = 1;
-        STEP(s->enc_register(enc_groups[i], enc_channels[i]), "IMP_Encoder_RegisterChn"); s->registered[i] = 1;
-        jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
-        STEP(s->bind(&source, &destination), "IMP_System_Bind"); s->bound[i] = 1;
-    }
-    if (s->openimp_fullframe) {
-        STEP(s->fs_enable(0), "IMP_FrameSource_EnableWorkspace"); s->workspace_enabled = 1;
-    }
-    for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        if (!s->openimp_fullframe && !(i % 2) && s->sensors == 2)
-            STEP(s->fs_direct(source_channel(s, i), 540), "IMP_FrameSource_SetDirectModeAttr");
-        STEP(s->fs_enable(source_channel(s, i)), "IMP_FrameSource_EnableChn"); s->fs_enabled[i] = 1;
-    }
-    /* Finish configuring the shared ISP outputs before any GetFd pump can
-     * allocate/run the VPU concurrently with a later channel's STREAMON. */
-    for (unsigned i = 0; i < s->sensors * 2; ++i) {
-        unsigned max_bytes = i % 2 ? 0x10000 : 0x40000;
-        jipc_imp_super super = {2, max_bytes * 8, max_bytes * 80 / 14, 0, 2};
-        STEP(s->super_frame(enc_channels[i], &super), "IMP_Encoder_SetSuperFrameCfg");
-        STEP(s->start(enc_channels[i]), "IMP_Encoder_StartRecvPic"); s->receiving[i] = 1;
-        s->fds[i] = s->get_fd(enc_channels[i]);
-        if (s->fds[i] < 0) { failure(error, capacity, "IMP_Encoder_GetFd(%d) failed", enc_channels[i]); goto failed; }
-        s->last_video[i] = jipc_now_us();
-    }
+    if (video_graph_open(s,error,capacity)) goto failed;
     if (s->audio) {
         if (!s->ai_set_attr || !s->ai_enable || !s->ai_disable || !s->ai_set_channel ||
             !s->ai_enable_channel || !s->ai_disable_channel || !s->ai_get || !s->ai_release) {
@@ -598,13 +609,20 @@ static int audio_output_open(imp_state *s, char *error, size_t capacity)
 }
 
 /* Descriptor identities are immutable until media shutdown joins its thread.
- * This OS wait makes no SDK calls and must run outside control_mutex. */
+ * Slots not owning resources must never become fd0 in the poll set. */
+static unsigned video_pollfds(const imp_state *s, struct pollfd fds[4], unsigned slots[4])
+{
+    unsigned count = 0;
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1) {
+        slots[count] = i; fds[count++] = (struct pollfd){s->fds[i], POLLIN, 0};
+    }
+    return count;
+}
 int jipc_imp_wait(void *state, unsigned timeout_ms)
 {
-    imp_state *s = state;
-    struct pollfd fds[4];
-    for (unsigned i = 0; i < s->sensors * 2; ++i) fds[i] = (struct pollfd){s->fds[i], POLLIN, 0};
-    int rc = poll(fds, s->sensors * 2, (int)timeout_ms);
+    struct pollfd fds[4]; unsigned slots[4];
+    unsigned count = video_pollfds(state,fds,slots);
+    int rc = poll(fds,count,(int)timeout_ms);
     return rc < 0 && errno != EINTR ? -1 : 0;
 }
 
@@ -614,18 +632,19 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
     imp_state *s = state;
     if (sdk_poisoned) return failure(error, capacity, "IMP SDK cleanup failed; verify driver detachment or reset the camera before reusing hardware");
     struct pollfd fds[4];
-    unsigned count = s->sensors * 2;
-    for (unsigned i = 0; i < count; ++i) fds[i] = (struct pollfd){s->fds[i], POLLIN, 0};
+    unsigned slots[4];
+    unsigned count = video_pollfds(s,fds,slots);
     int rc = poll(fds, count, (int)timeout_ms);
     if (rc < 0 && errno != EINTR) return failure(error, capacity, "encoder poll: %s", strerror(errno));
     uint64_t now = jipc_now_us();
-    for (unsigned i = 0; i < count; ++i) {
-        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
+    for (unsigned p = 0; p < count; ++p) {
+        unsigned i = slots[p];
+        if (fds[p].revents & (POLLERR | POLLHUP | POLLNVAL))
             return failure(error, capacity, "encoder fd failed for stream %u", i);
-        if (fds[i].revents & POLLIN) {
+        if (fds[p].revents & POLLIN) {
             jipc_frame frame = {0};
             if (copy_stream(s, enc_channels[i], &frame, error, capacity)) return -1;
-            if (jipc_publish(app, i, frame.data, frame.size, frame.pts_us, 0, JIPC_H264))
+            if (jipc_publish_video(app, i, s->main_only, frame.data, frame.size, frame.pts_us, 0))
                 return failure(error, capacity, "cannot publish hardware video stream %u", i);
             s->last_video[i] = now;
         }
@@ -687,7 +706,7 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
     if (!strcmp(operation, "idr")) {
         if (value < 0 || (unsigned)value >= s->sensors * 2)
             return failure(error, capacity, "invalid stream channel");
-        return sdk_result(s->idr(enc_channels[value]), "IMP_Encoder_RequestIDR", error, capacity);
+        return sdk_result(s->idr(enc_channels[s->main_only ? value & ~1 : value]), "IMP_Encoder_RequestIDR", error, capacity);
     }
     if (!strcmp(operation, "isp_night")) {
         if (value != 0 && value != 1) return failure(error, capacity, "night mode requires 0 (day) or 1 (night); automatic exposure mode is unsupported");
@@ -734,6 +753,7 @@ int jipc_imp_snapshot(void *state, unsigned channel, jipc_frame *frame,
 {
     imp_state *s = state;
     if (channel >= s->sensors * 2) return failure(error, capacity, "invalid snapshot channel");
+    if (s->main_only) return failure(error, capacity, "JPEG snapshots are unavailable in main_only mode; capture a frame from RTSP");
     /* The recovered JPEG path is attached to each sensor's substream group.
      * It shares that group's input with H.264, using encoder 2 or 3. */
     unsigned sensor = channel / 2;

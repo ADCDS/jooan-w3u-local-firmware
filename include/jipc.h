@@ -44,6 +44,7 @@ typedef struct {
     int discovery;
     int watchdog;
     int onvif_nudge;
+    int main_only;
     unsigned discovery_port;
 } jipc_config;
 typedef struct jipc_app {
@@ -88,6 +89,7 @@ int jipc_json_string(const char *json, const char *key, char *out, size_t capaci
 int jipc_json_integer(const char *json, const char *key, int *out);
 int jipc_json_escape(const char *text, char *out, size_t capacity);
 
+unsigned jipc_video_owner(const jipc_config *c, unsigned channel);
 unsigned jipc_video_width(const jipc_config *c, unsigned channel);
 unsigned jipc_video_height(const jipc_config *c, unsigned channel);
 unsigned jipc_video_bitrate(const jipc_config *c, unsigned channel);
@@ -95,6 +97,7 @@ void jipc_config_defaults(jipc_config *config);
 int jipc_config_load(jipc_config *config, const char *path, char *error, size_t capacity);
 int jipc_config_save(const jipc_config *config);
 int jipc_config_validate(const jipc_config *config, char *error, size_t capacity);
+int jipc_native_video_validate(const jipc_config *config, char *error, size_t capacity);
 void jipc_config_copy(jipc_app *app, jipc_config *out);
 int jipc_config_json(jipc_app *app, char *out, size_t capacity);
 int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capacity);
@@ -103,6 +106,10 @@ int jipc_streams_init(jipc_app *app);
 void jipc_streams_destroy(jipc_app *app);
 int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes,
                  uint64_t pts_us, int keyframe, enum jipc_codec codec);
+/* Publish a physical video source, optionally also to its adjacent alias.
+ * main_only accepts only even source slots; each logical ring owns its copy. */
+int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
+                       const void *data, size_t bytes, uint64_t pts_us, int keyframe);
 int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
               jipc_frame *frame, unsigned timeout_ms);
 void jipc_frame_free(jipc_frame *frame);

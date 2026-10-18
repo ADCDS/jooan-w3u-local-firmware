@@ -45,6 +45,17 @@ int main(void)
     CHECK(loaded.width1==640&&loaded.height1==360&&loaded.bitrate1==768&&loaded.gop_frames==15);
     CHECK(jipc_config_json(&app, encoded, sizeof(encoded)) < 0);
     char json[8192]; CHECK(jipc_config_json(&app, json, sizeof(json)) > 0); CHECK(!strstr(json, "test-credential"));
+    app.restart=0;
+    CHECK(!jipc_config_patch(&app,"{\"main_only\":true,\"width\":1920,\"height\":1080}",error,sizeof(error)));
+    CHECK(app.restart&&app.config.main_only);
+    CHECK(jipc_video_width(&app.config,1)==1920&&jipc_video_height(&app.config,1)==1080);
+    CHECK(jipc_video_width(&app.config,3)==640&&jipc_video_height(&app.config,3)==360);
+    CHECK(jipc_video_bitrate(&app.config,1)==app.config.bitrate&&jipc_video_bitrate(&app.config,3)==768);
+    CHECK(jipc_video_owner(&app.config,1)==0&&jipc_video_owner(&app.config,3)==2&&jipc_video_owner(&app.config,4)==4);
+    jipc_config_defaults(&loaded);CHECK(!jipc_config_load(&loaded,app.config.config_path,error,sizeof(error))&&loaded.main_only);
+    CHECK(jipc_config_patch(&app,"{\"sensors\":1}",error,sizeof(error))<0);
+    CHECK(!jipc_config_patch(&app,"{\"main_only\":false}",error,sizeof(error)));
+    CHECK(jipc_video_width(&app.config,1)==app.config.sub_width);
     CHECK(jipc_config_patch(&app, "{\"fps\":12,\"bitrate\":512}", error, sizeof(error)) == 0); CHECK(app.restart == 1);
     CHECK(jipc_config_patch(&app, "{\"fps\":0}", error, sizeof(error)) < 0); CHECK(app.config.fps == 12);
     CHECK(jipc_config_patch(&app, "{\"flip0\":4}", error, sizeof(error)) < 0); CHECK(app.config.flip0==3);

@@ -1,0 +1,684 @@
+{
+  "schema_version": 1,
+  "status": "Passed: deployed 1080p/360p graph, clean images, recordings, watchdog and automatic boot; Frigate ONVIF refreshed after camera clock jump",
+  "board": "JA-A12 / T23N / CV2005 + CV2005S1",
+  "kernel": "retained OEM Linux3.10.14",
+  "release": "/mnt/sd_card/jooanipc-open/releases/a507d3cb-904d60a6",
+  "sha256": {
+    "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+    "jooanipc-open": "a507d3cb3a06d6b4583c543aa5b544d9f01fb2c3ee84b318abc8e9e2c5260218",
+    "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb"
+  },
+  "profile": {
+    "main_only": true,
+    "primary_resolution": [
+      1920,
+      1080
+    ],
+    "fixed_resolution": [
+      640,
+      360
+    ],
+    "fps": 15,
+    "bitrate_kbps": [
+      3072,
+      768
+    ],
+    "gop_frames": 15,
+    "audio": false,
+    "jpeg_snapshots": false,
+    "logical_stream_aliases": {
+      "1": 0,
+      "3": 2
+    },
+    "local_recording_channels": [
+      0,
+      2
+    ]
+  },
+  "physical_graph": {
+    "workspace": "FS0 retained until dependent streams stop",
+    "primary": "FS1 / group0 / encoder0",
+    "fixed": "FS5 / group1 / encoder1",
+    "unused": [
+      "FS2",
+      "FS4"
+    ],
+    "sdk_frame_dequeues": "once per physical encoder, then copied to both logical rings"
+  },
+  "driver_workaround": {
+    "module_sha256": "d82a86c36694f1da8e79b797a25309889433229f3bc42ffdbdfca3b382825907",
+    "finding": "Frame-switch scaler geometry update omits shared DMA stride writes; FS1 and FS4 at unequal widths collide on scaler1 stride",
+    "stride_write_function": "tisp_msca_chx_cfg_load",
+    "stride_write_text_offsets": [
+      "0x1bc20",
+      "0x1bc38"
+    ],
+    "frame_switch_path": "tisp_rcfg_cfg_trig -> tisp_msca_set_all_reg_cfg -> params_update + init_chx_cfg",
+    "workaround": "Use scaler1 only for sensor0 and scaler2 only for sensor1",
+    "kernel_or_OpenIMP_changes_this_release": false
+  },
+  "memory": {
+    "rmem_total_kib": 21988,
+    "rmem_peak_kib": 18884,
+    "remaining_kib": 3104,
+    "postboot_peak_kib": 18884,
+    "linux_memfree_kib_final": 9976,
+    "linux_memtotal_kib": 38324,
+    "postboot_sample_vm_rss_kib": 2724,
+    "postboot_sample_vm_hwm_kib": 3384
+  },
+  "streams_before_reboot": [
+    {
+      "profile": "High",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "15/1",
+      "channel": 0,
+      "packets": 47,
+      "max_packet": 159901,
+      "measured_fps": 15.0,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 640,
+      "height": 360,
+      "r_frame_rate": "15/1",
+      "channel": 2,
+      "packets": 46,
+      "max_packet": 53138,
+      "measured_fps": 14.99,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "15000/1001",
+      "channel": 1,
+      "packets": 47,
+      "max_packet": 210815,
+      "measured_fps": 15.0,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 640,
+      "height": 360,
+      "r_frame_rate": "15/1",
+      "channel": 3,
+      "packets": 46,
+      "max_packet": 58051,
+      "measured_fps": 14.99,
+      "strict_decode_30_frames": true
+    }
+  ],
+  "visual_inspection_before_reboot": {
+    "primary_1080p": "clean, complete scene, no repeated/misaligned image regions",
+    "fixed_640x360": "clean, distinct fixed-lens scene",
+    "images": "private local evidence; not committed"
+  },
+  "health_latency_ms_before_reboot": [
+    1.81,
+    4.5,
+    1.79,
+    3.0,
+    1.82,
+    1.94
+  ],
+  "watchdog_trial": {
+    "healthy_uptime_seconds": 273.158505,
+    "native_owns_watchdog": true,
+    "all_four_logical_streams_fresh": true
+  },
+  "controls": {
+    "steady_nudge": [
+      {
+        "case": "single",
+        "clicks": 1,
+        "steps": 193,
+        "movement_span_s": 0.39,
+        "stationary_after_s": 10.34,
+        "runs": [
+          {
+            "start": 3175.5,
+            "speed": 540,
+            "end": 3175.89
+          }
+        ],
+        "speeds": [
+          540
+        ]
+      }
+    ],
+    "presets_recalled_before_reboot": [
+      "PRESET B",
+      "PRESET C"
+    ],
+    "preset_catalog_byte_exact": true,
+    "first_use_observation": {
+      "steps": 100,
+      "single_continuous_run": true,
+      "delayed_second_movement": false,
+      "repeat_steps": 193,
+      "cause": "Not established; first-use variation recorded, motor code unchanged in this release"
+    }
+  },
+  "frigate_before_reboot": {
+    "checked_epoch": 1792282714.0939715,
+    "ptz": {
+      "name": "jooan_main",
+      "features": [
+        "pt"
+      ],
+      "presets": [
+        "preset a",
+        "preset b",
+        "preset c",
+        "preset d"
+      ],
+      "profiles": [
+        {
+          "name": "Sensor 0 main",
+          "token": "main0"
+        },
+        {
+          "name": "Sensor 0 sub",
+          "token": "sub0"
+        }
+      ]
+    },
+    "cameras": {
+      "jooan_main": {
+        "camera_fps": 5.1,
+        "process_fps": 2.3,
+        "skipped_fps": 2.8,
+        "detection_fps": 8.5,
+        "connection_quality": "fair",
+        "expected_fps": 5,
+        "reconnects_last_hour": 1,
+        "stalls_last_hour": 6
+      },
+      "jooan_sub": {
+        "camera_fps": 5.0,
+        "process_fps": 5.0,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "connection_quality": "fair",
+        "expected_fps": 5,
+        "reconnects_last_hour": 1,
+        "stalls_last_hour": 7
+      }
+    },
+    "recordings": [
+      {
+        "camera": "jooan_main",
+        "start_time": 1792282693,
+        "end_time": 1792282702.992513,
+        "duration": 9.992513020833334,
+        "size_mb": 3.01,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "460800/30697",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.01
+        },
+        "strict_decode_15_frames": true
+      },
+      {
+        "camera": "jooan_sub",
+        "start_time": 1792282697,
+        "end_time": 1792282706.995573,
+        "duration": 9.995572916666667,
+        "size_mb": 0.76,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "576000/38383",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.01
+        },
+        "strict_decode_15_frames": true
+      }
+    ]
+  },
+  "verification": {
+    "host_ctest_suites": 7,
+    "host_tls_integration": "passed for both main_only and legacy layouts",
+    "rtsp_protocol_tests_per_layout": 6,
+    "http_onvif_protocol_tests_per_layout": 11,
+    "discovery_tests_per_layout": 4,
+    "mips_build": "passed, Ingenic GCC5.4 -muclibc",
+    "qemu_contract_suites": 6,
+    "on_camera_offline_suites": [
+      "core (90 checks)",
+      "IMP adapter",
+      "motor",
+      "named presets"
+    ],
+    "graph_contracts": [
+      "FS1/FS5 geometry and ownership",
+      "all FS outputs enabled before encoder pumps",
+      "complete and partial-failure cleanup",
+      "compact polling skips aliases",
+      "one SDK dequeue/release per owner",
+      "alias payload/SPS/PTS/keyframe/IDR mapping",
+      "JPEG rejects before SDK allocation",
+      "stalled source does not refresh its aliases"
+    ],
+    "review": "Two reused agent contexts performed read-only implementation review; no blocker",
+    "package_install": "passed; target example and linked 1080p receipt present",
+    "read_only_review": "Implementation and final documentation reviewed in reused agent contexts; resource ownership, alias behavior and qualification limits consistent"
+  },
+  "boundaries": [
+    "Logical substream URLs share their main feed; no independent low-resolution substreams in main_only mode",
+    "Native JPEG unavailable in this mode; Frigate still images use video decoding",
+    "Audio disabled",
+    "Long-duration soak and a fresh cold power-cycle at this profile are not claimed",
+    "Both drivers advertise 1080p input; fixed output intentionally 640x360",
+    "OEM 2304x1296 operating mode appears upscaled from 1080p input; silicon maximum not established",
+    "Current full-frame native encoder cannot fit the 3MP primary plus fixed view in reserved memory"
+  ],
+  "streams_after_reboot": [
+    {
+      "profile": "High",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "15000/1001",
+      "channel": 0,
+      "packets": 46,
+      "max_packet": 71637,
+      "measured_fps": 15.01,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 640,
+      "height": 360,
+      "r_frame_rate": "15/1",
+      "channel": 2,
+      "packets": 46,
+      "max_packet": 39111,
+      "measured_fps": 14.99,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "15/1",
+      "channel": 1,
+      "packets": 46,
+      "max_packet": 135577,
+      "measured_fps": 15.01,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 640,
+      "height": 360,
+      "r_frame_rate": "15000/1001",
+      "channel": 3,
+      "packets": 47,
+      "max_packet": 47575,
+      "measured_fps": 15.0,
+      "strict_decode_30_frames": true
+    }
+  ],
+  "health_latency_ms_after_reboot": [
+    14.98,
+    11.59,
+    7.39,
+    5.19,
+    5.31,
+    20.58
+  ],
+  "visual_inspection_after_reboot": {
+    "primary_1080p": "clean",
+    "fixed_640x360": "clean",
+    "images": "private local evidence; not committed"
+  },
+  "live_onvif_after_reboot": {
+    "profiles": [
+      {
+        "token": "main0",
+        "name": "Sensor 0 main",
+        "width": 1920,
+        "height": 1080
+      },
+      {
+        "token": "sub0",
+        "name": "Sensor 0 main (shared)",
+        "width": 1920,
+        "height": 1080
+      },
+      {
+        "token": "main1",
+        "name": "Sensor 1 main",
+        "width": 640,
+        "height": 360
+      },
+      {
+        "token": "sub1",
+        "name": "Sensor 1 main (shared)",
+        "width": 640,
+        "height": 360
+      }
+    ],
+    "snapshot_capability": false,
+    "snapshot_uri_explicitly_unsupported": true,
+    "passed": true
+  },
+  "frigate_after_reboot": {
+    "checked_epoch": 1792283153.5423589,
+    "ptz": {
+      "name": "jooan_main",
+      "features": [
+        "pt"
+      ],
+      "presets": [
+        "preset a",
+        "preset b",
+        "preset c",
+        "preset d"
+      ],
+      "profiles": [
+        {
+          "name": "Sensor 0 main",
+          "token": "main0"
+        },
+        {
+          "name": "Sensor 0 sub",
+          "token": "sub0"
+        }
+      ]
+    },
+    "cameras": {
+      "jooan_main": {
+        "camera_fps": 5.0,
+        "process_fps": 1.7,
+        "skipped_fps": 3.3,
+        "detection_fps": 8.2,
+        "connection_quality": "unusable",
+        "expected_fps": 5,
+        "reconnects_last_hour": 16,
+        "stalls_last_hour": 24
+      },
+      "jooan_sub": {
+        "camera_fps": 5.0,
+        "process_fps": 5.1,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "connection_quality": "unusable",
+        "expected_fps": 5,
+        "reconnects_last_hour": 15,
+        "stalls_last_hour": 9
+      }
+    },
+    "recordings": [
+      {
+        "camera": "jooan_main",
+        "start_time": 1792283133,
+        "end_time": 1792283142.994922,
+        "duration": 9.994921875,
+        "size_mb": 2.96,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "128000/8529",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.01
+        },
+        "strict_decode_15_frames": true
+      },
+      {
+        "camera": "jooan_sub",
+        "start_time": 1792283132,
+        "end_time": 1792283141.998177,
+        "duration": 9.998177083333333,
+        "size_mb": 0.76,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "576000/38393",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.0
+        },
+        "strict_decode_15_frames": true
+      }
+    ]
+  },
+  "frigate_settled_detection": {
+    "cameras": {
+      "jooan_main": {
+        "camera_fps": 5.0,
+        "process_fps": 5.1,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "expected_fps": 5
+      },
+      "jooan_sub": {
+        "camera_fps": 5.0,
+        "process_fps": 5.0,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "expected_fps": 5
+      }
+    },
+    "detectors": {
+      "cpu1": {
+        "inference_speed": 134.06,
+        "detection_start": 0.0,
+        "pid": 649,
+        "cpu": "0.0",
+        "mem": "2.0"
+      }
+    },
+    "note": "Motion processing temporarily skipped frames while CPU inference was active; latest settled sample processes both views at configured 5 fps with zero skipped frames. Recordings remained 15 fps. Reconnect/stall quality counters in earlier snapshots include intentional deployment/reboot downtime."
+  },
+  "automatic_boot": {
+    "native_pid": 5866,
+    "fresh_oem_motor_calibration": true,
+    "oem_media_cleanly_detached": true,
+    "boot_handoff_qualified": true,
+    "kernel_taint": 4096,
+    "TAINT_DIE_clear": true,
+    "network_band": "5GHz",
+    "AP_pin_disabled": true,
+    "opt_free_kib": 100,
+    "preset_catalog_byte_exact": true,
+    "postboot_frigate_presets_recalled": [
+      "PRESET B",
+      "PRESET C"
+    ],
+    "watchdog_timeout_seconds": 180,
+    "qualification_period_seconds": 185
+  },
+  "postboot_ONVIF_clock_issue": {
+    "camera_minus_host_clock_seconds": -966.94,
+    "WSSE_GetProfiles_http_status": {
+      "host_clock": 401,
+      "camera_clock": 200
+    },
+    "effect": "Frigate retained its old WSSE clock offset and a postboot preset request was rejected before reaching motor control",
+    "recovery": "Restart Frigate to initialize its ONVIF client against the camera clock",
+    "authentication_checks_preserved": true,
+    "limitation": "A later camera reboot may require refreshing Frigate ONVIF again if the camera clock jumps",
+    "recovery_verified": true,
+    "camera_clock_not_manually_changed": true
+  },
+  "checked_utc": "2026-10-18T00:30:50.451493+00:00",
+  "final_status": {
+    "version": "0.1.0",
+    "backend": "imp",
+    "hardware_profile": "JA-A12-T23N-CV2005-CV2005S1",
+    "hardware_validated": false,
+    "uptime_seconds": 381.622777,
+    "ready": true,
+    "backend_error": "",
+    "recording": false,
+    "record_error": "",
+    "restart_pending": false,
+    "streams": [
+      {
+        "channel": 0,
+        "frames": 5681,
+        "width": 1920,
+        "height": 1080,
+        "codec_ready": true
+      },
+      {
+        "channel": 1,
+        "alias_of": 0,
+        "frames": 5681,
+        "width": 1920,
+        "height": 1080,
+        "codec_ready": true
+      },
+      {
+        "channel": 2,
+        "frames": 5682,
+        "width": 640,
+        "height": 360,
+        "codec_ready": true
+      },
+      {
+        "channel": 3,
+        "alias_of": 2,
+        "frames": 5682,
+        "width": 640,
+        "height": 360,
+        "codec_ready": true
+      }
+    ],
+    "platform": {
+      "backend": "imp",
+      "position_known": true,
+      "moving": false,
+      "preset_motion": false,
+      "night": -1,
+      "white_light": -1,
+      "pilot_led": -1,
+      "speaker_enable": -1,
+      "manual_timeout_ms": 1200,
+      "last_error": "",
+      "presets": [
+        {
+          "slot": 1,
+          "name": "PRESET A"
+        },
+        {
+          "slot": 2,
+          "name": "PRESET B"
+        },
+        {
+          "slot": 3,
+          "name": "PRESET C"
+        },
+        {
+          "slot": 4,
+          "name": "PRESET D"
+        }
+      ]
+    }
+  },
+  "frigate_final": {
+    "checked_epoch": 1792283477.7351718,
+    "ptz": {
+      "name": "jooan_main",
+      "features": [
+        "pt"
+      ],
+      "presets": [
+        "preset a",
+        "preset b",
+        "preset c",
+        "preset d"
+      ],
+      "profiles": [
+        {
+          "name": "Sensor 0 main",
+          "token": "main0"
+        },
+        {
+          "name": "Sensor 0 main (shared)",
+          "token": "sub0"
+        }
+      ]
+    },
+    "cameras": {
+      "jooan_main": {
+        "camera_fps": 5.0,
+        "process_fps": 2.7,
+        "skipped_fps": 2.2,
+        "detection_fps": 4.4,
+        "connection_quality": "excellent",
+        "expected_fps": 5,
+        "reconnects_last_hour": 0,
+        "stalls_last_hour": 0
+      },
+      "jooan_sub": {
+        "camera_fps": 5.1,
+        "process_fps": 1.9,
+        "skipped_fps": 3.3,
+        "detection_fps": 4.5,
+        "connection_quality": "excellent",
+        "expected_fps": 5,
+        "reconnects_last_hour": 0,
+        "stalls_last_hour": 1
+      }
+    },
+    "recordings": [
+      {
+        "camera": "jooan_main",
+        "start_time": 1792283458,
+        "end_time": 1792283467.992253,
+        "duration": 9.992252604166667,
+        "size_mb": 3.03,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "2304000/153481",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.01
+        },
+        "strict_decode_15_frames": true
+      },
+      {
+        "camera": "jooan_sub",
+        "start_time": 1792283458,
+        "end_time": 1792283467.997005,
+        "duration": 9.997005208333333,
+        "size_mb": 0.73,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "1152000/76777",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.0
+        },
+        "strict_decode_15_frames": true
+      }
+    ]
+  }
+}

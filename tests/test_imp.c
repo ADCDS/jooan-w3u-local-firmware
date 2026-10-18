@@ -38,7 +38,7 @@ static int ordinary_sources;
 static int unbind_cells(jipc_imp_cell *source, jipc_imp_cell *destination)
 {
     CHECK(source->device == 0 && destination->device == 1 && !source->output && !destination->output);
-    int expected_group = ordinary_sources ?
+    int expected_group = ordinary_sources == 2 ? (source->group == 1 ? 0 : 1) : ordinary_sources ?
         (source->group == 1 ? 0 : source->group == 2 ? 2 : source->group == 4 ? 1 : 3) :
         (source->group == 0 ? 0 : source->group == 1 ? 2 : source->group == 3 ? 1 : 3);
     CHECK(destination->group == expected_group);
@@ -296,6 +296,121 @@ static void test_microphone(void)
     CHECK(!munmap(pcm, 4096));
 }
 
+
+static unsigned graph_enabled;
+static int graph_fail_enable;
+static int graph_create_source(int ch, jipc_imp_fs *attr)
+{
+    CHECK(ch==0||ch==1||ch==5);
+    CHECK(attr->width==(ch==1?1920u:640u) && attr->height==(ch==1?1080u:360u));
+    CHECK(attr->buffer_count==1 && attr->scaler_enable && !attr->crop_enable && attr->pixel_format==10);
+    return remember(1000+ch);
+}
+static int graph_set_source(int ch,jipc_imp_fs *attr)
+{ CHECK(attr->width==(ch==1?1920u:640u));return remember(1010+ch); }
+static int graph_group(int group){ CHECK(group==0||group==1);return remember(1020+group); }
+static int graph_encoder(int ch,jipc_imp_encoder_attr *attr)
+{
+    CHECK(ch==0||ch==1);
+    CHECK(attr->words[3]==(ch?640u:1920u) && attr->words[4]==(ch?360u:1080u));
+    CHECK(attr->words[18]==(ch?768u:3072u)&&attr->words[14]==15&&!attr->words[40]);
+    return remember(1030+ch);
+}
+static int graph_register(int group,int ch){CHECK(group==ch && ch<2);return remember(1040+ch);}
+static int graph_bind(jipc_imp_cell *source,jipc_imp_cell *dest)
+{
+    CHECK(source->device==0&&dest->device==1);
+    CHECK((source->group==1&&dest->group==0)||(source->group==5&&dest->group==1));
+    return remember(1050+source->group);
+}
+static int graph_enable(int ch)
+{
+    remember(1060+ch);
+    if(graph_fail_enable&&ch==5)return -7;
+    graph_enabled|=1u<<ch;return 0;
+}
+static int graph_super(int ch,jipc_imp_super *attr)
+{ CHECK(ch<2&&attr->i_bits==0x40000*8);return remember(1070+ch); }
+static int graph_start(int ch){CHECK(graph_enabled==((1u<<0)|(1u<<1)|(1u<<5)));return remember(1080+ch);}
+static int graph_fd(int ch){CHECK(graph_enabled==35);remember(1090+ch);return 50+ch;}
+static void test_main_only_graph(void)
+{
+    for(int partial=0;partial<2;++partial){
+        imp_state *s=cleanup_state();ordinary_sources=2;
+        s->sensors=2;s->main_only=s->openimp_fullframe=1;s->width[0]=1920;s->height[0]=1080;
+        s->width[1]=640;s->height[1]=360;s->fps=s->gop=15;s->bitrate[0]=3072;s->bitrate[2]=768;
+        s->fs_create=graph_create_source;s->fs_set=graph_set_source;s->group_create=graph_group;
+        s->enc_create=graph_encoder;s->enc_register=graph_register;s->bind=graph_bind;
+        s->fs_enable=graph_enable;s->super_frame=graph_super;s->start=graph_start;s->get_fd=graph_fd;
+        graph_enabled=0;graph_fail_enable=partial;call_count=0;char error[256];
+        CHECK(video_graph_open(s,error,sizeof(error))==(partial?-1:0));
+        CHECK(!s->fs_created[1]&&!s->fs_created[3]&&!s->enc_created[1]&&!s->enc_created[3]);
+        CHECK(!s->groups[2]&&!s->groups[3]);
+        if(!partial){CHECK(s->fds[0]==50&&s->fds[2]==51);CHECK(s->receiving[0]&&s->receiving[2]);}
+        else CHECK(!s->receiving[0]&&!s->receiving[2]);
+        call_count=0;jipc_imp_close(s);
+        const int complete[]={101,100,205,201,200,305,401,501,301,400,500,601,600,705,701,700};
+        const int failed[]={201,200,305,401,501,301,400,500,601,600,705,701,700};
+        const int *want=partial?failed:complete;size_t bytes=partial?sizeof(failed):sizeof(complete);
+        CHECK(call_count==(int)(bytes/sizeof(int))&&!memcmp(calls,want,bytes));
+        CHECK(!sdk_poisoned);
+    }
+    ordinary_sources=0;graph_fail_enable=0;
+}
+
+static jipc_imp_pack *pair_packs;
+static int pair_pipe[2][2],pair_get[2],pair_release[2],pair_idr;
+static int pair_get_stream(int ch,jipc_imp_stream *stream,int block)
+{
+    CHECK(ch==0||ch==1);CHECK(block==0);char byte;CHECK(read(pair_pipe[ch][0],&byte,1)==1);
+    ++pair_get[ch];*stream=(jipc_imp_stream){(uint32_t)(uintptr_t)&pair_packs[ch],1,1,0};return 0;
+}
+static int pair_release_stream(int ch,jipc_imp_stream *stream)
+{ CHECK(ch==0||ch==1);CHECK(stream->packs==(uint32_t)(uintptr_t)&pair_packs[ch]);++pair_release[ch];return 0; }
+static int pair_request_idr(int ch){pair_idr=ch;return 0;}
+static void test_main_only_delivery(void)
+{
+    unsigned char *memory=low_memory(4096);pair_packs=(jipc_imp_pack*)memory;
+    /* Distinct opaque Annex-B markers test routing/cache ownership; the
+     * protocol integration uses genuine independently encoded fixtures. */
+    const unsigned char data[]={0,0,0,1,0x67,0x42,0,0x1e,0x89,0,0,0,1,0x68,0xce,6,0xe2,0,0,0,1,0x65,0x80,0x7f};
+    for(int i=0;i<2;++i){
+        unsigned char *body=memory+128+i*128;memcpy(body,data,sizeof(data));body[8]+=(unsigned char)i;
+        pair_packs[i]=(jipc_imp_pack){.address=(uint32_t)(uintptr_t)body,.length=sizeof(data)};
+        CHECK(!pipe(pair_pipe[i]));pair_get[i]=pair_release[i]=0;
+    }
+    jipc_app app={0};jipc_config_defaults(&app.config);app.config.main_only=1;app.config.width=1920;app.config.height=1080;
+    app.config.width1=640;app.config.height1=360;CHECK(!jipc_streams_init(&app));
+    imp_state s={.sensors=2,.main_only=1,.get_stream=pair_get_stream,.release_stream=pair_release_stream,.idr=pair_request_idr};
+    s.frame=malloc(JIPC_MAX_FRAME);CHECK(s.frame);s.fds[0]=pair_pipe[0][0];s.fds[2]=pair_pipe[1][0];
+    s.last_video[0]=s.last_video[2]=s.next_owner_check=jipc_now_us();char error[256];
+    struct pollfd fds[4];unsigned slots[4];CHECK(video_pollfds(&s,fds,slots)==2);
+    CHECK(slots[0]==0&&slots[1]==2&&fds[0].fd==s.fds[0]&&fds[1].fd==s.fds[2]);
+    CHECK(write(pair_pipe[0][1],"x",1)==1);CHECK(!jipc_imp_wait(&s,0));
+    CHECK(!jipc_imp_poll(&app,&s,0,error,sizeof(error)));
+    CHECK(pair_get[0]==1&&pair_release[0]==1&&!pair_get[1]);
+    CHECK(app.produced[0]==1&&app.produced[1]==1&&!app.produced[2]&&!app.produced[3]);
+    CHECK(write(pair_pipe[1][1],"x",1)==1);CHECK(!jipc_imp_poll(&app,&s,0,error,sizeof(error)));
+    CHECK(pair_get[0]==1&&pair_get[1]==1&&pair_release[1]==1);
+    for(unsigned owner=0;owner<4;owner+=2){
+        uint64_t a=0,b=0;jipc_frame one={0},two={0};
+        CHECK(jipc_read(&app,owner,&a,&one,0)==1&&jipc_read(&app,owner+1,&b,&two,0)==1);
+        CHECK(one.pts_us==two.pts_us&&one.keyframe&&two.keyframe&&one.size==two.size&&!memcmp(one.data,two.data,one.size));
+        CHECK(one.data!=two.data&&one.data[8]==(unsigned char)(data[8]+owner/2));
+        one.data[8]=0;jipc_frame_free(&one);CHECK(two.data[8]!=(unsigned char)0);jipc_frame_free(&two);
+        CHECK(app.streams[owner].sps_size==app.streams[owner+1].sps_size);
+        CHECK(!memcmp(app.streams[owner].sps,app.streams[owner+1].sps,app.streams[owner].sps_size));
+    }
+    for(int ch=0;ch<4;++ch){CHECK(!jipc_imp_control(&s,"idr",ch,0,error,sizeof(error)));CHECK(pair_idr==ch/2);}
+    CHECK(jipc_imp_control(&s,"idr",4,0,error,sizeof(error))<0);
+    for(unsigned ch=0;ch<4;++ch){jipc_frame frame={0};CHECK(jipc_imp_snapshot(&s,ch,&frame,error,sizeof(error))<0);CHECK(!frame.data);}
+    s.last_video[2]=jipc_now_us()-16000000;CHECK(write(pair_pipe[0][1],"x",1)==1);
+    CHECK(jipc_imp_poll(&app,&s,0,error,sizeof(error))<0&&strstr(error,"stream 2"));
+    CHECK(app.produced[0]==2&&app.produced[1]==2&&app.produced[2]==1&&app.produced[3]==1);
+    for(int i=0;i<2;++i){close(pair_pipe[i][0]);close(pair_pipe[i][1]);}
+    free(s.frame);jipc_streams_destroy(&app);CHECK(!munmap(memory,4096));
+}
+
 static void test_provider(void)
 {
     jipc_config config = {0};
@@ -325,6 +440,13 @@ static void test_provider(void)
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     config.width1=1280;config.height1=720;
     CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    config.main_only=1;config.width=1920;config.height=1080;config.width1=640;config.height1=360;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    CHECK(validate_provider("IMP-1.3.0", &config, error, sizeof error)<0);
+    config.width1=1280;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
+    config.width1=640;config.width=2304;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
+    config.width=1920;config.sensors=1;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
+    config.sensors=2;
     config.fps = 10;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     unsetenv("OPENIMP_T23_DRIVER_ABI");
@@ -336,7 +458,7 @@ static void test_provider(void)
 
 int main(void)
 {
-    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone();
+    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone(); test_main_only_graph(); test_main_only_delivery();
     puts("IMP offline adapter contracts passed");
     return 0;
 }

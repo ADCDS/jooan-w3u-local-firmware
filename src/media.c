@@ -123,6 +123,14 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     return 0;
 }
 
+int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
+                       const void *data, size_t bytes, uint64_t pts_us, int keyframe)
+{
+    if (source >= JIPC_VIDEO_STREAMS || (main_only && (source & 1))) return -1;
+    if (jipc_publish(app,source,data,bytes,pts_us,keyframe,JIPC_H264)) return -1;
+    return main_only ? jipc_publish(app,source+1,data,bytes,pts_us,keyframe,JIPC_H264) : 0;
+}
+
 int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
               jipc_frame *out, unsigned timeout_ms)
 {
@@ -319,11 +327,11 @@ static void *media_main(void *opaque)
             unsigned idr = state->idr_mask;
             state->idr_mask = 0;
             pthread_mutex_unlock(&app->control_mutex);
-            for (unsigned i = 0; i < state->config.sensors * 2; ++i) {
+            for (unsigned i = 0; i < state->config.sensors * 2; i += state->config.main_only ? 2 : 1) {
                 replay_input *input = &state->replay[i];
                 if (replay_next(input, !!(idr & (1u << i))) ||
-                    jipc_publish(app, i, input->au, input->au_size, next_video,
-                                 input->keyframe, JIPC_H264)) {
+                    jipc_publish_video(app, i, state->config.main_only, input->au, input->au_size, next_video,
+                                       input->keyframe)) {
                     snprintf(error, sizeof error, "replay stream %u: malformed/oversized Annex B frame or allocation failure", i);
                     pthread_mutex_lock(&app->control_mutex);
                     backend_failed(state, error);
@@ -374,7 +382,7 @@ int jipc_backend_start(jipc_app *app)
             return -1;
         }
     } else if (!strcmp(state->config.backend, "replay")) {
-        for (unsigned i = 0; i < state->config.sensors * 2; ++i) {
+        for (unsigned i = 0; i < state->config.sensors * 2; i += state->config.main_only ? 2 : 1) {
             replay_input *input = &state->replay[i];
             const char *path = state->config.replay[i][0] ? state->config.replay[i] : state->config.replay[0];
             input->file = fopen(path, "rb");
@@ -387,7 +395,7 @@ int jipc_backend_start(jipc_app *app)
                 return -1;
             }
             /* Publish before service startup so DESCRIBE has SPS/PPS immediately. */
-            if (jipc_publish(app, i, input->au, input->au_size, jipc_now_us(), 1, JIPC_H264)) {
+            if (jipc_publish_video(app, i, state->config.main_only, input->au, input->au_size, jipc_now_us(), 1)) {
                 media_release(state);
                 return fail(app->backend_error, sizeof app->backend_error, "cannot publish initial replay frame");
             }
@@ -458,7 +466,7 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
         if (value < 0 || (unsigned)value >= state->config.sensors * 2)
             rc = fail(error, capacity, "invalid stream channel");
         else if (state->imp) rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
-        else { state->idr_mask |= 1u << value; rc = 0; }
+        else { state->idr_mask |= 1u << jipc_video_owner(&state->config,(unsigned)value); rc = 0; }
     } else if (state->imp && !strcmp(operation, "night")) {
         rc = jipc_imp_control(state->imp, "isp_night", value, value2, error, capacity);
         if (!rc) rc = jipc_platform_control(app, operation, value, value2, error, capacity);

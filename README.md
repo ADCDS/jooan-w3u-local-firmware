@@ -6,17 +6,18 @@ replay backend and an external-IMP hardware backend for the retained OEM Linux
 kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 
 **Native dual-sensor capture works on the physical T23N with our OpenIMP
-OEM80 fork:** four H.264 streams decode, physical pan/tilt and persistent
-presets work, and Frigate records both views. The tested main streams are
-1280×720 at 15 fps, with 320×240 substreams and audio disabled.
-The mains use 2048/1536 kbps and a one-second GOP. The original 2304×1296
-primary resolution is not restored: the current full-frame encoder exceeds
-reserved memory at that size, and asymmetric 1080p/360p capture produced visual
-corruption despite decodable H.264. The native profile therefore enforces
-matching main dimensions through 1280×720. See the
-[hardware receipt](docs/camera-quality-test-20261017.json) for exact artifacts
-and qualification limits. The updated profile passed physical controls,
-preset persistence, Frigate recording and automatic reboot qualification.
+OEM80 fork:** the movable view runs at **1920×1080**, the fixed view at
+**640×360**, both at 15 fps with audio disabled. `main_only=1` creates two
+physical H.264 encoders; the four existing URLs remain available, with each
+substream URL sharing its lens's main feed. Bitrates are 3072/768 kbps with a
+one-second GOP. Physical pan/tilt and persistent named presets work, and
+Frigate records both views. The new graph uses separate ISP scaler slots to
+avoid the shared-stride corruption from the previous asymmetric attempt.
+The original 2304×1296 output still exceeds the current full-frame memory
+budget. See the [1080p receipt](docs/camera-1080-test-20261018.json) for artifacts
+and qualification limits. The previous four-encoder mode remains available
+with matching main dimensions through 1280×720 and independent substreams;
+its [earlier receipt](docs/camera-quality-test-20261017.json) is retained.
 The deployment preserves the network controller's working association instead
 of forcing an AP switch. OEM bootstrap remains for network setup and motor
 homing. This is a local-services replacement, with the
@@ -26,7 +27,7 @@ feature boundaries below; full OEM feature parity is not claimed.
 
 | Service | Implementation and validation |
 | --- | --- |
-| Video | Four H.264 channels, bounded rings, SPS/PPS cache, IDR recovery; real file replay decoded with FFmpeg |
+| Video | Four H.264 URLs; two main encoders with shared aliases or four independent encoders; bounded rings, SPS/PPS cache, IDR recovery |
 | RTSP | Digest authentication, TCP interleaving, UDP unicast, H.264 FU-A, PCMA, RTCP sender reports and BYE |
 | HTTPS and REST | MbedTLS 3.6.7, Basic authentication over TLS, bounded requests, private atomic configuration |
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
@@ -35,7 +36,7 @@ feature boundaries below; full OEM feature parity is not claimed.
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
 | Audio | Native microphone PCM to 8 kHz PCMA, PCMA speaker input; replay produces labeled simulated silence |
-| Snapshots | Native JPEG encoder path at the relevant sensor's substream resolution |
+| Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
 Automatic exposure-driven day/night, motion/person detection, autotracking,
@@ -46,7 +47,9 @@ is a documented subset, not a certification claim. RTSP is IPv4 and live-only;
 multicast, SRTP, tunneling and seeking are not supported. HTTPS connections
 are reused and idle connections park outside the request workers. Motor
 commands and readiness checks do not wait on encoder polling. JPEG snapshots
-still serialize their SDK transaction, so taking one can briefly pause video. PTZ preset positions
+in independent-substream mode still serialize their SDK transaction, so taking
+one can briefly pause video. The 1080p mode advertises no ONVIF snapshot support;
+clients can extract stills from RTSP. PTZ preset positions
 and custom labels persist; arbitrary movement timeouts are unsupported.
 
 ## Build on the workstation
@@ -92,6 +95,10 @@ as `replay`; camera controls are simulations and audio is PCMA silence.
 The authenticated maintenance page is `http://127.0.0.1:8080/`. Video URLs are
 `rtsp://admin:PASSWORD@127.0.0.1:8554/live/ch0` through `ch3`; `/stream0..3` and
 `/live/0..3` are aliases. Main/sub profiles for sensor 0 are 0/1, sensor 1 are 2/3.
+With `main_only=1`, channels 0/1 both carry sensor 0's main feed and 2/3 both
+carry sensor 1's main feed. Dimensions and bitrates describe the actual feed;
+`alias_of` in status identifies shared channels. Independent substream settings
+are unused in this mode, and local recording writes only channels 0 and 2.
 
 HTTP binds to loopback by default. Configure both `tls_cert` and `tls_key` for
 HTTPS on the LAN. Plain LAN HTTP requires the explicit `allow_plain_http=1`
@@ -149,6 +156,8 @@ verify that further native initialization is refused.
 ```sh
 make integration
 make integration-tls
+# Also exercise the two-encoder layout and its four logical URLs:
+python3 tests/integration.py --binary build/host/jooanipc-open --tls --main-only
 ```
 
 Run full builds/stacks sequentially. The default build has two compiler jobs;

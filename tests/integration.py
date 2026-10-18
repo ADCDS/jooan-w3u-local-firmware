@@ -15,6 +15,8 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 
@@ -38,6 +40,7 @@ def main():
     parser.add_argument("--qemu")
     parser.add_argument("--sysroot", type=Path)
     parser.add_argument("--tls", action="store_true")
+    parser.add_argument("--main-only", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     binary = args.binary.resolve()
@@ -46,7 +49,7 @@ def main():
         parser.error("--qemu requires --sysroot")
     here = Path(__file__).resolve().parent
     result = {"binary": str(binary), "mode": "qemu-replay" if prefix else "host-replay",
-              "tls": args.tls, "camera_access": False, "checks": []}
+              "tls": args.tls, "main_only": args.main_only, "camera_access": False, "checks": []}
     with tempfile.TemporaryDirectory(prefix="jipc-integration-") as temp:
         root = Path(temp)
         fixture = root / "source.h264"
@@ -54,6 +57,12 @@ def main():
              "testsrc2=size=320x240:rate=15", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
              "-x264-params", "threads=1:keyint=15:min-keyint=15:scenecut=0:aud=1:repeat-headers=1",
              "-pix_fmt", "yuv420p", "-f", "h264", fixture])
+        fixed_fixture = root / "fixed.h264"
+        if args.main_only:
+            run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                 "testsrc2=size=160x120:rate=15", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
+                 "-x264-params", "threads=1:keyint=15:min-keyint=15:scenecut=0:aud=1:repeat-headers=1",
+                 "-pix_fmt", "yuv420p", "-f", "h264", fixed_fixture])
         http_port, rtsp_port, discovery_port = port(), port(), port(socket.SOCK_DGRAM)
         secret = "test-" + secrets.token_hex(12)
         config = root / "camera.ini"
@@ -62,6 +71,9 @@ def main():
                           f"width=320\nheight=240\nsub_width=320\nsub_height=240\n"
                           f"state_dir={root / 'state'}\nrecord_dir={root / 'recordings'}\n"
                           f"record_seconds=1\nrecord_max_mb=2\ndiscovery_port={discovery_port}\n")
+        if args.main_only:
+            text = config.read_text().replace("sub_width=320", "sub_width=160").replace("sub_height=240", "sub_height=120")
+            config.write_text(text + f"main_only=1\nwidth1=160\nheight1=120\ninput2={fixed_fixture}\n")
         config.chmod(0o600)
         context = None
         if args.tls:
@@ -125,11 +137,40 @@ def main():
                 discovery_args += ["--tls"]
             protocol = run(discovery_args, timeout=20)
             result["discovery_protocol"] = protocol.stderr.strip()
-            for transport, channel in [("tcp", 0), ("udp", 3)]:
+            def decode(transport, channel):
                 url = f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch{channel}"
                 run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-xerror", "-threads", "1",
-                     "-rtsp_transport", transport, "-i", url, "-t", "1", "-map", "0:v:0", "-f", "null", "-"], timeout=25)
-                result["checks"].append(f"FFmpeg decoded channel{channel} via {transport}")
+                     "-rtsp_transport", transport, "-i", url, "-t", "1", "-map", "0:v:0", "-threads:v", "1", "-f", "null", "-"], timeout=25)
+                return f"FFmpeg decoded channel{channel} via {transport}"
+            if args.main_only:
+                # Two simultaneous subscribers exercise each alias pair.
+                for pair in ((0,1),(2,3)):
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        jobs=[pool.submit(decode,transport,ch) for transport,ch in zip(("tcp","udp"),pair)]
+                        result["checks"].extend(j.result() for j in jobs)
+                client = (http.client.HTTPSConnection("127.0.0.1",http_port,context=context,timeout=5)
+                          if args.tls else http.client.HTTPConnection("127.0.0.1",http_port,timeout=5))
+                headers={"Authorization":"Basic "+base64.b64encode(f"admin:{secret}".encode()).decode(),"Content-Type":"application/soap+xml"}
+                def soap(action, inner=""):
+                    client.request("POST","/onvif/media_service",body=f"<Envelope><Body><{action}>{inner}</{action}></Body></Envelope>",headers=headers)
+                    reply=client.getresponse();return reply.status,reply.read()
+                code,body=soap("GetProfiles");assert code==200
+                profiles=ET.fromstring(body).findall(".//{http://www.onvif.org/ver10/media/wsdl}Profiles")
+                ns={"tt":"http://www.onvif.org/ver10/schema"}
+                for i,p in enumerate(profiles):
+                    enc=p.find("tt:VideoEncoderConfiguration",ns)
+                    size=(int(enc.findtext("tt:Resolution/tt:Width",namespaces=ns)),int(enc.findtext("tt:Resolution/tt:Height",namespaces=ns)))
+                    assert size==((320,240) if i<2 else (160,120)),size
+                    assert soap("GetSnapshotUri",f"<ProfileToken>{p.attrib['token']}</ProfileToken>")[0]==500
+                assert len(profiles)==4
+                code,body=soap("GetServiceCapabilities");assert code==200 and b'SnapshotUri="false"' in body
+                client.close()
+                streams=json.loads(request("GET","/api/v1/status")[1])["streams"]
+                assert streams[1]["alias_of"]==0 and streams[3]["alias_of"]==2
+                result["checks"].append("all logical profiles report effective geometry; alias subscribers decode concurrently; JPEG capability disabled")
+            else:
+                for transport,channel in (("tcp",0),("udp",3)):
+                    result["checks"].append(decode(transport,channel))
             assert request("POST", "/api/v1/control", {"operation": "white_light", "value": 1})[0] == 200
             assert request("POST", "/api/v1/control", {"operation": "preset_set", "value": 1})[0] == 200
             assert request("POST", "/api/v1/control", {"operation": "ptz", "value": 50, "value2": -25})[0] == 200
@@ -142,6 +183,9 @@ def main():
             assert request("POST", "/api/v1/recording", {"enabled": 0})[0] == 200
             time.sleep(0.2)
             listing = json.loads(request("GET", "/api/v1/recordings")[1])["recordings"]
+            if args.main_only:
+                assert not any(item["name"].startswith(("stream-1-","stream-3-")) for item in listing)
+                assert all(any(item["name"].startswith(f"stream-{ch}-") for item in listing) for ch in (0,2))
             video = next(item["name"] for item in listing if item["name"].endswith(".h264") and item["size"] > 1024)
             code, body = request("GET", "/api/v1/recordings/" + video)
             assert code == 200 and len(body) > 1024

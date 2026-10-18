@@ -94,7 +94,7 @@ static void *record_main(void *opaque)
             checked = jipc_now_us(); if (retention(r, &cfg)) { record_error(r, "recording retention failed"); continue; }
         }
         for (unsigned channel = 0; channel < JIPC_STREAMS; ++channel) {
-            if ((channel < JIPC_AUDIO_STREAM && channel >= cfg.sensors * 2) || (channel == JIPC_AUDIO_STREAM && !cfg.audio)) continue;
+            if ((channel < JIPC_AUDIO_STREAM && (channel >= cfg.sensors * 2 || jipc_video_owner(&cfg,channel) != channel)) || (channel == JIPC_AUDIO_STREAM && !cfg.audio)) continue;
             uint64_t previous = r->cursor[channel];
             jipc_frame frame; int rc = jipc_read(app, channel, &r->cursor[channel], &frame, 0); if (rc <= 0) continue;
             segment *s = &r->files[channel];
@@ -144,7 +144,7 @@ int jipc_record_set(jipc_app *app, int enabled)
     if (jipc_config_save(&cfg)) { pthread_mutex_unlock(&app->config_mutex); return -1; }
     app->config.recording = enabled; app->record_active = enabled; app->record_error[0] = 0;
     pthread_mutex_unlock(&app->config_mutex);
-    if (enabled) for (unsigned i = 0; i < cfg.sensors * 2; ++i) { char ignored[128]; (void)jipc_backend_control(app, "idr", (int)i, 0, ignored, sizeof(ignored)); }
+    if (enabled) for (unsigned i = 0; i < cfg.sensors * 2; i += cfg.main_only ? 2 : 1) { char ignored[128]; (void)jipc_backend_control(app, "idr", (int)i, 0, ignored, sizeof(ignored)); }
     return 0;
 }
 int jipc_record_start(jipc_app *app)
