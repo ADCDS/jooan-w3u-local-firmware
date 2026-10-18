@@ -210,6 +210,12 @@ in [platform controls](docs/platform.md). Unknown actions fail explicitly.
 
 ## Source and license
 
+Published validation reports anonymize deployment hostnames and preset labels,
+and omit boot identifiers and absolute motor positions. Measurements and
+qualified binary hashes are preserved. Historical source revision IDs in
+older reports refer to the private history before publication sanitization;
+public commit IDs differ after that rewrite.
+
 Original application code is MIT licensed. Dependencies retain their own
 licenses and exact source pins; see [third-party components](docs/third-party.md)
 and `dependencies.lock.json`. No firmware dump, vendor SDK binary, factory
