@@ -86,6 +86,9 @@ if(JIPC_BUILD_TESTS)
   add_test(NAME boot-calibration COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_boot_calibration.py
     ${CMAKE_SOURCE_DIR}/scripts/oem-boot-handoff.sh)
+  add_test(NAME boot-release-storage COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_boot_release_storage.py
+    ${CMAKE_SOURCE_DIR}/scripts/oem-boot-handoff.sh)
 endif()
 install(TARGETS jooanipc-open RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/replay.example.ini config/ja-a12.example.ini
@@ -97,6 +100,7 @@ install(FILES docs/hardware.md docs/platform.md docs/third-party.md
   docs/camera-ivdc-test-20261017.json
   docs/camera-native-test-20261017.json docs/camera-quality-test-20261017.json
   docs/camera-1080-test-20261018.json
+  docs/camera-internal-flash-test-20261020.json
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)

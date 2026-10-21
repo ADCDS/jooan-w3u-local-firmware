@@ -201,7 +201,7 @@ factory artifacts outside this repository.
 `scripts/oem-boot-handoff.sh` is an opt-in JA-A12 deployment helper. It is not
 installed or activated by the normal build. Keep the existing guarded
 `/opt/etc/local.rc`, network/SSH controller, kernel/modules and factory data.
-The OEM application still performs Wi-Fi setup, SD mounting and motor homing;
+The OEM application still performs Wi-Fi setup, optional SD mounting and motor homing;
 the helper replaces media ownership after that bootstrap, rather than replacing
 the entire boot environment.
 
@@ -214,8 +214,9 @@ if [ -f /opt/jooanipc-open/enabled ] && [ -r /opt/jooanipc-open/boot-handoff.sh 
 fi
 ```
 
-The root-owned 0600 `deployment.env` specifies `JIPC_RELEASE` (the versioned
-SD release directory), `JIPC_LIBIMP_SHA256`, and `JIPC_APP_MD5`, `JIPC_IMP_MD5`,
+The root-owned 0600 `deployment.env` specifies `JIPC_RELEASE` (one versioned
+directory under `/mnt/sd_card/jooanipc-open/releases/` or
+`/mnt/mtd/jooanipc-open/releases/`), `JIPC_LIBIMP_SHA256`, and `JIPC_APP_MD5`, `JIPC_IMP_MD5`,
 `JIPC_ATOMIC_MD5` for the three release files. Optional `JIPC_WIFI_BSSID` plus `JIPC_WIFI_FREQ` (its proven frequency in MHz)
 select a proven AP for this camera: after the retained controller applies its
 committed network, the helper pins that existing network and waits for a stable
@@ -225,7 +226,7 @@ explicit reassociation is required when the selected network was already active.
 It changes no Wi-Fi credentials or AP/router
 configuration. Omit it to keep ordinary AP selection. MD5 checks detect deployment
 corruption; they are not a signature or adversarial integrity guarantee. The
-client additionally verifies the library's pinned SHA-256. Keep SD access
+client additionally verifies the library's pinned SHA-256. Keep release access
 limited to trusted administrators. The private camera config must use that
 release's library and `watchdog=1`. This setting is local-only and defaults off;
 the daemon never terminates other owners itself. Changing `watchdog` on a
@@ -236,7 +237,11 @@ Create the 0600 `enabled` file only after checking configuration and shell synta
 The helper requires a boot-specific syslog marker followed by the complete
 successful `motor_step_reset` sequence: stages 418, 427, 449 (idle), 459 and
 555 (idle), with no reset error or return timeout. It also requires a committed,
-stable retained controller, live SSH, SD mount and adequate JFFS2 space. It then persists `boot-trial`, stops identity-checked OEM watchdog
+stable retained controller, live SSH, the release's mounted filesystem and adequate
+JFFS2 space. Internal releases require the canonical path on the read-only
+`/dev/mtdblock4` SquashFS mounted at `/mnt/mtd`; path aliases and shadowing mounts
+are rejected. An internal release does not require an SD card.
+It then persists `boot-trial`, stops identity-checked OEM watchdog
 and media processes, and checks every task's descriptors, IVDC address zero
 and absence of Linux TAINT_DIE. It launches the replacement with the explicit
 OEM80/native/no-fallback flags. The new process owns `/dev/watchdog`, sets its
@@ -257,6 +262,33 @@ keeps guarded OEM rescue instead of repeatedly attempting native startup.
 Inspect `/tmp/jipc-handoff.log`, `/tmp/jooanipc-open.log`, kernel health and all
 thread FDs before removing a failed trial latch. Removing `enabled` disables
 future handoff; do not revive another media owner on uncertain DMA state.
+
+### Internal-flash packaging
+
+The JA-A12 has 8 MiB SPI NOR, with a 3136 KiB application partition and a
+384 KiB writable configuration partition. Install executable releases in a
+rebuilt application image; `/opt` is reserved for configuration, keys, presets
+and controller state. Preserve at least 64 KiB free there. OEM `startapp`
+deletes most of `/opt` if free space falls below 50 KiB at boot.
+
+The retained OEM executable must remain byte-identical because its containment
+guard verifies its hash. Its linked libraries, boot scripts, ISP/motor modules,
+and this board's CV2005/CV2005S1 sensor drivers and tuning remain necessary.
+Preserve `sensor_cv2005s1false.ko` for the secondary-detection fallback.
+The qualified board-specific image uses 1 MiB XZ blocks, without voice prompts
+or unrelated SC sensor files, occupies 3092 KiB including the native runtime,
+and leaves 44 KiB in the application partition. A physical power cycle without
+SD passed the complete guarded handoff and native watchdog trial. Both Frigate
+views produced clean 15 fps recordings. See the
+[internal-flash receipt](camera-internal-flash-test-20261020.json).
+Such pruning is specific to this verified board. Firmware images and factory
+data remain private artifacts.
+
+For Frigate-only recording, retain `recording=0` and set `record_dir` to a
+writable volatile path such as `/run/jooanipc-open/recordings`. The recorder
+initializes its directory even when recording is disabled. Update both the
+private configuration's `libimp` path and `deployment.env` when moving a release;
+do not write video into the small NOR configuration partition.
 
 The board has no RTC. Preserve the retained controller's `last-time` mechanism.
 For Frigate set `onvif.ignore_time_mismatch: true`; its client reads the camera's

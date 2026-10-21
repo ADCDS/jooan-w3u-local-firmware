@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # JA-A12 only: additive end-of-local.rc hook, after the guarded OEM bootstrap.
-# Credentials stay in /opt; public executables and runtime libraries live on SD.
+# Credentials stay in /opt; public releases live on SD or the internal appfs.
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PATH
 unset LD_PRELOAD LD_LIBRARY_PATH
@@ -19,10 +19,54 @@ calibration_check() {
     phase==4 && /\[motor_step_reset:555\][[:space:]]*reset gst_curMotorMsg x=[0-9]+,[[:space:]]*y=[0-9]+[[:space:]]+status\[0\]/ {ok=!bad}
     END {exit !ok}'
 }
-# Read-only fixture entry point: consumes syslog on stdin, opens no devices.
+release_path_check() (
+    case "$1" in
+        /mnt/sd_card/jooanipc-open/releases/*) parent=/mnt/sd_card/jooanipc-open/releases ;;
+        /mnt/mtd/jooanipc-open/releases/*) parent=/mnt/mtd/jooanipc-open/releases ;;
+        *) return 1 ;;
+    esac
+    name=${1#"$parent"/}
+    # One versioned directory only: no traversal, nested paths or shell syntax.
+    case "$name" in ''|.|..|*[!A-Za-z0-9._-]*) return 1 ;; esac
+)
+release_storage_check() (
+    release_path_check "$1" || return 1
+    # The production caller resolves symlinks with cd -P/pwd -P. An alias must
+    # not turn an allowlisted path into a release on an unqualified filesystem.
+    [ "$1" = "$2" ] || return 1
+    case "$1" in
+        /mnt/sd_card/*)
+            awk '$2=="/mnt/sd_card" {mounted=1} END {exit !mounted}' ;;
+        /mnt/mtd/*)
+            # JA-A12 appfs is the read-only mtd4 application partition. Reject
+            # an absent mount, another device, or a writable/temporary overlay.
+            awk -v release="$1" '
+                $2=="/mnt/mtd" {
+                    count++
+                    if ($1=="/dev/mtdblock4" && $3=="squashfs" &&
+                        $4 ~ /(^|,)ro(,|$)/) mounted=1
+                }
+                index($2,"/mnt/mtd/")==1 &&
+                ($2==release || index(release,$2 "/")==1 ||
+                 index($2,release "/")==1) {shadowed=1}
+                END {exit !(count==1 && mounted && !shadowed)}' ;;
+    esac
+)
+release_storage_ready() {
+    canonical=$(CDPATH='' cd -P "$JIPC_RELEASE" 2>/dev/null && pwd -P) || return 1
+    release_storage_check "$JIPC_RELEASE" "$canonical" < /proc/mounts
+}
+# Read-only fixture entry points: consume syslog/mounts on stdin, open no devices.
 if [ "$#" -gt 0 ]; then
-    [ "$#" = 2 ] && [ "$1" = --check-calibration ] || exit 2
-    calibration_check "$2"
+    case "$1" in
+        --check-calibration)
+            [ "$#" = 2 ] || exit 2
+            calibration_check "$2" ;;
+        --check-release-storage)
+            [ "$#" = 3 ] || exit 2
+            release_storage_check "$2" "$3" ;;
+        *) exit 2 ;;
+    esac
     exit $?
 fi
 root=/opt/jooanipc-open
@@ -61,6 +105,7 @@ log 'fresh OEM motor calibration observed'
 # Root-owned JFFS2 data: paths/hashes and optional proven AP BSSID, no passwords.
 # shellcheck disable=SC1091
 . "$root/deployment.env"
+release_path_check "$JIPC_RELEASE" || fail 'invalid release path'
 if [ -n "$JIPC_WIFI_BSSID" ]; then
     printf '%s\n' "$JIPC_WIFI_BSSID" | grep -Eq '^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$' || fail 'invalid Wi-Fi BSSID'
     JIPC_WIFI_BSSID=$(printf '%s' "$JIPC_WIFI_BSSID" | tr '[:upper:]' '[:lower:]')
@@ -123,7 +168,7 @@ control_ready() {
     read -r gateway interface < /run/jooan-local/default-gateway || return 1
     [ "$interface" = wlan0 ] || return 1
     arping -c 1 -w 2 -I "$interface" "$gateway" >/dev/null 2>&1 || return 1
-    grep -q ' /mnt/sd_card ' /proc/mounts || return 1
+    release_storage_ready || return 1
     [ "$(df -k /opt | awk 'END {print $4}')" -ge 64 ] || return 1
 }
 i=0
@@ -132,7 +177,6 @@ until control_ready; do
     sleep 1; i=$((i + 1))
 done
 
-case "$JIPC_RELEASE" in /mnt/sd_card/jooanipc-open/releases/*) ;; *) fail 'invalid release path' ;; esac
 [ -x "$JIPC_RELEASE/jooanipc-open" ] || fail 'release missing'
 for name in jooanipc-open libimp.so libatomic.so.1; do
     case "$name" in
@@ -181,13 +225,22 @@ same "$watch" my_watch_dog "$ws" || fail 'watchdog identity changed'
 kill -TERM "$watch" || fail 'cannot stop old watchdog'
 i=0
 while same "$watch" my_watch_dog "$ws" && [ "$i" -lt 5 ]; do sleep 1; i=$((i + 1)); done
-if same "$watch" my_watch_dog "$ws"; then kill -KILL "$watch" || fail 'cannot stop old watchdog'; sleep 1; fi
+if same "$watch" my_watch_dog "$ws"; then
+    kill -KILL "$watch" || fail 'cannot stop old watchdog'
+    i=0
+    while same "$watch" my_watch_dog "$ws" && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+fi
 same "$watch" my_watch_dog "$ws" && fail 'old watchdog did not exit'
 same "$oem" jooanipc "$os" || fail 'OEM media identity changed'
 kill -TERM "$oem" || fail 'cannot stop OEM media'
 i=0
 while same "$oem" jooanipc "$os" && [ "$i" -lt 60 ]; do sleep 1; i=$((i + 1)); done
-if same "$oem" jooanipc "$os"; then kill -KILL "$oem" || fail 'cannot stop OEM media'; sleep 2; fi
+if same "$oem" jooanipc "$os"; then
+    kill -KILL "$oem" || fail 'cannot stop OEM media'
+    # Driver workers and the parent reaper can outlive the SIGKILL delivery.
+    i=0
+    while same "$oem" jooanipc "$os" && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+fi
 same "$oem" jooanipc "$os" && fail 'OEM media did not exit'
 
 # Check every task's FDs: a zombie leader may retain a live DMA worker.
