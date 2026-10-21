@@ -68,6 +68,15 @@ static void homing(void)
     assert(resets==before+2&&!last_reset[0]&&!last_reset[1]&&!last_reset[2]&&!last_reset[3]);
     assert(driver_x==1378&&driver_y==397&&s.x==1378&&s.y==397); /* back at the last position */
     assert(s.pan_max==4080&&s.tilt_max==1230&&!access(HOMED_MARKER,F_OK));
+    /* Only a trusted, unfaulted position is persisted for the next boot. */
+    snprintf(s.position_path,sizeof(s.position_path),"/tmp/jipc-test-position");unlink(s.position_path);
+    s.position_trusted=0;position_track(&s,clock_us);position_track(&s,clock_us+POSITION_QUIET_US);
+    assert(access(s.position_path,F_OK));
+    s.position_trusted=1;s.faulted=1;position_track(&s,clock_us);position_track(&s,clock_us+POSITION_QUIET_US);
+    assert(access(s.position_path,F_OK));
+    s.faulted=0;s.saved_x=1;position_track(&s,clock_us);position_track(&s,clock_us+POSITION_QUIET_US);
+    FILE *saved=fopen(s.position_path,"r");int px=0,py=0;assert(saved&&fscanf(saved,"%d %d",&px,&py)==2);fclose(saved);
+    assert(px==1378&&py==397);unlink(s.position_path);
     pthread_mutex_destroy(&s.mutex);unlink(HOMED_MARKER);unlink(MOTOR_INFO);
     driver_x=1400;driver_y=400;moving=dx=dy=swapped=0; /* the motion tests below start here */
 }

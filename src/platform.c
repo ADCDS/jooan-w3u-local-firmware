@@ -57,6 +57,8 @@ typedef struct {
     char path[640], last_error[192];
     /* homing: 0 idle, 1 pan sweep into the end stop, 2 driver reset. */
     int homing, homed, saved_valid, saved_x, saved_y;
+    /* Only a calibrated position may become the next boot's return target. */
+    int position_trusted;
     uint64_t homing_until, homing_settle, position_quiet_until;
     char position_path[640];
 } platform_state;
@@ -264,7 +266,8 @@ static void position_track(platform_state *state, uint64_t now)
 {
     char text[32];
     int n;
-    if (state->replay || !state->known || state->homing || state->moving || state->goto_active ||
+    if (state->replay || !state->known || !state->position_trusted || state->faulted ||
+        state->homing || state->moving || state->goto_active ||
         state->lease_until || (state->saved_valid && state->x == state->saved_x && state->y == state->saved_y)) {
         state->position_quiet_until = 0; return;
     }
@@ -313,7 +316,7 @@ static void home_tick(platform_state *state, uint64_t now)
     if (ioctl(state->motor_fd, MOTOR_STOP, 0) || motor_limits(state) || motor_read(state)) {
         state->homing = 0; worker_error(state, "motor homing completion"); return;
     }
-    state->homing = 0; state->homed = 1;
+    state->homing = 0; state->homed = 1; state->position_trusted = 1;
     int marker = open(HOMED_MARKER, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (marker >= 0) close(marker);
     jipc_log("info", "motor homing complete at %d,%d (limits %d,%d)", state->x, state->y, state->pan_max, state->tilt_max);
@@ -538,6 +541,9 @@ static platform_state *platform_get(jipc_app *app, char *error, size_t capacity)
         free(state); fail(error, capacity, "state path is too long"); return NULL;
     }
     position_load(state);
+    /* With motor_home, the position is calibrated once this boot was homed
+     * (by this daemon or the OEM bootstrap before a handoff). */
+    state->position_trusted = state->replay || !config.motor_home || !access(HOMED_MARKER, F_OK);
     rc = pthread_mutex_init(&state->mutex, NULL);
     if (rc) { free(state); fail(error, capacity, "platform mutex: %s", strerror(rc)); return NULL; }
     if (presets_load(state)) {
