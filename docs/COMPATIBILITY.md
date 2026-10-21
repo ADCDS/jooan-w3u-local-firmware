@@ -23,6 +23,12 @@ The target manifest enforces the `JA-A12`/`A12` model identity, but software
 model checks cannot detect every component substitution. Open the camera and
 verify the PCB and fitted parts before installation.
 
+The installer also pins the exact retained components this firmware depends
+on: the OEM `jooanipc` executable and `startapp`, the sensor and radio kernel
+modules, and the userspace libraries it links. It does not pin the application
+partition as a whole, so an appfs rebuilt to carry a media daemon (with those
+files unchanged) still accepts platform updates.
+
 ## Explicitly unsupported
 
 - the Thingino Jooan W3-U target with one SC2336P sensor and an ATBM6132U
