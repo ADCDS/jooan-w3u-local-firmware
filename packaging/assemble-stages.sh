@@ -14,7 +14,7 @@ version=$(cat "$repo/packaging/VERSION")
 sequence=$(cat "$repo/packaging/RELEASE_SEQUENCE")
 
 case "$build" in /|"$repo") echo "unsafe BUILD_ROOT: $build" >&2; exit 1 ;; esac
-for file in "$target/bin/joan-daemon" "$target/bin/audio-router" \
+for file in "$target/bin/joan-daemon" \
     "$target/shared/libjooan_guard.so" "$target/shared/jooan-sha256" \
     "$target/shared/jooan-auth-verify" "$target/shared/jooan-ironman-inspect" \
     "$target/shared/dropbear.tar.gz" "$build/build-provenance.json"; do
@@ -40,7 +40,7 @@ cp "$target/shared/libjooan_guard.so" \
     "$controller/shared/"
 (cd "$controller/shared" && md5sum libjooan_guard.so | awk '{print $1}' > guard.md5)
 
-cp "$target/bin/joan-daemon" "$target/bin/audio-router" "$runtime/bin/"
+cp "$target/bin/joan-daemon" "$runtime/bin/"
 cp "$repo/runtime/slot/start.sh" "$repo/runtime/slot/stop.sh" \
     "$repo/runtime/slot/health.sh" "$runtime/"
 cp "$repo/runtime/slot/hooks/"*.sh "$runtime/hooks/"

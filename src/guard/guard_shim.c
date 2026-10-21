@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 #include <sys/ioctl.h>
 #include <sys/sendfile.h>
 #include <sys/syscall.h>
@@ -51,6 +52,8 @@ struct guard_mmsghdr {
 #define guard_mmsghdr mmsghdr
 #endif
 
+static int (*next_usleep)(useconds_t);
+static int (*next_pthread_cond_timedwait)(pthread_cond_t *,pthread_mutex_t *,const struct timespec *);
 static int (*next_connect)(int, const struct sockaddr *, socklen_t);
 static int (*next_bind)(int, const struct sockaddr *, socklen_t);
 static int (*next_accept)(int, struct sockaddr *, socklen_t *);
@@ -121,6 +124,118 @@ static int guard_applies(void)
 {
     return guard_active && current_process_id() == guard_owner_pid;
 }
+
+/* The exact supported OEM calls usleep(10000) at 0x494e24; its return
+ * address is 0x494e2c. This is before Polling/GetFrame, with no driver frame
+ * or publication lock held. A lease never suspends arbitrary instructions. */
+#define OEM_AUDIO_SLEEP_RETURN ((uintptr_t)0x00494e2cU)
+static const char *audio_pause_path(int active)
+{
+#ifdef GUARD_TESTING
+    const char *path=getenv(active?"JOOAN_GUARD_TEST_AUDIO_ACTIVE":"JOOAN_GUARD_TEST_AUDIO_LEASE");
+    if(path&&*path)return path;
+#endif
+    return active?"/run/jooan-local/audio-pause.active":"/run/jooan-local/audio-pause.lease";
+}
+static uint64_t audio_pause_now(void)
+{
+    struct timespec t;
+    if(clock_gettime(CLOCK_MONOTONIC,&t))return 0;
+    return (uint64_t)t.tv_sec;
+}
+static int audio_pause_leased(uint64_t now)
+{
+    char raw[64];int fd,used=0;ssize_t n;unsigned long long until;
+    if(!now||!next_open||!next_read||!next_close)return 0;
+    fd=next_open(audio_pause_path(0),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+    if(fd<0)return 0;
+    n=next_read(fd,raw,sizeof(raw)-1);next_close(fd);
+    if(n<=0)return 0;
+    raw[n]=0;
+    if(sscanf(raw,"v1 %llu%n",&until,&used)!=1||
+       !((size_t)used==(size_t)n||((size_t)used+1==(size_t)n&&raw[used]=='\n')))return 0;
+    return until>now&&until-now<=8;
+}
+static void audio_pause_ack(uint64_t now)
+{
+    char raw[80],temporary[512];int fd,n;ssize_t written;
+    if(!next_open||!next_write||!next_close)return;
+    n=snprintf(temporary,sizeof(temporary),"%s.%ld.new",audio_pause_path(1),(long)guard_owner_pid);
+    if(n<=0||(size_t)n>=sizeof(temporary))return;
+    n=snprintf(raw,sizeof(raw),"v1 %ld %llu\n",(long)guard_owner_pid,(unsigned long long)now);
+    fd=next_open(temporary,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
+    if(fd>=0){
+        written=next_write(fd,raw,(size_t)n);
+        if(next_close(fd)||written!=n||rename(temporary,audio_pause_path(1)))
+            (void)unlink(temporary);
+    }
+}
+static void audio_pause_wait(unsigned limit)
+{
+    uint64_t now=audio_pause_now(),started=now,last_ack=0;int waited=0;
+    while(audio_pause_leased(now)&&(!limit||now-started<limit)){
+        if(now!=last_ack){audio_pause_ack(now);last_ack=now;}
+        waited=1;
+        if(next_usleep(100000U)&&errno==EINTR)break;
+        now=audio_pause_now();
+    }
+    if(waited&&!audio_pause_leased(now))(void)unlink(audio_pause_path(1));
+}
+static int audio_pause_sleep(useconds_t usec,int callback)
+{
+    static uint64_t next_check; /* This exact callsite has one OEM caller. */
+    uint64_t now;
+    if(next_usleep==NULL){struct timespec t={(time_t)(usec/1000000U),(long)(usec%1000000U)*1000L};return nanosleep(&t,NULL);}
+    if(guard_applies()&&callback&&usec==10000U){
+        now=audio_pause_now();
+        if(now>=next_check){next_check=now+1;audio_pause_wait(0);}
+    }
+    return next_usleep(usec);
+}
+int usleep(useconds_t usec)
+{
+    return audio_pause_sleep(usec,(uintptr_t)__builtin_return_address(0)==OEM_AUDIO_SLEEP_RETURN);
+}
+/* The OEM queue poller can retry a past condition deadline forever, never
+ * reaching the outer sleep. At this exact wait it holds only the queue mutex,
+ * and owns no driver frame. Preserve condition-wait mutex/cancellation rules
+ * while pausing with a relative sleep (wall-clock changes cannot trap it).
+ * Reenter the genuine cancellation point at least once a second. */
+#define OEM_AUDIO_COND_RETURN ((uintptr_t)0x006f4b40U)
+static int audio_pause_condition(pthread_cond_t *cond,pthread_mutex_t *mutex,
+                                 const struct timespec *deadline,int site)
+{
+    static __thread int named,matched;
+    static __thread uint64_t next_check;
+    uint64_t now;int previous,rc;char name[16];
+    if(!next_pthread_cond_timedwait)return EINVAL;
+    if(guard_applies()&&site&&next_usleep){
+        if(!named){matched=!prctl(PR_GET_NAME,name,0,0,0)&&!strcmp(name,"AE_AudioFrameCB");named=1;}
+        now=audio_pause_now();
+        if(matched&&now>=next_check){
+            next_check=now+1;
+            if(audio_pause_leased(now)){
+                if(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&previous)){
+                    rc=pthread_mutex_unlock(mutex);
+                    if(!rc){audio_pause_wait(1);rc=pthread_mutex_lock(mutex);}
+                    (void)pthread_setcancelstate(previous,NULL);
+                    if(rc)return rc;
+                }
+            }
+        }
+    }
+    return next_pthread_cond_timedwait(cond,mutex,deadline);
+}
+int pthread_cond_timedwait(pthread_cond_t *cond,pthread_mutex_t *mutex,const struct timespec *deadline)
+{
+    return audio_pause_condition(cond,mutex,deadline,(uintptr_t)__builtin_return_address(0)==OEM_AUDIO_COND_RETURN);
+}
+#ifdef GUARD_TESTING
+int jooan_guard_test_audio_sleep(unsigned usec);
+int jooan_guard_test_audio_sleep(unsigned usec){return audio_pause_sleep((useconds_t)usec,1);}
+int jooan_guard_test_audio_condition(pthread_cond_t *cond,pthread_mutex_t *mutex,const struct timespec *deadline);
+int jooan_guard_test_audio_condition(pthread_cond_t *cond,pthread_mutex_t *mutex,const struct timespec *deadline){return audio_pause_condition(cond,mutex,deadline,1);}
+#endif
 
 static unsigned int fd_role_load(int descriptor)
 {
@@ -242,6 +357,8 @@ static void assign_duplicated_fd_locked(int destination, unsigned int roles,
 static void resolve_symbols(void)
 {
 #define RESOLVE(name) *(void **)(&next_##name) = dlsym(RTLD_NEXT, #name)
+    RESOLVE(usleep);
+    RESOLVE(pthread_cond_timedwait);
     RESOLVE(connect);
     RESOLVE(bind);
     RESOLVE(accept);

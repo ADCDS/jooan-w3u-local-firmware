@@ -98,6 +98,16 @@ if jl_load_controller; then
             jl_mqtt_wait=$((jl_mqtt_wait + 1))
         done
         /bin/sh /run/jooan-local/controller/shared/verify-guard.sh || return 127
+        # The OEM watchdog touches this flag before rebooting after a crash, and
+        # it makes jooanipc skip PTZ homing and trust its saved position. That
+        # position is saved only after manual jogs, never after a preset recall,
+        # so a crash following a recall shifted the frame and broke every
+        # preset. Always home: a sweep costs seconds, a shifted frame persists.
+        rm -f /opt/silence_reboot
+        # The OOM killer takes the largest process. That was always jooanipc,
+        # and its watchdog then reboots the camera; the supervisor restarts the
+        # runtime in seconds instead. exec keeps this value.
+        echo -900 > /proc/self/oom_score_adj 2>/dev/null || :
         LD_PRELOAD=/run/jooan-local/controller/shared/libjooan_guard.so
         export LD_PRELOAD
         exec /mnt/mtd/run/jooanipc "$@"

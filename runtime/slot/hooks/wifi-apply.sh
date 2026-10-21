@@ -95,12 +95,23 @@ add_band() {
 }
 
 if [ "$prefer_5g" = 1 ]; then
-    add_band "$FREQ_5G" 2 || exit 1
+    add_band "$FREQ_5G" 2 || exit 1; first=$band_id
     add_band "$FREQ_24G" 1 || exit 1
 else
-    add_band "$FREQ_24G" 2 || exit 1
+    add_band "$FREQ_24G" 2 || exit 1; first=$band_id
     add_band "$FREQ_5G" 1 || exit 1
 fi
+# jooanipc puts its own stored network in this wpa_supplicant too; on this
+# unit that is the retired JOOANTEST bench AP, open and probed as a hidden
+# SSID. Left enabled, every scan names it, and the camera would join any open
+# AP that took the name whenever the committed network is out of reach.
+# Only this apply's two blocks stay enabled (earlier attempts included); the
+# supervisor re-applies to any wpa_supplicant jooanipc restarts.
+wpa_cli -iwlan0 list_networks | awk 'NR > 1 { print $1 }' | while read -r other; do
+    case "$other" in ''|*[!0-9]*) continue ;; esac
+    [ "$other" = "$first" ] || [ "$other" = "$band_id" ] ||
+        wpa_cli -iwlan0 disable_network "$other" >/dev/null || :
+done
 wpa_cli -iwlan0 reassociate | grep -q OK
 
 i=0

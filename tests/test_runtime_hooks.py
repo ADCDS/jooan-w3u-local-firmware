@@ -103,36 +103,51 @@ class RuntimeHookTests(unittest.TestCase):
         self.assertIn('printf \'%s\\n\' released > "$JL_SPEAKER_HOOK_RELEASED.new"', hook)
         self.assertNotIn('echo 0 > "$JL_SPEAKER_PATH/value"', hook[mute:media_wrapper])
 
-    def test_onvif_50ms_is_not_encoded_as_500ms(self) -> None:
-        hook = REPOSITORY / "runtime/slot/hooks/onvif-ptz.sh"
+    def test_media_always_homes_and_is_not_the_oom_victim(self) -> None:
+        """A crash reboot leaves /opt/silence_reboot, which made jooanipc skip
+        PTZ homing and adopt a stale saved position, shifting every preset. And
+        the OOM killer always took jooanipc, whose watchdog reboots the camera.
+        Both must be settled in the wrapper before exec, the only point that
+        precedes jooanipc's startup homing."""
+        hook = (REPOSITORY / "runtime/boot/local.rc").read_text(encoding="utf-8")
+        wrapper = hook[hook.index("    jooanipc() {"):]
+        launch = wrapper.index('exec /mnt/mtd/run/jooanipc "$@"')
+        self.assertLess(wrapper.index("rm -f /opt/silence_reboot"), launch)
+        self.assertLess(wrapper.index("echo -900 > /proc/self/oom_score_adj"), launch)
+        start = (REPOSITORY / "runtime/slot/start.sh").read_text(encoding="utf-8")
+        daemon = start.index('echo $! > "$JL_RUN/daemon.pid"')
+        self.assertLess(daemon, start.index('echo 500 > "/proc/$!/oom_score_adj"'))
+
+    def test_supervisor_detects_a_dead_runtime(self) -> None:
+        """With jooanipc protected, the OOM killer takes the runtime, and
+        nothing else restarts it: the camera stayed offline until reboot."""
+        boot = (REPOSITORY / "runtime/boot/boot.sh").read_text(encoding="utf-8")
+        self.assertIn("! jl_runtime_alive", boot)
+        self.assertIn('[ ! -d "$JL_RUN/state.lock" ]', boot)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            capture = root / "request"
-            executable(
-                fake_bin / "nc",
-                "#!/bin/sh\n"
-                "[ \"$1\" = -w2 ] || exit 3\n"
-                "cat > \"$CAPTURE\"\n"
-                "printf 'HTTP/1.0 200 OK\\r\\n\\r\\n'\n"
-                "printf '<tptz:ContinuousMoveResponse/>'\n",
-            )
-            environment = os.environ | {
-                "PATH": f"{fake_bin}:/bin:/usr/bin",
-                "CAPTURE": str(capture),
-                "JL_RUN": str(root),
-            }
-            result = subprocess.run(
-                [str(hook), "move", "up", "3", "50"],
-                env=environment,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            request = capture.read_text(encoding="utf-8")
-            self.assertIn("<tptz:Timeout>PT0.050S</tptz:Timeout>", request)
-            self.assertNotIn("PT0.50S", request)
+            processes = []
+            try:
+                binary = root / "joan-daemon"
+                binary.write_bytes(Path("/bin/sleep").read_bytes())
+                binary.chmod(0o755)
+                process = subprocess.Popen([str(binary), "30"])
+                processes.append(process)
+                (root / "daemon.pid").write_text(f"{process.pid}\n", encoding="utf-8")
+                check = [
+                    "sh", "-c",
+                    '. "$1" && jl_runtime_alive',
+                    "sh", str(REPOSITORY / "runtime/boot/common.sh"),
+                ]
+                environment = os.environ | {"JL_RUN": str(root)}
+                self.assertEqual(subprocess.run(check, env=environment).returncode, 0)
+                processes[0].kill()
+                processes[0].wait()
+                self.assertNotEqual(subprocess.run(check, env=environment).returncode, 0)
+            finally:
+                for process in processes:
+                    process.kill()
+                    process.wait()
 
     def _wifi_apply_environment(self, root: Path) -> tuple[dict[str, str], Path]:
         """Build a fake PATH for wifi-apply.sh: wpa_cli hands out incrementing
@@ -172,6 +187,11 @@ class RuntimeHookTests(unittest.TestCase):
             "  *add_network*)\n"
             "    n=0; [ -f \"$WPA_COUNTER\" ] && n=$(cat \"$WPA_COUNTER\")\n"
             "    printf '%s\\n' \"$n\"; echo $((n + 1)) > \"$WPA_COUNTER\"\n"
+            "    ;;\n"
+            "  *list_networks*)\n"
+            "    n=0; [ -f \"$WPA_COUNTER\" ] && n=$(cat \"$WPA_COUNTER\")\n"
+            "    printf 'network id / ssid / bssid / flags\\n'\n"
+            "    i=0; while [ \"$i\" -lt \"$n\" ]; do printf '%s\\tnet\\tany\\t\\n' \"$i\"; i=$((i + 1)); done\n"
             "    ;;\n"
             "  *status*) printf 'wpa_state=COMPLETED\\n' ;;\n"
             "  *) printf 'OK\\n' ;;\n"
@@ -218,6 +238,25 @@ class RuntimeHookTests(unittest.TestCase):
             calls = log.read_text(encoding="utf-8")
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
+
+    def test_wifi_hook_disables_every_other_network(self) -> None:
+        """jooanipc's own stored network (the retired, open JOOANTEST) sits in
+        the same wpa_supplicant. Only the two blocks this apply added may stay
+        enabled, or the camera probes for it and would join an open impostor."""
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        fixture = REPOSITORY / "tools/tests/wifi-space.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, log = self._wifi_apply_environment(root)
+            (root / "wpa.counter").write_text("1\n")  # the OEM network is id 0
+            result = subprocess.run([str(hook), str(fixture)], env=environment,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("3|-iwlan0|disable_network|0\n", calls)
+            self.assertNotIn("disable_network|1", calls)
+            self.assertNotIn("disable_network|2", calls)
+            self.assertLess(calls.index("disable_network|0"), calls.index("reassociate"))
 
     def test_slot_start_does_not_apply_wifi(self) -> None:
         """start.sh is bounded to 15s and runs long before wpa_supplicant

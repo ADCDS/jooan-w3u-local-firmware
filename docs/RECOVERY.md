@@ -47,8 +47,8 @@ If the candidate cannot boot or pass health, it is removed and selection returns
 to no runtime; recover through controller-owned SSH and retry or uninstall. The
 old runtime may continue from tmpfs until the update reboot, but it is not an
 on-flash rollback slot. Signed uninstall is destructive
-removal, not restoration of predecessor state. It removes HTTPS, route pruning,
-the process guard, project SSH, and the compressed controller/runtime; the next
+removal, not restoration of predecessor state. It removes the Web UI, route
+pruning, the process guard, project SSH, and the compressed controller/runtime; the next
 boot returns to OEM/GoAhead behavior. It does not restore the old
 unauthenticated telnet hook or an archived predecessor `/opt/etc/local.rc`.
 Keep router isolation active before, during, and after uninstall.
@@ -77,10 +77,9 @@ flash-vendor documentation. Never use 5 V on a 3.3 V SPI NOR.
 ## After recovery
 
 Assume any credential or private key present during a security failure may be
-compromised. Rotate the administrator password, regenerate the per-device HTTPS
-identity where appropriate, replace enrolled SSH keys, and replace Wi-Fi
-credentials. Revalidate router isolation before returning the camera to normal
-use.
+compromised. Rotate the administrator password, replace enrolled SSH keys, and
+replace Wi-Fi credentials. Revalidate router isolation before returning the
+camera to normal use.
 
 Record why recovery was needed and retain sanitized logs. Do not upload raw
 flash images, keys, tokens, cookies, or Wi-Fi configuration to an issue.

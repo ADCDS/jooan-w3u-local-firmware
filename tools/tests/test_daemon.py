@@ -65,7 +65,7 @@ stop=threading.Event();rtsp=threading.Thread(target=rtsp_server,args=(stop,),dae
 with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as staging:
  sequence=pathlib.Path(state)/'release-sequence';sequence.write_text('7\n')
  env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_RELEASE_SEQUENCE_PATH':str(sequence),'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'18883','JOAN_CONNECTIVITY_PORT':'0','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'1','JOAN_MDNS_PORT':'15353'}
- p=subprocess.Popen([BIN,'--plain-http','--bind','127.0.0.1','--port','18081'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ p=subprocess.Popen([BIN,'--plain-mqtt','--bind','127.0.0.1','--port','18081'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  try:
   for _ in range(100):
    try:
@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   assert request('GET','/api/v1/status',cookie=f'{pad}; {cookie}')[0]==200
   assert request('GET','/api/v1/status',cookie=f'joan_session={"0"*64}; {pad}; {cookie}')[0]==200
   assert request('PUT','/api/v1/network/mdns',{'hostname':'still-valid'},f'{pad}; {cookie}',csrf)[0]==200
-  assert request('GET','/api/v1/status',cookie=cookie,origin='https://evil.invalid')[0]==403
+  assert request('GET','/api/v1/status',cookie=cookie,origin='http://evil.invalid')[0]==403
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'x'*129},cookie,csrf)[0]==400
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':'twelve-chars\n'},cookie,csrf)[0]==400
   assert request('POST','/api/v1/setup/password',{'old_password':'admin','new_password':''},cookie,csrf)[0]==400
@@ -117,28 +117,6 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
   user,sh=(pathlib.Path(state)/'ssh/passwd').read_text().strip().split(':',1);assert crypt_verify('correct horse battery staple',sh)
   status,h,b=request('POST','/api/v1/session',{'username':'admin','password':'correct horse battery staple'});assert status==200;cookie=h['Set-Cookie'].split(';',1)[0];csrf=json.loads(b)['csrf'];assert json.loads(b)['default_password_warning'] is False
   assert websocket_status(cookie,'jaud.v1')==403
-  # An enrolled certificate is the only way a phone or a television can trust
-  # this page without importing anything, so guard the checks that protect it.
-  import subprocess as _sp, tempfile as _tf, os as _os
-  _d=_tf.mkdtemp()
-  def _ssl(*a): _sp.run(['openssl',*a],check=True,capture_output=True)
-  _ssl('req','-x509','-newkey','rsa:2048','-nodes','-keyout',f'{_d}/ca.key','-out',f'{_d}/ca.crt','-days','3650','-subj','/CN=T CA')
-  _ssl('req','-newkey','rsa:2048','-nodes','-keyout',f'{_d}/l.key','-out',f'{_d}/l.csr','-subj','/CN=cam.test')
-  open(f'{_d}/ext','w').write('subjectAltName=DNS:cam.test\nbasicConstraints=CA:FALSE\n')
-  _ssl('x509','-req','-in',f'{_d}/l.csr','-CA',f'{_d}/ca.crt','-CAkey',f'{_d}/ca.key','-CAcreateserial','-out',f'{_d}/l.crt','-days','60','-extfile',f'{_d}/ext')
-  _key=open(f'{_d}/l.key').read(); _crt=open(f'{_d}/l.crt').read()
-  assert request('PUT','/api/v1/tls/identity',_crt,cookie,csrf)[0]==400            # no key
-  assert request('PUT','/api/v1/tls/identity',_key,cookie,csrf)[0]==400            # no certificate
-  _ssl('req','-newkey','rsa:2048','-nodes','-keyout',f'{_d}/o.key','-out',f'{_d}/o.csr','-subj','/CN=other')
-  assert request('PUT','/api/v1/tls/identity',open(f'{_d}/o.key').read()+_crt,cookie,csrf)[0]==400  # mismatched pair
-  assert request('PUT','/api/v1/tls/identity',_key+_crt,cookie,csrf)[0]==200
-  _id=json.loads(request('GET','/api/v1/tls/identity',cookie=cookie)[2])
-  assert _id['enrolled'] is True and _id['subject']=='CN=cam.test',_id
-  # A rename regenerates a self-signed identity; it must not eat an enrolled one.
-  assert request('PUT','/api/v1/network/mdns',{'hostname':'renamed'},cookie,csrf)[0]==200
-  assert json.loads(request('GET','/api/v1/tls/identity',cookie=cookie)[2])['enrolled'] is True
-  assert request('DELETE','/api/v1/tls/identity',None,cookie,csrf)[0]==200
-  assert json.loads(request('GET','/api/v1/tls/identity',cookie=cookie)[2])['enrolled'] is False
 
   assert websocket_status(cookie,'jaud.v1, jaud.auth.'+'0'*64)==403
   assert websocket_status(cookie,f'jaud.v1, jaud.auth.{csrf}, jaud.auth.{csrf}')==403
@@ -194,7 +172,7 @@ with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as sta
 with tempfile.TemporaryDirectory() as migrated,tempfile.TemporaryDirectory() as migrated_stage:
  pathlib.Path(migrated,'auth.db').write_bytes(migrated_auth)
  env=os.environ|{'JOAN_STATE_DIR':migrated,'JOAN_STAGING_DIR':migrated_stage,'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_MQTT_PORT':'0','JOAN_RTSP_PORT':'18554','JOAN_MDNS':'0'}
- p=subprocess.Popen([BIN,'--plain-http','--bind','127.0.0.1','--port','18082'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ p=subprocess.Popen([BIN,'--plain-mqtt','--bind','127.0.0.1','--port','18082'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  try:
   for _ in range(100):
    try:

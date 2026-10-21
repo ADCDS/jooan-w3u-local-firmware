@@ -2,19 +2,19 @@
 
 ## Contract and qualification status
 
-`joan-daemon` and the bundled Web UI implement the versioned routes below.
-HTTPS is the production default on TCP/443; TCP/80 accepts only GET/HEAD and
-redirects to HTTPS. Plain HTTP exists only as an explicit host-test mode.
+`joan-daemon` and the bundled Web UI implement the versioned routes below,
+over plain HTTP on TCP/80. Nothing is encrypted in transit: a sign-in sends the
+password and every later request carries the session cookie in the clear, so
+use the API only from the trusted network the camera is isolated on.
 
 Implemented software is not the same as hardware qualification. Routes backed
-by retained OEM media, MQTT, PTZ, audio, Wi-Fi, or the updater may return a
+by retained OEM media, MQTT, PTZ, Wi-Fi, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and the `0.1.0` line has no
 supported tag until the physical-camera gates pass.
 
 All routes except setup status and session creation require an authenticated
 administrator session. State-changing HTTP requests require the session's CSRF
-token. Audio WebSockets additionally require a same-origin request and the
-session CSRF value in the negotiated subprotocol.
+token. ONVIF (below) authenticates each SOAP request instead.
 
 ## Authentication
 
@@ -28,8 +28,8 @@ password: admin
 The initial password remains valid; setup is not forced. Login and the status
 response carry `default_password_warning: true` until it is changed, and the
 Web UI keeps that warning visible. Password rotation invalidates existing Web
-sessions and atomically publishes synchronized credentials for HTTPS, RTSP, and
-SSH. An upgraded early `0.1` database whose original password cannot be
+sessions and atomically publishes synchronized credentials for the Web UI,
+ONVIF, RTSP, and SSH. An upgraded early `0.1` database whose original password cannot be
 recovered preserves Web login but reports `ssh_password_sync: false` until the
 administrator changes the password once.
 
@@ -43,55 +43,118 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/setup/status` | `GET` | Initial-password and credential-sync state |
 | `/api/v1/setup/password` | `POST` | Rotate the shared administrator password |
 | `/api/v1/session` | `POST`, `GET`, `DELETE` | Create, inspect, or end a session |
+| `/api/v1/system/audio-pause` | `GET`, `PUT` | Inspect or persist the optional OEM audio-processing pause |
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, and helper status |
 | `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
 | `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, Ethernet link/speed and cumulative interface counters |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
-| `/api/v1/tls/identity` | `GET`, `PUT`, `DELETE` | Report, enroll or discard the HTTPS certificate. `PUT` takes one PEM bundle (private key plus chain, any order) and is how a camera gets a certificate that phones and televisions already trust; `DELETE` returns to a generated self-signed identity. Both need a restart to take effect. |
 | `/api/v1/time` | `PUT` | Set the camera clock from the client (UTC epoch seconds, as a JSON string) |
 | `/api/v1/timezone` | `PUT` | Set the stored time zone (`gmt_tz`, a `"GMT-03:00"`-style offset). The burned-in OSD overlay adopts it on the next camera restart. |
-| `/api/v1/streams` | `GET` | Enumerate main/sub RTSP and fMP4 resources |
-| `/api/v1/video/{main,sub}/init.mp4` | `GET` | fMP4 initialization segment |
-| `/api/v1/video/{main,sub}/fragment.mp4?after=N` | `GET` | With `N=0`, return a decodable IDR-anchored bootstrap (ordered short fragments through the live edge, sequence header of the last included chunk); otherwise return the next contiguous ~1-second fragment. An unavailable anchor, stale/missing fragment or changed RTSP timeline returns 409 and requires a fresh init segment. |
-| `/api/v1/snapshot` | `GET` | Reserved — returns 501 until the loopback-only OEM GoAhead snapshot backend is enabled |
-| `/api/v1/ptz/lease` | `POST` | Acquire the short exclusive PTZ lease |
-| `/api/v1/ptz/move` | `POST` | Start a bounded directional move or jog |
-| `/api/v1/ptz/stop` | `POST` | Stop movement and release the lease |
-| `/api/v1/ptz/home` | `POST` | List/set/go to the home position |
-| `/api/v1/ptz/presets` | `GET`, `POST`, `PUT`, `DELETE` | List, save/update, recall, or delete presets |
-| `/api/v1/operations/{id}` | `GET` | Poll an accepted asynchronous OEM operation |
+| `/api/v1/streams` | `GET` | Enumerate the main/sub RTSP streams |
 | `/api/v1/ssh/authorized-keys` | `GET`, `POST`, `DELETE` | Inspect, add, or remove optional Ed25519 keys |
 | `/api/v1/update` | `POST`, `PUT` | Stage then apply an authenticated release |
-| `/api/v1/audio/mic` | WebSocket | Listen to the camera microphone |
-| `/api/v1/audio/talk` | WebSocket | Press-to-talk audio path |
 
-Clients must ignore unknown response fields and treat a 202 response as
-accepted, not completed; poll its `/api/v1/operations/{id}` URL.
+Clients must ignore unknown response fields.
 
 ## Media and controls
 
-The Web UI consumes the main and sub fMP4 routes. The daemon converts the retained
-local RTSP/RTP H.264 streams into initialization segments and bounded fragmented
-MP4; it does not transcode video. Stream readiness is reported separately for
-main and sub. RTSP remains available on TCP/554 for local NVR clients through
-the daemon's Digest-authenticated proxy; the username is `admin` and the
-password is synchronized with WebUI/SSH. The OEM upstream is loopback-only on
-TCP/8554.
+Watching, recording and steering belong to an NVR such as Frigate; the Web UI
+is a maintenance console and plays no video. Both sensors are available as
+H.264 over RTSP on TCP/554 through the daemon's Digest-authenticated proxy; the
+username is `admin` and the password is the administrator password. The OEM
+upstream is loopback-only on TCP/8554. Pan/tilt and presets are ONVIF, below.
+The camera's RTSP streams carry no usable audio, and the retrofit ships no
+listen or talk path; the guard keeps OEM alarm and voice playback muted.
 
-The audio WebSockets bridge to the bounded local audio router. The router owns
-a dedicated read-only audio-driver stream and converts its 16 kHz mono PCM to
-G.711 A-law packets. The UI supports microphone listening and
-explicit press-to-talk; microphone playback pauses while talking to reduce
-feedback. PTT is decoded and submitted through the router's dedicated output
-driver stream. OEM alarm/voice playback is discarded, while the guard enables
-the board-configured active-low amplifier only after successful authenticated
-PCM submission and enforces a 500 ms deadman mute. These paths remain
-hardware-promotion gates.
+## Optional OEM audio pause
 
-PTZ requires a short lease so a lost browser cannot leave the motor running.
-The Web UI exposes directional jog/stop, home, and saved presets. Commands use
-the loopback OEM command channel and complete asynchronously.
+`GET /api/v1/system/audio-pause` returns `enabled`, `active`, `state`, and
+`recovery_reason`. `PUT` accepts exactly `{"enabled": true}` or
+`{"enabled": false}` and requires the normal administrator session and CSRF
+header. The setting defaults to false and persists across clean restarts.
+The System zone exposes the same control.
+
+When enabled, the exact supported OEM audio callback waits at its existing
+sleep boundary, before acquiring an audio frame. OEM microphone processing
+stops; the video encoders keep running. This is CPU saving, not a speaker mute
+or an implementation of microphone listening/talkback.
+
+The camera waits for RTSP media forwarding before issuing an eight-second
+RAM lease. Forwarding must continue for every sensor that has supplied media
+since daemon startup. A stopped stream disables the setting and resumes OEM
+audio. No NVR or host renews the lease: the camera owns it. This deliberately
+also disables the pause if a previously active NVR stops consuming video.
+
+An interrupted first-minute trial disables the setting at the next daemon
+startup. Clean shutdowns preserve it. Inspect `recovery_reason` before an
+explicit retry. See [Audio pause](AUDIO-PAUSE.md) for recovery details.
+
+## ONVIF for NVRs
+
+Network video recorders such as Frigate control pan/tilt and presets over
+ONVIF. The daemon answers the few Profile S operations they need on the Web UI
+listener, at `/onvif/device_service`, `/onvif/media` and `/onvif/ptz`. There is
+no separate port and no WS-Discovery: point the client at the camera's address
+and port 80.
+
+- **Authentication.** Every operation except `GetSystemDateAndTime` needs a
+  WS-Security UsernameToken with a PasswordDigest for user `admin` and the
+  administrator password shared with the Web UI, SSH and RTSP. A token works
+  once. Its `Created` time is hashed but not bounded, because the camera clock is
+  only as good as its last manual sync. Failures count against the Web login's
+  per-address budget (five a minute). Requests carrying a foreign `Origin` are
+  refused.
+- **Media.** One profile, `ch0`: sensor A (2304×1296, H.264), the one on the
+  pan/tilt head. Sensor B is fixed and has nothing to offer here; its RTSP URL
+  is unchanged.
+- **Pan/tilt.** Each `ContinuousMove` is one coarse nudge along the dominant
+  axis: the daemon starts the motor, stops it 350 ms later (about 190 motor
+  steps, roughly 17°) and only then replies. The live picture lags several
+  seconds, so a hold could not be aimed, and a fixed step lands the same way
+  every time. The OEM moves one axis at a time at a single speed, so the
+  velocity only picks the direction. `Stop` is accepted and has nothing left to
+  do. There is no zoom, no relative or absolute move, and no position or move
+  status, so NVR autotracking is unavailable.
+- **Presets.** `GetPresets`, `GotoPreset`, `SetPreset` and `RemovePreset` act on
+  the OEM's six preset slots (tokens `0`–`5`). `SetPreset` needs a
+  `PresetName` (1–64 characters, no quotes or backslashes). With a `PresetToken`
+  it re-saves that slot at the current position. The OEM refuses a save where a
+  preset already exists at the same position, and the fault reports its status
+  (`-2`).
+- **Travel.** `GotoPreset` answers at once. The head then moves pan and tilt
+  together at 450 steps/s (a full pan takes about 9 s), and the OEM reports
+  when it stops. A command sent mid-travel lands the head somewhere else, so a
+  recall or `ContinuousMove` that arrives meanwhile is accepted and held until
+  that report, then runs. Only the newest held request runs; older ones are
+  dropped, so repeated clicks do not queue up. `SetPreset` and `RemovePreset`
+  are refused until the head has stopped.
+- **Discovery.** `GetCapabilities` and `GetProfiles` complete the set. It is
+  what Frigate uses, with the flash budget as the limit. Any other operation
+  returns `ter:ActionNotSupported`.
+
+The OEM's own ONVIF service stays confined to loopback TCP/8899. It ignores
+credentials, zeep-based clients cannot talk to it, and its preset operations
+do nothing. The daemon uses only its `ContinuousMove` and `Stop`, as the motor
+path. The OEM runs a move until it is told to stop, so the daemon always issues
+the Stop itself and retries an unconfirmed one.
+
+A Frigate camera entry for the pan/tilt sensor looks like this:
+
+```yaml
+cameras:
+  jooan_main:
+    onvif:
+      host: 192.0.2.10   # the camera
+      port: 80
+      user: admin
+      password: <administrator password>
+```
+
+Frigate then shows direction arrows and a preset list. It cannot save presets,
+and it reads the list only when it connects. Save, rename and delete them with
+`tools/onvif_presets.py` (standard-library Python; `nudge` aims the head first),
+then restart Frigate.
 
 ## Local networking and DNS-SD
 
@@ -99,7 +162,7 @@ The runtime removes IPv4 and IPv6 default routes and repeatedly prunes any that
 reappear. Connected local-subnet routes remain. `/api/v1/network/routes` accepts
 only explicit RFC1918 or ULA routes; it cannot add a public or default route.
 
-The embedded responder advertises A plus DNS-SD PTR/SRV/TXT records for HTTPS,
+The embedded responder advertises A plus DNS-SD PTR/SRV/TXT records for HTTP,
 SSH, RTSP, and `_jooan-camera._tcp` on UDP/5353. The configured label is
 advertised as `label.local`. DNS-SD is link-local; routed VLAN discovery needs
 a trusted reflector, while direct address access does not.

@@ -32,7 +32,7 @@
 typedef struct { uint32_t h[4], bits[2]; unsigned char data[64]; size_t used; } Md5;
 #endif
 typedef struct { char value[33]; time_t expires; int used; } Nonce;
-typedef struct { int client, upstream; unsigned slot; } Worker;
+typedef struct { int client, upstream; unsigned slot; int channel; size_t forwarded; } Worker;
 typedef struct {
     char username[32], realm[64], nonce[64], uri[1024], response[40];
     char algorithm[16], qop[16], nc[16], cnonce[160];
@@ -48,6 +48,7 @@ typedef struct {
     JoanConfig cfg;
     Nonce nonces[RTSP_NONCES];
     unsigned nonce_cursor;
+    uint64_t video_progress[2];
 } Proxy;
 
 static Proxy P={
@@ -216,10 +217,23 @@ static int upstream_connect(void)
 {
     int fd=socket(AF_INET,SOCK_STREAM,0);struct sockaddr_in a;struct timeval tv={5,0};if(fd<0)return-1;setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons((uint16_t)P.cfg.rtsp_port);a.sin_addr.s_addr=htonl(INADDR_LOOPBACK);if(connect(fd,(struct sockaddr*)&a,sizeof(a))){close(fd);return-1;}return fd;
 }
-static int relay(int a,int b)
+static uint64_t video_mono(void){struct timespec t;if(clock_gettime(CLOCK_MONOTONIC,&t))return 0;return (uint64_t)t.tv_sec;}
+int joan_rtsp_proxy_audio_health(void)
+{
+    uint64_t now=video_mono();int seen=0,ok=1;unsigned i;
+    pthread_mutex_lock(&P.lock);
+    for(i=0;i<2;i++)if(P.video_progress[i]){seen=1;if(now<P.video_progress[i]||now-P.video_progress[i]>8)ok=0;}
+    pthread_mutex_unlock(&P.lock);
+    return seen?ok:-1;
+}
+static int relay(int a,int b,Worker *w)
 {
     struct pollfd p[2];unsigned char data[RTSP_IO_BUFFER];ssize_t n;p[0].fd=a;p[1].fd=b;p[0].events=p[1].events=POLLIN;
-    for(;;){p[0].revents=p[1].revents=0;do n=poll(p,2,-1);while(n<0&&errno==EINTR);if(n<=0)return-1;if(p[0].revents&(POLLERR|POLLHUP|POLLNVAL))return 0;if(p[1].revents&(POLLERR|POLLHUP|POLLNVAL))return 0;if(p[0].revents&POLLIN){n=recv(a,data,sizeof(data),0);if(n<=0)return 0;if(send_all(b,data,(size_t)n))return-1;}if(p[1].revents&POLLIN){n=recv(b,data,sizeof(data),0);if(n<=0)return 0;if(send_all(a,data,(size_t)n))return-1;}}
+    for(;;){p[0].revents=p[1].revents=0;do n=poll(p,2,-1);while(n<0&&errno==EINTR);if(n<=0)return-1;if(p[0].revents&(POLLERR|POLLHUP|POLLNVAL))return 0;if(p[1].revents&(POLLERR|POLLHUP|POLLNVAL))return 0;if(p[0].revents&POLLIN){n=recv(a,data,sizeof(data),0);if(n<=0)return 0;if(send_all(b,data,(size_t)n))return-1;}if(p[1].revents&POLLIN){n=recv(b,data,sizeof(data),0);if(n<=0)return 0;if(send_all(a,data,(size_t)n))return-1;
+            /* Count only established media transfers, not RTSP headers. This
+             * observes delivered bytes without changing the relay payload. */
+            if(w->channel>=0){w->forwarded+=(size_t)n;if(w->forwarded>=32768u){pthread_mutex_lock(&P.lock);P.video_progress[w->channel]=video_mono();pthread_mutex_unlock(&P.lock);}}
+        }}
 }
 static void worker_done(Worker*w)
 {
@@ -234,7 +248,8 @@ static void *worker_main(void*opaque)
     Worker*w=opaque;char b[RTSP_HEADER_MAX],method[32],uri[1024],cseq[32],auth[2048];size_t used=0,hn=0;unsigned attempts=0;struct timeval tv={5,0};
     setsockopt(w->client,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(w->client,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));
     while(attempts++<RTSP_AUTH_ATTEMPTS){int rr=read_header(w->client,b,&used,&hn);if(rr){if(rr==-2)response(w->client,400,"Bad Request",NULL,NULL);goto done;}if(request_meta(b,hn,method,uri,cseq,auth)){response(w->client,400,"Bad Request",NULL,NULL);goto done;}if(!authenticate(method,uri,auth)){if(challenge(w->client,cseq))goto done;memmove(b,b+hn,used-hn);used-=hn;continue;}
-        w->upstream=upstream_connect();if(w->upstream<0){response(w->client,503,"Service Unavailable",cseq,NULL);goto done;}pthread_mutex_lock(&P.lock);P.upstreams[w->slot]=w->upstream;pthread_mutex_unlock(&P.lock);if(send_all(w->upstream,b,used))goto done;tv.tv_sec=0;tv.tv_usec=0;setsockopt(w->client,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(w->upstream,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));(void)relay(w->client,w->upstream);goto done;}
+        {const char *ch=strstr(uri,"/live/ch");w->channel=-1;if(ch&&(ch[8]=='0'||ch[8]=='1')&&(!ch[9]||ch[9]=='/'))w->channel=ch[8]-'0';}
+        w->upstream=upstream_connect();if(w->upstream<0){response(w->client,503,"Service Unavailable",cseq,NULL);goto done;}pthread_mutex_lock(&P.lock);P.upstreams[w->slot]=w->upstream;pthread_mutex_unlock(&P.lock);if(send_all(w->upstream,b,used))goto done;tv.tv_sec=0;tv.tv_usec=0;setsockopt(w->client,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(w->upstream,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));(void)relay(w->client,w->upstream,w);goto done;}
 done:worker_done(w);return NULL;
 }
 static void *listener_main(void*unused)
@@ -246,7 +261,7 @@ static void *listener_main(void*unused)
 }
 int joan_rtsp_proxy_start(const JoanConfig*cfg)
 {
-    int fd,one=1;struct sockaddr_in a;unsigned i;if(!cfg||!cfg->rtsp_proxy_port)return 0;pthread_mutex_lock(&P.lock);if(P.running){pthread_mutex_unlock(&P.lock);return-1;}P.cfg=*cfg;P.stopping=0;P.workers=0;for(i=0;i<RTSP_MAX_WORKERS;i++)P.clients[i]=P.upstreams[i]=-1;memset(P.nonces,0,sizeof(P.nonces));P.nonce_cursor=0;pthread_mutex_unlock(&P.lock);
+    int fd,one=1;struct sockaddr_in a;unsigned i;if(!cfg||!cfg->rtsp_proxy_port)return 0;pthread_mutex_lock(&P.lock);if(P.running){pthread_mutex_unlock(&P.lock);return-1;}P.cfg=*cfg;memset(P.video_progress,0,sizeof(P.video_progress));P.stopping=0;P.workers=0;for(i=0;i<RTSP_MAX_WORKERS;i++)P.clients[i]=P.upstreams[i]=-1;memset(P.nonces,0,sizeof(P.nonces));P.nonce_cursor=0;pthread_mutex_unlock(&P.lock);
     fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)return-1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons((uint16_t)cfg->rtsp_proxy_port);if(inet_pton(AF_INET,cfg->bind_addr,&a.sin_addr)!=1||bind(fd,(struct sockaddr*)&a,sizeof(a))||listen(fd,RTSP_MAX_WORKERS)){close(fd);return-1;}pthread_mutex_lock(&P.lock);P.listener=fd;P.running=1;pthread_mutex_unlock(&P.lock);if(pthread_create(&P.thread,NULL,listener_main,NULL)){close(fd);pthread_mutex_lock(&P.lock);P.listener=-1;P.running=0;pthread_mutex_unlock(&P.lock);return-1;}return 0;
 }
 void joan_rtsp_proxy_stop(void)

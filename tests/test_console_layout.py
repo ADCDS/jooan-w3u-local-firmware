@@ -1,4 +1,4 @@
-"""Keep the live controls and NVR details in their intended sections."""
+"""The Web UI is a maintenance console: NVRs watch, steer and record."""
 
 from html.parser import HTMLParser
 from pathlib import Path
@@ -55,7 +55,7 @@ def heading(card):
     return next(node["text"].strip() for node in walk(card) if node["tag"] == "h2")
 
 
-class LiveLayoutTests(unittest.TestCase):
+class ConsoleLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         tree = Elements()
@@ -63,34 +63,30 @@ class LiveLayoutTests(unittest.TestCase):
         assert tree.stack == [tree.root], "unclosed HTML elements"
         cls.root = tree.root
 
-    def test_presets_follow_jog_in_live_sidebar(self):
-        live = by_id(self.root, "zone-live")
-        side = next(node for node in live["children"] if node["tag"] == "aside")
-        self.assertEqual([heading(card) for card in cards(side)],
-                         ["Jog", "Presets", "Talkback"])
-        preset = cards(side)[1]
-        for name in ("preset-chips", "preset-set", "preset-delete", "preset-confirm"):
-            self.assertIn(by_id(self.root, name), list(walk(preset)))
-        self.assertNotIn("Presets", [heading(card) for card in cards(by_id(self.root, "zone-control"))])
+    def test_only_maintenance_zones_remain(self):
+        zones = [node["attrs"]["id"] for node in walk(self.root)
+                 if "zone" in node["attrs"].get("class", "").split()]
+        self.assertEqual(zones, ["zone-network", "zone-system"])
+        rail = [node["attrs"]["data-zone"] for node in walk(by_id(self.root, "rail"))
+                if node["tag"] == "button"]
+        self.assertEqual(sorted(rail), ["network", "system"])
+        self.assertEqual(by_id(self.root, "console")["attrs"]["data-zone"], "system")
 
-    def test_rtsp_is_visible_in_system_on_phone(self):
+    def test_nvr_details_are_visible_in_system_on_phone(self):
         system = by_id(self.root, "zone-system")
-        rtsp = next(card for card in cards(system) if heading(card) == "RTSP")
-        self.assertIn(by_id(self.root, "streams"), list(walk(rtsp)))
-        self.assertNotIn("desktop-only", rtsp["attrs"].get("class", "").split())
-        css = (ROOT / "web/styles.css").read_text(encoding="utf-8")
-        self.assertNotIn(".desktop-only{display:none}", css)
-        self.assertIn(".side .grid2{grid-template-columns:1fr}",
-                      css.split("/* ---------- phone ---------- */", 1)[1])
+        nvr = next(card for card in cards(system) if heading(card) == "NVR")
+        self.assertIn(by_id(self.root, "streams"), list(walk(nvr)))
+        self.assertNotIn("desktop-only", nvr["attrs"].get("class", "").split())
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        self.assertIn("/onvif/device_service", app)
 
-    def test_both_live_tiles_remain_focusable(self):
-        live = by_id(self.root, "zone-live")
-        for name in ("main", "sub"):
-            tile = by_id(self.root, f"tile-{name}")
-            self.assertIn(tile, list(walk(live)))
-            self.assertEqual(tile["attrs"]["tabindex"], "0")
-            self.assertEqual(tile["attrs"]["role"], "button")
-            self.assertIn(by_id(self.root, f"video-{name}"), list(walk(tile)))
+    def test_no_media_client_is_shipped(self):
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        self.assertNotIn("import ", app)
+        for gone in ("/api/v1/video/", "/api/v1/audio/", "/api/v1/ptz/", "/api/v1/recordings/"):
+            self.assertNotIn(gone, app)
+        self.assertEqual(sorted(path.name for path in (ROOT / "web").iterdir() if not path.name.endswith(".test.js")),
+                         ["app.js", "index.html", "styles.css"])
 
 
 if __name__ == "__main__":

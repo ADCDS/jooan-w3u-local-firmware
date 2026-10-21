@@ -5,7 +5,6 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cleanup_source_builds() {
     make -C "$repo/src/daemon" clean >/dev/null 2>&1 || :
-    make -C "$repo/src/audio" clean >/dev/null 2>&1 || :
     make -C "$repo/src/guard" clean >/dev/null 2>&1 || :
 }
 trap cleanup_source_builds EXIT HUP INT TERM
@@ -42,13 +41,6 @@ make -C "$repo/src/daemon" -j1 TLS=1 CC="$cc" CFLAGS="$cflags" \
     LDLIBS="$OEM_ROOTFS/lib/libmbedtls.so.13 $OEM_ROOTFS/lib/libmbedx509.so.1 $OEM_ROOTFS/lib/libmbedcrypto.so.6 -lpthread"
 "$strip" "$repo/src/daemon/joan-daemon"
 cp "$repo/src/daemon/joan-daemon" "$target/bin/"
-
-make -C "$repo/src/audio" clean
-make -C "$repo/src/audio" -j1 jooan-audio-router CC="$cc" \
-    CFLAGS='-Os -muclibc -march=mips32r2 -mhard-float -ffunction-sections -fdata-sections -Wall -Wextra -Werror -std=c99' \
-    LDFLAGS='-muclibc -Wl,--gc-sections'
-"$strip" "$repo/src/audio/jooan-audio-router"
-cp "$repo/src/audio/jooan-audio-router" "$target/bin/audio-router"
 
 make -C "$repo/src/guard" clean
 make -C "$repo/src/guard" -j1 all CC="$cc" \
@@ -127,7 +119,7 @@ python3 "$repo/packaging/write-provenance.py" \
     --oem-rootfs "$OEM_ROOTFS" --target "$repo/packaging/targets/ja-a12.json" \
     --output "$build/build-provenance.json"
 
-file "$target/bin/joan-daemon" "$target/bin/audio-router" "$target/shared/libjooan_guard.so" \
+file "$target/bin/joan-daemon" "$target/shared/libjooan_guard.so" \
     "$target/shared/jooan-sha256" "$target/shared/jooan-auth-verify" \
     "$target/shared/jooan-ironman-inspect"
 du -h "$target/bin/joan-daemon" "$target/shared/"*
