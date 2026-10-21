@@ -65,7 +65,7 @@ grep -qx 'motor_home=1' "$root/camera.ini" || fail 'native boot requires motor_h
 # The daemon binds the camera's address: wait for Wi-Fi, DHCP and the gateway.
 stage network
 network_ready() {
-    read -r gateway interface < /run/jooan-local/default-gateway || return 1
+    read -r gateway interface < /run/jooan-local/default-gateway 2>/dev/null || return 1
     [ "$interface" = wlan0 ] || return 1
     ifconfig wlan0 2>/dev/null | grep -q 'inet addr:' || return 1
     arping -c 1 -w 2 -I wlan0 "$gateway" >/dev/null 2>&1
