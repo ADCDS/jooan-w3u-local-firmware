@@ -9,9 +9,9 @@ CV2005/CV2005S1 configuration. Version 1 therefore keeps the OEM media stack
 and places a hardened local control plane around it.
 
 ```text
-Local browser / NVR / administrator
+Local browser / administrator
              |
-  HTTP API, ONVIF and RTSP/TCP
+       HTTP API and SSH
              |
   open gateway + policy services
      |                    |
@@ -20,6 +20,8 @@ authenticated control   route/process policy
      +---- retained jooanipc ---- vendor IMP/ISP/VPU
                                       |
                           cv2005 + cv2005s1 sensors
+
+NVR -> media daemon (jooanipc-open, separate; replaces jooanipc after boot)
 
 Bootloader -> OEM Linux 3.10 -> vendor modules -> retrofit supervisor
 ```
@@ -31,7 +33,8 @@ The following remain device-supplied and proprietary:
 - bootloader and OEM Linux 3.10 kernel;
 - ISP, VPU, sensor, audio, motor, and SeekWave kernel modules;
 - sensor IQ/calibration and radio firmware;
-- `jooanipc`, retained as the media-hardware owner.
+- `jooanipc`, which still starts at every boot to bring up Wi-Fi and home the
+  motor before the media daemon replaces it.
 
 These components are not imported into this repository or a generic release.
 They remain on the owner's camera. Their behavior is treated as an untrusted
@@ -45,10 +48,9 @@ The open layer is responsible for:
 - a local HTTP listener with authenticated session handling;
 - the versioned `/api/v1/` management contract;
 - password-synchronized SSH for user `admin`, with optional authorized keys;
-- local RTSP reachability;
 - no-default-route local networking plus exact-process egress containment;
 - embedded mDNS/DNS-SD discovery;
-- an ONVIF device/media/PTZ subset for NVRs, on the same HTTP listener;
+- optional SNTP network time from a server on the camera's network;
 - health checks, update verification, and rollback/fallback handling.
 
 The generic image does not personalize Wi-Fi or embed keys. The per-device key
@@ -62,18 +64,32 @@ changed; warning state, rather than forced setup, records that condition.
 The implementation includes deterministic signed packaging, a compressed
 controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
-keys, the HTTP daemon with a maintenance Web UI, a local TLS MQTT sink, ONVIF
-pan/tilt and presets for NVRs, embedded DNS-SD, and an exact-binary
+keys, the HTTP daemon with a maintenance Web UI, a local TLS MQTT sink, optional
+SNTP network time, embedded DNS-SD, and an exact-binary
 `LD_PRELOAD` guard. The guard redirects only approved OEM service names to
 loopback and denies other `jooanipc` connect/datagram traffic. It also confines
 OEM RTSP to loopback TCP/8554, the OEM ONVIF service to loopback TCP/8899, and
-suppresses OEM speaker output. An authenticated Digest proxy exposes RTSP to
-local clients on TCP/554.
+suppresses OEM speaker output.
 
 Viewing, recording and steering moved to the NVR (Frigate over RTSP and ONVIF)
 in 0.2.14. The camera no longer remuxes video for browsers or routes audio,
 which also retired the per-viewer fMP4 buffers and the audio router process: on
 a 38 MB board that memory was part of what the OOM killer fought over.
+
+Since 0.2.22 `joan-daemon` is the platform only. A separate media daemon,
+[jooanipc-open](https://github.com/ADCDS/jooanipc-open), replaces `jooanipc`
+after boot and owns RTSP, ONVIF, pan/tilt, presets and the NVR integration on
+its own ports and credentials. The Digest RTSP proxy on TCP/554, the ONVIF
+subset on port 80 and the optional OEM audio pause were removed; the guard's
+audio hook remains but nothing activates it. Without the media daemon the
+guard's loopback confinement still applies, so this firmware alone exposes no
+video or PTZ.
+
+The board has no RTC, so boot restores a coarse saved time that lags by the
+downtime. When enabled (it is off by default), the SNTP client in `joan-daemon`
+keeps the clock on UTC from the gateway or another local server and steps it
+through the integration helper's `time-set`, which also saves the time the
+next boot restores. See [API](API.md#camera-time).
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
 runtime must total no more than 200704 bytes (196 KiB), with at least 65536 bytes
@@ -98,9 +114,10 @@ for snapshots, but cannot eliminate that immutable early interval. The
 external router or VLAN must block untrusted peers and Internet access before
 power is applied.
 
-For a conforming promoted release, the intended listeners are TCP/80 (Web UI,
-API and ONVIF), TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
-supported architecture.
+For a conforming promoted release, the intended listeners are TCP/80 (Web UI
+and API) and—after key enrollment—TCP/22, plus the loopback-only MQTT sink and
+UDP/5353 for mDNS. The media daemon adds its own. No cloud or P2P path is part
+of the supported architecture.
 
 ## Memory pressure and PTZ homing
 

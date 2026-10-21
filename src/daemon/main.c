@@ -20,12 +20,9 @@ int main(int argc,char**argv)
     copy_env(c.web_dir,sizeof(c.web_dir),"JOAN_WEB_DIR","/usr/share/joan/web");
     copy_env(c.bind_addr,sizeof(c.bind_addr),"JOAN_BIND","0.0.0.0");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
-    c.port=80;c.mqtt_port=1883;c.rtsp_port=8554;c.rtsp_proxy_port=0;c.oem_onvif_port=8899;c.mdns_enabled=1;c.mdns_port=5353;
+    c.port=80;c.mqtt_port=1883;c.mdns_enabled=1;c.mdns_port=5353;
     if(getenv("JOAN_PORT"))c.port=(unsigned)strtoul(getenv("JOAN_PORT"),NULL,10);
     if(getenv("JOAN_MQTT_PORT"))c.mqtt_port=(unsigned)strtoul(getenv("JOAN_MQTT_PORT"),NULL,10);
-    if(getenv("JOAN_RTSP_PORT"))c.rtsp_port=(unsigned)strtoul(getenv("JOAN_RTSP_PORT"),NULL,10);
-    if(getenv("JOAN_RTSP_PROXY_PORT"))c.rtsp_proxy_port=(unsigned)strtoul(getenv("JOAN_RTSP_PROXY_PORT"),NULL,10);
-    if(getenv("JOAN_OEM_ONVIF_PORT"))c.oem_onvif_port=(unsigned)strtoul(getenv("JOAN_OEM_ONVIF_PORT"),NULL,10);
     if(getenv("JOAN_MDNS")&&!strcmp(getenv("JOAN_MDNS"),"0"))c.mdns_enabled=0;
     if(getenv("JOAN_MDNS_PORT"))c.mdns_port=(unsigned)strtoul(getenv("JOAN_MDNS_PORT"),NULL,10);
     for(i=1;i<argc;i++){
@@ -34,7 +31,7 @@ int main(int argc,char**argv)
         else if(!strcmp(argv[i],"--port")&&i+1<argc)c.port=(unsigned)strtoul(argv[++i],NULL,10);
         else{usage(argv[0]);return 2;}
     }
-    if(!c.port||c.port>65535||c.mqtt_port>65535||!c.rtsp_port||c.rtsp_port>65535||!c.oem_onvif_port||c.oem_onvif_port>65535||c.rtsp_proxy_port>65535||!c.mdns_port||c.mdns_port>65535){usage(argv[0]);return 2;}
+    if(!c.port||c.port>65535||c.mqtt_port>65535||!c.mdns_port||c.mdns_port>65535){usage(argv[0]);return 2;}
     signal(SIGPIPE,SIG_IGN);
     signal(SIGTERM,stop_handler);signal(SIGINT,stop_handler);
     if(joan_auth_init(&c)){fprintf(stderr,"cannot initialize authentication state\n");return 1;}
@@ -45,12 +42,12 @@ int main(int argc,char**argv)
     if(c.plain_mqtt)fprintf(stderr,"WARNING: plain MQTT development mode; do not run on a camera\n");
     if(joan_mqtt_bridge_start(&c)){fprintf(stderr,"cannot start loopback MQTT compatibility sink\n");return 1;}
     if(joan_mdns_start(&c)){fprintf(stderr,"cannot start mDNS responder\n");return 1;}
-    if(joan_rtsp_proxy_start(&c)){fprintf(stderr,"cannot start authenticated RTSP proxy\n");joan_mdns_stop();joan_mqtt_bridge_stop();return 1;}
-    if(joan_audio_pause_start(&c))fprintf(stderr,"audio pause supervision unavailable; OEM audio remains running\n");
+    /* Media (RTSP, ONVIF, PTZ, presets) belongs to the media daemon that
+     * replaces jooanipc after boot; this daemon is the platform. */
+    if(joan_ntp_start(&c))fprintf(stderr,"network time unavailable; the restored clock is kept\n");
     fprintf(stderr,"joan-daemon %s listening on %s:%u (HTTP)\n",JOAN_VERSION,c.bind_addr,c.port);
     rc=joan_server_run(&c);
-    joan_audio_pause_stop();
-    joan_rtsp_proxy_stop();
+    joan_ntp_stop();
     joan_mdns_stop();
     joan_mqtt_bridge_stop();
     return rc?1:0;

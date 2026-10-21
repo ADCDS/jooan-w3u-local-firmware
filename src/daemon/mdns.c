@@ -132,7 +132,7 @@ static int rr_head(unsigned char*out,size_t*p,size_t cap,const char*name,unsigne
 static void rr_end(unsigned char*out,size_t p,size_t rdlen){size_t n=p-rdlen-2;out[rdlen]=n>>8;out[rdlen+1]=n;}
 static size_t build_discovery(unsigned char*out,size_t cap,const char*label,struct in_addr address,unsigned ttl)
 {
-    static const struct{const char*service;unsigned port;const char*txt;}svc[]={{"_http._tcp.local",80,"path=/"},{"_ssh._tcp.local",22,"auth=password"},{"_rtsp._tcp.local",554,"streams=main,sub"},{"_jooan-camera._tcp.local",80,"model=JA-A12"}};
+    static const struct{const char*service;unsigned port;const char*txt;}svc[]={{"_http._tcp.local",80,"path=/"},{"_ssh._tcp.local",22,"auth=password"},{"_jooan-camera._tcp.local",80,"model=JA-A12"}};
     char host[80],instance[160];size_t p=12,rd;unsigned i,count=1+(unsigned)(sizeof(svc)/sizeof(svc[0]))*3;memset(out,0,cap);out[2]=0x84;out[6]=count>>8;out[7]=count;snprintf(host,sizeof(host),"%s.local",label);
     if(rr_head(out,&p,cap,host,1,ttl,&rd)||p+4>cap)return 0;
     memcpy(out+p,&address,4);p+=4;rr_end(out,p,rd);
@@ -175,7 +175,7 @@ static void *mdns_loop(void *unused)
         if(n<0){if(errno==EAGAIN||errno==EWOULDBLOCK){if(++timeouts<3)continue;}close(fd);fd=-1;timeouts=0;pthread_mutex_lock(&hostname_lock);mdns_running=0;pthread_mutex_unlock(&hostname_lock);continue;}
         timeouts=0;if(n<12||(query[2]&0x80)||(!query[4]&&!query[5])||decode_question(query,(size_t)n,asked,sizeof(asked)))continue;
         joan_mdns_get_hostname(&M,label);snprintf(wanted,sizeof(wanted),"%s.local",label);
-        if(strcmp(asked,wanted)&&strcmp(asked,"_http._tcp.local")&&strcmp(asked,"_ssh._tcp.local")&&strcmp(asked,"_rtsp._tcp.local")&&strcmp(asked,"_jooan-camera._tcp.local")&&!strstr(asked,"._http._tcp.local")&&!strstr(asked,"._ssh._tcp.local")&&!strstr(asked,"._rtsp._tcp.local")&&!strstr(asked,"._jooan-camera._tcp.local"))continue;
+        if(strcmp(asked,wanted)&&strcmp(asked,"_http._tcp.local")&&strcmp(asked,"_ssh._tcp.local")&&strcmp(asked,"_jooan-camera._tcp.local")&&!strstr(asked,"._http._tcp.local")&&!strstr(asked,"._ssh._tcp.local")&&!strstr(asked,"._jooan-camera._tcp.local"))continue;
         if(ntohs(peer.sin_port)!=M.mdns_port){struct in_addr addresses[8];int count=iface_addresses(fd,addresses,8,0);if(count>0){size_t z=build_discovery(answer,sizeof(answer),label,addresses[0],120);if(z)sendto(fd,answer,z,0,(const struct sockaddr*)&peer,sizeof(peer));}}
         else {struct in_addr addresses[8];int count=iface_addresses(fd,addresses,8,0),i;for(i=0;i<count;i++){size_t z=build_discovery(answer,sizeof(answer),label,addresses[i],120);if(!z)continue;setsockopt(fd,IPPROTO_IP,IP_MULTICAST_IF,&addresses[i],sizeof(addresses[i]));sendto(fd,answer,z,0,(const struct sockaddr*)&group,sizeof(group));}}
     }

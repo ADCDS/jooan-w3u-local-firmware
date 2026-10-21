@@ -13,9 +13,13 @@ P2P services while preserving the vendor media path needed to operate its two
 sensors.
 
 This is **not** a complete open-source replacement firmware. The retrofit keeps
-the OEM Linux 3.10 kernel, vendor kernel modules, and `jooanipc` as the hardware
-media owner. The open layer confines that legacy process, exposes authenticated
-local services, and blocks unwanted network access. See
+the OEM Linux 3.10 kernel, vendor kernel modules, and `jooanipc`, which still
+starts at every boot to bring up Wi-Fi and home the motor. The open layer
+confines that legacy process, exposes authenticated local services, and blocks
+unwanted network access. It is the platform only: video, ONVIF, pan/tilt,
+presets and the NVR integration belong to a separate media daemon,
+[jooanipc-open](https://github.com/ADCDS/jooanipc-open), which replaces
+`jooanipc` after boot on its own ports and credentials. See
 [Architecture](docs/ARCHITECTURE.md) for the trust boundary.
 
 ## Exact hardware scope
@@ -54,8 +58,11 @@ The target release surface is local and authenticated:
   connects to;
 - SSH on TCP/22 uses the same `admin` password as the Web UI; changing it
   updates both services, and optional Ed25519 authorized keys may be added;
-- RTSP over TCP/554 is protected by Digest authentication using the same
-  administrator password; the retained OEM RTSP service is loopback-only;
+- this firmware serves no video or PTZ. The guard keeps the retained OEM RTSP
+  and ONVIF services on loopback (TCP/8554 and TCP/8899); without the media
+  daemon nothing else exposes them;
+- optional network time (SNTP) from the gateway or another server on the
+  camera's network; off by default, and unauthenticated beyond reply checks;
 - embedded DNS-SD advertises HTTP, SSH, RTSP, and the camera service under a
   configurable `.local` hostname;
 - IPv4 and IPv6 default routes are removed and continuously pruned. Connected
@@ -64,10 +71,6 @@ The target release surface is local and authenticated:
   routes through the pruned gateway, so management clients on another local
   subnet can still be answered without ever restoring a default route;
 - exact-binary `jooanipc` containment blocks vendor cloud/P2P egress;
-- NVRs such as Frigate control pan/tilt and presets over ONVIF, served on the
-  Web UI port under `/onvif/` and authenticated with a WS-Security digest of the
-  same `admin` password, so the password itself never crosses the network. The OEM ONVIF service, which checks no credentials,
-  stays on loopback.
 - the OEM speaker and motion-alarm playback paths stay muted.
 
 The generic image does not contain Wi-Fi credentials. It preserves the
@@ -133,29 +136,29 @@ plumbing — and whether the retrofit reimplements each one over its local,
 authenticated API. The retrofit deliberately prioritizes live control and
 security; several OEM conveniences are intentionally not (yet) reimplemented.
 
-Legend: ✓ implemented · ~ partial · ✗ not implemented.
+Legend: ✓ implemented · ~ partial · ✗ not implemented · → provided by the
+separate media daemon, not this firmware.
 
-| Capability (OEM app · `jooanipc`) | Retrofit (local WebUI, API, ONVIF) |
+| Capability (OEM app · `jooanipc`) | Retrofit (local WebUI, API) |
 |---|---|
 | **Video** | |
-| Live view, dual sensor — main 2304×1296 + sub 640×360 | ✓ in an NVR such as Frigate, over RTSP; the WebUI is a maintenance console and plays no video |
-| Direct RTSP for NVR / VLC clients | ✓ both streams, Digest auth (OEM RTSP kept loopback-only) |
+| Live view, dual sensor — main 2304×1296 + sub 640×360 | → in an NVR such as Frigate; the WebUI is a maintenance console and plays no video |
+| Direct RTSP for NVR / VLC clients | → (OEM RTSP kept loopback-only) |
 | JPEG snapshot | ✗ (`/api/v1/snapshot` returns 501 — the loopback-only OEM GoAhead backend is disabled) |
 | Video flip / mirror | ✗ |
 | Digital zoom | ✗ |
 | OSD timestamp / logo overlay | ~ time and time-zone are set; overlay on/off toggles not exposed |
 | **Pan / tilt** | |
-| Jog (up / down / left / right) | ✓ ONVIF: one ~17° nudge per press, e.g. Frigate's arrows |
-| Presets — save / recall / delete | ✓ ONVIF: Frigate recalls; `tools/onvif_presets.py` saves, renames and deletes |
-| Control from an NVR (Frigate) | ✓ ONVIF on port 80; no zoom or autotracking |
-| Home / calibration | ~ homes on every boot; save a preset for a go-to-home |
+| Jog (up / down / left / right) | → over ONVIF |
+| Presets — save / recall / delete | → |
+| Control from an NVR (Frigate) | → over ONVIF (OEM ONVIF kept loopback-only) |
+| Home / calibration | ~ homes on every boot |
 | Cruise / patrol schedule | ✗ |
 | Auto-tracking | ✗ |
 | Privacy / PTZ-hide schedule | ✗ |
 | **Audio** | |
 | Listen (camera microphone) | ✗ (retired with the in-browser media client) |
 | Two-way talk | ✗ (retired with the in-browser media client) |
-| Pause OEM microphone processing to save CPU | ✓ persistent, optional System setting with automatic recovery |
 | Speaker volume | ✗ |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |
@@ -169,7 +172,7 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | Playback | ✗ |
 | Card format / capacity | ✗ |
 | **Time** | |
-| Set clock (from phone / UTC) | ✓ |
+| Set clock (from phone / UTC) | ✓ manually, or by optional SNTP from a local server |
 | Time zone | ✓ (the burned-in OSD adopts it on the next restart) |
 | **Network** | |
 | Wi-Fi credentials | ✓ transactional stage / commit / roll back; prefers 5 GHz, falls back to 2.4 GHz when 5 GHz is weak/absent |
@@ -177,28 +180,28 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | Signal / RSSI readout | ✗ |
 | **System** | |
 | Firmware update | ✓ signed, sequence-gated |
-| Change password | ✓ (synchronized to SSH + RTSP) |
+| Change password | ✓ (synchronized to SSH) |
 | Reboot | ✗ (only implicitly, when a signed update is applied) |
 | Device info / UID | ~ version and state in `/api/v1/status` |
 
 Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
 (password-synchronized, optional Ed25519 keys), **mDNS** `.local` naming,
 **local-only egress** (continuous default-route pruning), exact-binary
-`jooanipc` **cloud/P2P containment**, and an authenticated **ONVIF** subset for
-NVRs.
+`jooanipc` **cloud/P2P containment**, and optional **network time** (SNTP).
 
 ## Status and limitations
 
 The implemented software target includes a maintenance Web UI over plain HTTP;
-Digest-protected RTSP for both sensors; ONVIF pan/tilt and presets for NVRs;
 transactional Wi-Fi; password-synchronized SSH with optional keys; embedded
-DNS-SD; signed, sequence-gated updates; and exact-binary `jooanipc` containment. Host/native and emulated tests exercise
+DNS-SD; optional SNTP network time; signed, sequence-gated updates; and
+exact-binary `jooanipc` containment. Media is out of scope since 0.2.22 (see
+above). Host/native and emulated tests exercise
 these contracts. The current `0.1.0` line also replaces the earlier expanded
 on-flash controller with a compressed core, persistent SSH recovery bundle, and
 a journaled single-runtime maintenance transaction for updates and migration.
 
 No release is supported or hardware-qualified yet. The software remains a
-pre-release until signed install/uninstall, migration, Wi-Fi, RTSP, ONVIF PTZ,
+pre-release until signed install/uninstall, migration, Wi-Fi, network time,
 SSH, routing, power-loss, and cold-recovery gates pass on the
 physical JA-A12 unit and a supported tag is published.
 

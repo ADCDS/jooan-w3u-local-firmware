@@ -19,22 +19,6 @@ typedef struct {
     int fd;
 } Conn;
 static JoanConfig G;
-/* One physical command order shared by ONVIF moves, presets, Stop retries. */
-static pthread_mutex_t ptz_lock=PTHREAD_MUTEX_INITIALIZER;
-static int ptz_stop_uncertain;
-static uint64_t ptz_stop_retry_ms;
-/* A recall moves pan and tilt together at 450 steps/s, and jooanipc answers
- * it only once the head has stopped (measured: the answer comes at
- * max(dx,dy)/450 s). That answer ends the travel, not a timer; the cap only
- * covers a lost answer, above a full 4080-step pan (9.1 s). */
-#define PTZ_TRAVEL_CAP_MS 15000u
-#define PTZ_SETTLE_MS 300u
-static char ptz_travel_op[65];
-static uint64_t ptz_travel_until;
-/* The newest recall or nudge asked for while the head travelled. It runs
- * once the head stops; older ones are dropped, so clicks never pile up. */
-static struct{int kind;unsigned token;char direction[8];uint64_t expires;}ptz_next;
-static uint64_t ptz_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000u+(uint64_t)t.tv_nsec/1000000u;}
 static pthread_mutex_t worker_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t worker_available=PTHREAD_COND_INITIALIZER;
 static unsigned worker_count;
@@ -52,21 +36,6 @@ static int error_json(Conn*c,int status,const char*code,const char*message){char
 static void json_escape(const unsigned char*in,size_t n,char*out,size_t cap){size_t i,o=0;for(i=0;i<n&&o+7<cap;i++){unsigned char x=in[i];if(x=='"'||x=='\\'){out[o++]='\\';out[o++]=x;}else if(x>=32&&x<127)out[o++]=x;else{o+=snprintf(out+o,cap-o,"\\u%04x",x);} }out[o]=0;}
 
 static int json_field(const unsigned char*body,size_t len,const char*key,char*out,size_t cap){char needle[96];const char*p,*e;size_t n;if(!body||snprintf(needle,sizeof(needle),"\"%s\"",key)>=(int)sizeof(needle))return-1;p=strstr((const char*)body,needle);if(!p||(size_t)(p-(const char*)body)>=len)return-1;p+=strlen(needle);while(*p==' '||*p=='\t')p++;if(*p++!=':')return-1;while(*p==' '||*p=='\t')p++;if(*p++!='"')return-1;e=p;while(*e&&*e!='"'&&(size_t)(e-(const char*)body)<len){if(*e=='\\')return-1;e++;}n=(size_t)(e-p);if(*e!='"'||n+1>cap)return-1;memcpy(out,p,n);out[n]=0;return 0;}
-/* This setting accepts one JSON boolean, rejecting duplicates/unknown keys. */
-static int audio_pause_boolean(const unsigned char *raw,size_t len,int *value)
-{
-    const char *p=(const char*)raw;
-    if(!p||memchr(raw,0,len))return -1;
-#define WS() while(*p&&isspace((unsigned char)*p))p++
-    WS();if(*p++!='{')return -1;WS();
-    if(strncmp(p,"\"enabled\"",9))return -1;
-    p+=9;WS();if(*p++!=':')return -1;WS();
-    if(!strncmp(p,"true",4)){*value=1;p+=4;}
-    else if(!strncmp(p,"false",5)){*value=0;p+=5;}else return -1;
-    WS();if(*p++!='}')return -1;WS();
-#undef WS
-    return *p||(size_t)(p-(const char*)raw)!=len?-1:0;
-}
 static int header_copy(const char*headers,const char*name,char*out,size_t cap){size_t nl=strlen(name);const char*p=headers;while(p&&*p){const char*e=strstr(p,"\r\n");size_t line=e?(size_t)(e-p):strlen(p);if(line>nl&&p[nl]==':'&&!strncasecmp(p,name,nl)){const char*v=p+nl+1;size_t n;while(v<p+line&&(*v==' '||*v=='\t'))v++;n=(size_t)((p+line)-v);if(n>=cap)n=cap-1;memcpy(out,v,n);out[n]=0;return 0;}if(!e)break;p=e+2;}return-1;}
 
 /* Browsers send every cookie for the parent domain too, so the Cookie header
@@ -79,101 +48,8 @@ static int host_ok(const char*host){char name[256],label[64],*colon;struct in_ad
 static int origin_ok(const JoanRequest*r,int required){char expected[520];if(!r->origin[0])return required?0:1;if(!host_ok(r->host))return 0;snprintf(expected,sizeof(expected),"http://%s",r->host);return !strcmp(r->origin,expected);}
 static int authorized(Conn*c,JoanRequest*r,JoanAuthz*a,int csrf){int rc;if(!origin_ok(r,0))return error_json(c,403,"origin_rejected","request origin is not this camera"),-1;rc=joan_auth_request(r,csrf,a);if(rc==-2)return error_json(c,403,"csrf_rejected","request token missing or invalid"),-1;if(rc)return error_json(c,401,"authentication_required","authentication required"),-1;return 0;}
 static int helper_json(Conn*c,const char*op,const char*path,const char*id){unsigned char*out=NULL;size_t n=0;char esc[4096],body[4352];unsigned timeout=!strcmp(op,"firmware-verify")?60u:!strcmp(op,"wifi-stage")?65u:15u;int rc=joan_run_helper(&G,op,path,id,&out,&n,timeout);if(rc){free(out);return error_json(c,502,"integration_failed","local integration operation failed");}if(!strcmp(op,"ssh-list")){if(n>1800)n=1800;json_escape(out?out:(unsigned char*)"",n,esc,sizeof(esc));snprintf(body,sizeof(body),"{\"ok\":true,\"authorized_keys\":\"%s\"}",esc);}else snprintf(body,sizeof(body),"{\"ok\":true,\"id\":\"%s\"}",id?id:"");free(out);return json(c,200,body);}
-/* A recall is under way or settling, or a request waits for the head. */
-static int ptz_busy(void){return ptz_travel_op[0]||ptz_travel_until>ptz_monotonic_ms()||ptz_next.kind;}
-/* 66485/66489 save/update record the live step counter and 66490 deletes:
- * none may run while the head is busy, or a preset is saved mid-move.
- * Recalls go through joan_ptz_goto.
- * 0 sent; 1 the head is busy; -2 same command pending; -1 no channel. */
-int joan_ptz_preset_request(unsigned command,const char*payload,char operation[65]){int rc;
-    if(command!=66485&&command!=66489&&command!=66490)return joan_mqtt_request(command,payload,operation);
-    pthread_mutex_lock(&ptz_lock);
-    rc=ptz_stop_uncertain||ptz_busy()?1:joan_mqtt_request(command,payload,operation);
-    pthread_mutex_unlock(&ptz_lock);
-    return rc;
-}
 static int private_routes(const char*input,char*out,size_t cap){char copy[1024],*save=NULL,*item;size_t used=0;if(!input||strlen(input)>=sizeof(copy))return-1;snprintf(copy,sizeof(copy),"%s",input);for(item=strtok_r(copy,", ", &save);item;item=strtok_r(NULL,", ",&save)){char*slash=strchr(item,'/');unsigned prefix;struct in_addr a4;struct in6_addr a6;int ok=0;if(!slash)return-1;*slash++=0;prefix=(unsigned)strtoul(slash,NULL,10);if(inet_pton(AF_INET,item,&a4)==1&&prefix>=8&&prefix<=32){uint32_t a=ntohl(a4.s_addr);ok=((a>>24)==10)||((a>>20)==0xac1)||((a>>16)==0xc0a8);}else if(inet_pton(AF_INET6,item,&a6)==1&&prefix>=7&&prefix<=128)ok=(a6.s6_addr[0]&0xfe)==0xfc;if(!ok)return-1;{int n=snprintf(out+used,cap-used,"%s/%u\n",item,prefix);if(n<=0||(size_t)n>=cap-used)return-1;used+=(size_t)n;}}return used?0:-1;}
 static unsigned release_sequence(void){unsigned char*raw=NULL;size_t i,n=0;uint64_t value=0;if(!G.release_sequence_path[0]||joan_read_file(G.release_sequence_path,&raw,&n,32)||!n)goto done;if(raw[n-1]=='\n')n--;if(!n)goto done;for(i=0;i<n;i++){if(raw[i]<'0'||raw[i]>'9'){value=0;goto done;}value=value*10u+(unsigned)(raw[i]-'0');if(value>0xffffffffu){value=0;goto done;}}done:free(raw);return(unsigned)value;}
-
-static int ptz_stop_locked(void)
-{
-    int rc=joan_oem_ptz(&G,NULL,0);
-    if(rc){ptz_stop_uncertain=1;ptz_stop_retry_ms=ptz_monotonic_ms()+1000;}
-    else ptz_stop_uncertain=0;
-    return rc;
-}
-/* 0 moved and stopped; -1 the move or stop was not confirmed. */
-static int ptz_nudge_locked(const char*direction)
-{
-    struct timespec step={0,350000000L};
-    if(joan_oem_ptz(&G,direction,3)){ptz_stop_uncertain=1;ptz_stop_retry_ms=ptz_monotonic_ms();return -1;}
-    nanosleep(&step,NULL);
-    return ptz_stop_locked()?-1:0;
-}
-static int ptz_goto_locked(unsigned token)
-{
-    char payload[96];
-    snprintf(payload,sizeof(payload),"{\"cmd\":66491,\"cmd_type\":\"request\",\"coordinateID\":%u,\"mot_index\":0}",token);
-    if(joan_mqtt_request(66491,payload,ptz_travel_op)){ptz_travel_op[0]=0;return -1;}
-    ptz_travel_until=ptz_monotonic_ms()+PTZ_TRAVEL_CAP_MS;
-    return 0;
-}
-static void ptz_hold(int kind,unsigned token,const char*direction)
-{
-    ptz_next.kind=kind;ptz_next.token=token;
-    snprintf(ptz_next.direction,sizeof(ptz_next.direction),"%s",direction?direction:"");
-    ptz_next.expires=ptz_monotonic_ms()+20000u;
-}
-static void *ptz_expiry_loop(void *unused)
-{
-    (void)unused;
-    for(;;){struct timespec delay={0,100000000L};char reply[2049];uint64_t now;nanosleep(&delay,NULL);
-        pthread_mutex_lock(&ptz_lock);now=ptz_monotonic_ms();
-        if(ptz_stop_uncertain&&now>=ptz_stop_retry_ms)
-            (void)ptz_stop_locked();
-        if(ptz_travel_op[0]&&joan_mqtt_operation(ptz_travel_op,reply,sizeof(reply))!=1){
-            ptz_travel_op[0]=0;ptz_travel_until=now+PTZ_SETTLE_MS;} /* answered: the head stopped */
-        else if(ptz_travel_op[0]&&now>=ptz_travel_until){
-            joan_mqtt_abandon(ptz_travel_op);ptz_travel_op[0]=0;}
-        if(ptz_next.kind&&now>=ptz_next.expires)ptz_next.kind=0;
-        if(ptz_next.kind&&!ptz_stop_uncertain&&!ptz_travel_op[0]&&ptz_travel_until<=now){
-            int kind=ptz_next.kind;ptz_next.kind=0;
-            if(kind==1)(void)ptz_goto_locked(ptz_next.token);
-            else (void)ptz_nudge_locked(ptz_next.direction);
-        }
-        pthread_mutex_unlock(&ptz_lock);
-    }
-    return NULL;
-}
-
-/* Answered at once, because the NVR waits on each answer and the head can be
- * busy for seconds. 0 sent, or held until the head stops; 1 a stop is
- * unconfirmed; -1 no command channel. */
-int joan_ptz_goto(unsigned token)
-{
-    int rc=0;
-    pthread_mutex_lock(&ptz_lock);
-    if(ptz_stop_uncertain)rc=1;
-    else if(ptz_busy())ptz_hold(1,token,NULL);
-    else rc=ptz_goto_locked(token);
-    pthread_mutex_unlock(&ptz_lock);
-    return rc;
-}
-
-/* One ONVIF press is one coarse nudge, timed here instead of by the
- * client's Stop: the live picture lags seconds behind, so a hold cannot be
- * aimed, and a fixed step lands the same every time. Pressed while a recall
- * travels, it waits for the head to stop. 0 moved and stopped, or held;
- * 1 a stop is unconfirmed; -1 the move or stop was not confirmed. */
-int joan_ptz_nudge(const char*direction)
-{
-    int rc=1;
-    pthread_mutex_lock(&ptz_lock);
-    if(!ptz_stop_uncertain){if(ptz_busy()){ptz_hold(2,0,direction);rc=0;}else rc=ptz_nudge_locked(direction);}
-    pthread_mutex_unlock(&ptz_lock);
-    return rc;
-}
-
 static int static_file(Conn*c,const char*url){char path[600];unsigned char*data;size_t n;const char*type="application/octet-stream";if(strstr(url,".."))return error_json(c,404,"asset_not_found","asset not found");if(!strcmp(url,"/"))url="/index.html";if(snprintf(path,sizeof(path),"%s%s",G.web_dir,url)>=(int)sizeof(path)||joan_read_file(path,&data,&n,2*1024*1024))return error_json(c,404,"asset_not_found","asset not found");if(strstr(path,".html"))type="text/html; charset=utf-8";else if(strstr(path,".css"))type="text/css; charset=utf-8";else if(strstr(path,".js"))type="application/javascript; charset=utf-8";else if(strstr(path,".webmanifest"))type="application/manifest+json";else if(strstr(path,".svg"))type="image/svg+xml";response(c,200,type,data,n,"Cache-Control: public, max-age=300\r\n");free(data);return 0;}
 
 /* Run an integration op and return its JSON output verbatim (like routes-list). */
@@ -193,7 +69,6 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     else if(!strcmp(r->path,"/api/v1/time"))snprintf(r->path,sizeof(r->path),"/api/time");
     else if(!strcmp(r->path,"/api/v1/timezone"))snprintf(r->path,sizeof(r->path),"/api/timezone");
     else if(!strcmp(r->path,"/api/v1/network/wifi"))snprintf(r->path,sizeof(r->path),!strcmp(r->method,"POST")?"/api/wifi/stage":!strcmp(r->method,"PUT")?"/api/wifi/commit":"/api/wifi/rollback");
-    else if(!strcmp(r->path,"/api/v1/streams"))snprintf(r->path,sizeof(r->path),"/api/streams");
     else if(!strcmp(r->path,"/api/v1/ssh/authorized-keys"))snprintf(r->path,sizeof(r->path),"/api/ssh/keys");
     else if(!strcmp(r->path,"/api/v1/update"))snprintf(r->path,sizeof(r->path),!strcmp(r->method,"POST")?"/api/firmware/stage":"/api/firmware/apply");
     if(!strcmp(r->path,"/api/v1/setup/status")){
@@ -203,15 +78,9 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/health"))return json(c,200,"{\"ok\":true}");
     if(!strcmp(r->path,"/api/login")&&!strcmp(r->method,"POST")){int rc;if(json_field(r->body,r->content_length,"username",x,sizeof(x))||json_field(r->body,r->content_length,"password",y,sizeof(y)))return error_json(c,400,"invalid_json","username and password are required");rc=joan_auth_login(&G,r->remote,x,y,&a);memset(y,0,sizeof(y));if(rc==-2)return error_json(c,429,"rate_limited","try later");if(rc)return error_json(c,401,"invalid_credentials","invalid credentials");snprintf(body,sizeof(body),"{\"ok\":true,\"csrf\":\"%s\",\"default_password_warning\":%s}",a.csrf,a.must_change?"true":"false");snprintf(x,sizeof(x),"Set-Cookie: joan_session=%s; Path=/; HttpOnly; SameSite=Strict\r\n",a.token);return response(c,200,"application/json",body,strlen(body),x);}
     if(authorized(c,r,&a,strcmp(r->method,"GET")&&strcmp(r->method,"HEAD")))return 0;
-    if(!strcmp(r->path,"/api/v1/system/audio-pause")){
-        if(!strcmp(r->method,"PUT")){
-            int enabled;
-            if(audio_pause_boolean(r->body,r->content_length,&enabled))return error_json(c,400,"invalid_audio_pause","enabled must be a JSON boolean");
-            if(joan_audio_pause_set(enabled))return error_json(c,500,"audio_pause_unavailable","could not save audio pause setting");
-        }else if(strcmp(r->method,"GET"))return error_json(c,400,"invalid_method","use GET or PUT");
-        joan_audio_pause_status(body,sizeof(body));return json(c,200,body);
-    }
-    if(!strcmp(r->path,"/api/status")){unsigned char*routes=NULL;size_t routes_len=0;const char*routes_json="{\"cidrs\":[]}";if(!joan_run_helper(&G,"routes-list",NULL,NULL,&routes,&routes_len,2)&&routes_len&&routes_len<512&&routes[0]=='{')routes_json=(char*)routes;snprintf(body,sizeof(body),"{\"version\":\"%s\",\"state\":\"ready\",\"local_only\":true,\"active_routes\":%s,\"default_password_warning\":%s,\"ssh_password_sync\":%s,\"rtsp_password_sync\":%s,\"features\":{\"rtsp\":true,\"ptz\":\"onvif\",\"ssh\":\"password-synchronized\",\"mdns\":\"%s\"},\"mqtt_bridge\":\"%s\",\"https_cloud_bridge\":{\"supported\":false,\"blocker\":\"OEM trust/pinning contract not recovered\"}}",JOAN_VERSION,routes_json,a.must_change?"true":"false",joan_auth_ssh_synchronized(&G)?"true":"false",joan_auth_rtsp_synchronized(&G)?"true":"false",joan_mdns_status(),joan_mqtt_bridge_status());free(routes);return json(c,200,body);}
+    if(!strcmp(r->path,"/api/status")){unsigned char*routes=NULL;size_t routes_len=0;const char*routes_json="{\"cidrs\":[]}";char ntp[512];joan_ntp_status(ntp,sizeof(ntp));if(!joan_run_helper(&G,"routes-list",NULL,NULL,&routes,&routes_len,2)&&routes_len&&routes_len<512&&routes[0]=='{')routes_json=(char*)routes;snprintf(body,sizeof(body),"{\"version\":\"%s\",\"state\":\"ready\",\"local_only\":true,\"active_routes\":%s,\"default_password_warning\":%s,\"ssh_password_sync\":%s,\"rtsp_password_sync\":%s,\"features\":{\"ssh\":\"password-synchronized\",\"mdns\":\"%s\",\"media\":\"external\"},\"ntp\":%s,\"mqtt_bridge\":\"%s\",\"https_cloud_bridge\":{\"supported\":false,\"blocker\":\"OEM trust/pinning contract not recovered\"}}",JOAN_VERSION,routes_json,a.must_change?"true":"false",joan_auth_ssh_synchronized(&G)?"true":"false",joan_auth_rtsp_synchronized(&G)?"true":"false",joan_mdns_status(),ntp,joan_mqtt_bridge_status());free(routes);return json(c,200,body);}
+    if(!strcmp(r->path,"/api/time")&&!strcmp(r->method,"GET")){char ntp[512];joan_ntp_status(ntp,sizeof(ntp));snprintf(body,sizeof(body),"{\"epoch\":%lld,\"ntp\":%s}",(long long)time(NULL),ntp);return json(c,200,body);}
+    if(!strcmp(r->path,"/api/time")&&!strcmp(r->method,"PUT")&&!json_field(r->body,r->content_length,"ntp",x,sizeof(x))){if(joan_ntp_configure(x))return error_json(c,400,"invalid_ntp","ntp must be gateway, an IPv4 address with optional :port, or empty");joan_ntp_status(body,sizeof(body));return json(c,200,body);}
     if(!strcmp(r->path,"/api/time")&&!strcmp(r->method,"PUT")){char epoch[24];char*ep=NULL;long long v;if(json_field(r->body,r->content_length,"epoch",epoch,sizeof(epoch)))return error_json(c,400,"invalid_json","epoch required");v=strtoll(epoch,&ep,10);if(!ep||*ep||v<1577836800LL||v>4102444800LL)return error_json(c,400,"invalid_time","out of range");if(joan_run_helper(&G,"time-set",NULL,epoch,NULL,NULL,10))return error_json(c,502,"time_set_failed","clock set failed");snprintf(body,sizeof(body),"{\"ok\":true,\"epoch\":%lld}",(long long)time(NULL));return json(c,200,body);}
     if(!strcmp(r->path,"/api/timezone")&&!strcmp(r->method,"PUT")){char gmt[16],s;int hh,mm,n=0;if(json_field(r->body,r->content_length,"gmt_tz",gmt,sizeof(gmt)))return error_json(c,400,"invalid_json","gmt_tz required");if(sscanf(gmt,"GMT%c%2d:%2d%n",&s,&hh,&mm,&n)!=3||n!=9||gmt[9]||(s!='+'&&s!='-')||hh>14||mm>59)return error_json(c,400,"invalid_timezone","bad gmt_tz");if(joan_run_helper(&G,"timezone-set",NULL,gmt,NULL,NULL,10))return error_json(c,502,"timezone_set_failed","set failed");snprintf(body,sizeof(body),"{\"ok\":true,\"gmt_tz\":\"%s\"}",gmt);return json(c,200,body);}
     if(!strcmp(r->path,"/api/session-info")){snprintf(body,sizeof(body),"{\"authenticated\":true,\"csrf\":\"%s\",\"default_password_warning\":%s}",a.csrf,a.must_change?"true":"false");return json(c,200,body);}
@@ -234,7 +103,6 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
         memset(x,0,sizeof(x));memset(y,0,sizeof(y));memset(escaped,0,sizeof(escaped));memset(command,0,sizeof(command));
         return json(c,200,rtsp_ok?"{\"ok\":true,\"login_required\":true,\"rtsp_password_sync\":\"pending\"}":"{\"ok\":true,\"login_required\":true,\"rtsp_password_sync\":\"unavailable\"}");
     }
-    if(!strcmp(r->path,"/api/streams")&&!strcmp(r->method,"GET")){char rtsp_host[256];snprintf(rtsp_host,sizeof(rtsp_host),"%s",r->host);if(rtsp_host[0]=='['){char*end=strchr(rtsp_host,']');if(end)end[1]=0;}else{char*port=strrchr(rtsp_host,':');if(port)*port=0;}snprintf(body,sizeof(body),"{\"streams\":[{\"id\":\"main\",\"rtsp\":\"rtsp://%s/live/ch0\",\"width\":2304,\"height\":1296},{\"id\":\"sub\",\"rtsp\":\"rtsp://%s/live/ch1\",\"width\":640,\"height\":360}]}",rtsp_host,rtsp_host);return json(c,200,body);}
     if(!strcmp(r->path,"/api/wifi/stage")&&!strcmp(r->method,"POST")){if(!r->body||!r->content_length)return json(c,400,"{\"error\":\"configuration required\"}");if(joan_stage_blob(&G,"wifi",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"wifi-stage",path,id);}
     if(!strcmp(r->path,"/api/wifi/commit")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"wifi-commit",NULL,id);}
     if(!strcmp(r->path,"/api/wifi/rollback")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"DELETE"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"wifi-rollback",NULL,id);}
@@ -251,18 +119,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     return error_json(c,404,"route_not_found","route not found");
 }
 
-/* ONVIF clients authenticate each SOAP request in its own header (onvif.c),
- * so no cookie or CSRF token applies. A page from another origin is still
- * refused, and service addresses are only built from a Host this camera
- * answers to. */
-static void onvif_route(Conn*c,JoanRequest*r){char host[256],*reply=NULL;size_t n=0;int status;
-    if(r->origin[0]&&!origin_ok(r,0)){error_json(c,403,"origin_rejected","request origin is not this camera");return;}
-    if(host_ok(r->host))snprintf(host,sizeof(host),"%s",r->host);
-    else{struct sockaddr_in a;socklen_t l=sizeof(a);char ip[INET_ADDRSTRLEN];if(getsockname(c->fd,(struct sockaddr*)&a,&l)||!inet_ntop(AF_INET,&a.sin_addr,ip,sizeof(ip)))snprintf(ip,sizeof(ip),"127.0.0.1");snprintf(host,sizeof(host),"%s:%u",ip,G.port);}
-    status=joan_onvif_handle(&G,r,host,&reply,&n);
-    if(status<0){error_json(c,500,"onvif_failed","ONVIF response could not be built");return;}
-    response(c,status,"application/soap+xml; charset=utf-8",reply,n,NULL);free(reply);}
-static void serve(Conn*c,const char*remote){JoanRequest r;int parsed=parse_request(c,&r);if(parsed){if(parsed==-3)return;if(parsed==-2)error_json(c,413,"payload_too_large","request body exceeds route limit");else error_json(c,400,"bad_request","malformed request or unsupported transfer encoding");return;}snprintf(r.remote,sizeof(r.remote),"%s",remote);if(!strncmp(r.path,"/onvif/",7))onvif_route(c,&r);else if(!strncmp(r.path,"/api/",5))route(c,&r);else static_file(c,r.path);if(r.body){memset(r.body,0,r.content_length);free(r.body);}}
+static void serve(Conn*c,const char*remote){JoanRequest r;int parsed=parse_request(c,&r);if(parsed){if(parsed==-3)return;if(parsed==-2)error_json(c,413,"payload_too_large","request body exceeds route limit");else error_json(c,400,"bad_request","malformed request or unsupported transfer encoding");return;}snprintf(r.remote,sizeof(r.remote),"%s",remote);if(!strncmp(r.path,"/api/",5))route(c,&r);else static_file(c,r.path);if(r.body){memset(r.body,0,r.content_length);free(r.body);}}
 
 typedef struct {
     int fd;
@@ -279,9 +136,7 @@ static void *serve_worker(void *argument)
     close(c.fd);pthread_mutex_lock(&worker_lock);if(worker_count)worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);free(worker);return NULL;
 }
 
-int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;pthread_t ptz_thread;G=*cfg;pthread_mutex_lock(&worker_lock);server_stopping=0;pthread_mutex_unlock(&worker_lock);
-    if(pthread_create(&ptz_thread,NULL,ptz_expiry_loop,NULL))return-1;
-    pthread_detach(ptz_thread);
+int joan_server_run(const JoanConfig*cfg){int s,one=1;struct sockaddr_in a;G=*cfg;pthread_mutex_lock(&worker_lock);server_stopping=0;pthread_mutex_unlock(&worker_lock);
     s=socket(AF_INET,SOCK_STREAM,0);if(s<0)return-1;server_fd=s;setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons((uint16_t)cfg->port);if(inet_pton(AF_INET,cfg->bind_addr,&a.sin_addr)!=1||bind(s,(struct sockaddr*)&a,sizeof(a))||listen(s,8)){close(s);server_fd=-1;return-1;}
     for(;;){struct sockaddr_in peer;socklen_t pl=sizeof(peer);int fd=accept(s,(struct sockaddr*)&peer,&pl);Worker*w;pthread_t t;if(fd<0){if(errno==EINTR)continue;break;}pthread_mutex_lock(&worker_lock);while(worker_count>=MAX_WORKERS&&!server_stopping)pthread_cond_wait(&worker_available,&worker_lock);if(server_stopping){pthread_mutex_unlock(&worker_lock);close(fd);break;}worker_count++;pthread_mutex_unlock(&worker_lock);w=calloc(1,sizeof(*w));if(!w){pthread_mutex_lock(&worker_lock);worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);close(fd);continue;}w->fd=fd;inet_ntop(AF_INET,&peer.sin_addr,w->remote,sizeof(w->remote));
         if(pthread_create(&t,NULL,serve_worker,w)){pthread_mutex_lock(&worker_lock);worker_count--;pthread_cond_signal(&worker_available);pthread_mutex_unlock(&worker_lock);close(fd);free(w);continue;}pthread_detach(t);

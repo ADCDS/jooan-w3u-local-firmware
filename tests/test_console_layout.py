@@ -1,4 +1,4 @@
-"""The Web UI is a maintenance console: NVRs watch, steer and record."""
+"""The Web UI is a platform console: the media daemon serves NVRs."""
 
 from html.parser import HTMLParser
 from pathlib import Path
@@ -72,13 +72,19 @@ class ConsoleLayoutTests(unittest.TestCase):
         self.assertEqual(sorted(rail), ["network", "system"])
         self.assertEqual(by_id(self.root, "console")["attrs"]["data-zone"], "system")
 
-    def test_nvr_details_are_visible_in_system_on_phone(self):
+    def test_media_belongs_to_the_media_daemon(self):
         system = by_id(self.root, "zone-system")
-        nvr = next(card for card in cards(system) if heading(card) == "NVR")
-        self.assertIn(by_id(self.root, "streams"), list(walk(nvr)))
-        self.assertNotIn("desktop-only", nvr["attrs"].get("class", "").split())
+        media = next(card for card in cards(system) if heading(card) == "Media")
+        self.assertNotIn("desktop-only", media["attrs"].get("class", "").split())
         app = (ROOT / "web/app.js").read_text(encoding="utf-8")
-        self.assertIn("/onvif/device_service", app)
+        for gone in ("/onvif/", "/api/v1/streams", "/api/v1/system/audio-pause"):
+            self.assertNotIn(gone, app)
+
+    def test_network_time_is_configurable_in_system(self):
+        system = by_id(self.root, "zone-system")
+        clock = next(card for card in cards(system) if heading(card) == "Camera time")
+        ids = {node["attrs"].get("id") for node in walk(clock)}
+        self.assertTrue({"ntp-state", "ntp-server", "ntp-save"} <= ids)
 
     def test_no_media_client_is_shipped(self):
         app = (ROOT / "web/app.js").read_text(encoding="utf-8")

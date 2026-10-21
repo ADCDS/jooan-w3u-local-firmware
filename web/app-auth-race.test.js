@@ -75,7 +75,6 @@ globalThis.fetch = (path, options = {}) => {
     return ok({ csrf: 'S1' });
   }
   if (path === '/api/v1/status') return ok({ features: {}, ssh_password_sync: true });
-  if (path === '/api/v1/streams') return ok({ streams: [] });
   if (path === '/api/v1/network/mdns') return ok({ address: 'camera.local', hostname: 'camera' });
   if (path === '/api/v1/ssh/authorized-keys') return ok({ authorized_keys: '' });
   if (path === '/api/v1/time') return ok({ epoch: 1730000000 });

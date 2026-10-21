@@ -181,7 +181,7 @@ static Bucket *bucket_for(const char *remote, time_t now)
     return &buckets[free_i];
 }
 
-int joan_auth_throttled(const char *remote)
+static int joan_auth_throttled(const char *remote)
 {
     Bucket *b; time_t now = auth_now(); int limited;
     pthread_mutex_lock(&lock);
@@ -192,7 +192,7 @@ int joan_auth_throttled(const char *remote)
     return limited;
 }
 
-void joan_auth_note(const char *remote, int ok)
+static void joan_auth_note(const char *remote, int ok)
 {
     Bucket *b;
     pthread_mutex_lock(&lock);

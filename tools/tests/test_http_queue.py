@@ -12,7 +12,7 @@ def http_get(path):
     response=connection.getresponse();response.read();connection.close();return response.status
 
 with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as staging:
-    env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_PORT':str(PORT),'JOAN_MQTT_PORT':'0','JOAN_RTSP_PORT':'18555','JOAN_MDNS':'0'}
+    env=os.environ|{'JOAN_STATE_DIR':state,'JOAN_STAGING_DIR':staging,'JOAN_WEB_DIR':str(ROOT/'web'),'JOAN_INTEGRATION_HELPER':str(HELPER),'JOAN_PORT':str(PORT),'JOAN_MQTT_PORT':'0','JOAN_MDNS':'0'}
     process=subprocess.Popen([BIN,'--plain-mqtt','--bind','127.0.0.1'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:
         for _ in range(100):
