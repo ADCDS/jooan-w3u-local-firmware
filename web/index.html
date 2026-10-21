@@ -22,7 +22,7 @@
 
   <section id="setup" class="card narrow hidden">
     <h2>Change administrator password</h2>
-    <p>Shared with SSH and RTSP; use a long password.</p>
+    <p>Shared with SSH; use a long password.</p>
     <form id="password-form">
       <input type="hidden" name="username" value="admin" autocomplete="username">
       <label>Current password<input name="old_password" type="password" autocomplete="current-password" required></label>
@@ -92,21 +92,13 @@
           <div id="state-detail" class="kv gap-top"></div>
         </div>
         <div class="card">
-          <h2>NVR</h2>
-          <p class="muted">Record and watch in an NVR such as Frigate; it pans and recalls presets over ONVIF. User admin, the administrator password.</p>
-          <div id="streams" class="kv stack"></div>
-        </div>
-        <div class="card">
-          <h2>Audio processing</h2>
-          <p class="muted">Pausing OEM microphone processing reduces CPU use. OEM audio capture stops; video continues. The setting is saved on the camera.</p>
-          <label class="check"><input id="audio-pause-enabled" type="checkbox"> Pause OEM audio processing</label>
-          <button id="audio-pause-save">Save audio setting</button>
-          <output id="audio-pause-status" role="status" aria-live="polite"></output>
+          <h2>Media</h2>
+          <p class="muted">Video, ONVIF pan/tilt and presets come from the media daemon that replaces jooanipc after boot, on its own ports and credentials. Point the NVR there; this console manages the platform.</p>
         </div>
         <div class="card">
           <h2>Administrator password</h2>
           <div class="kv">
-            <div class="row"><span>Shared with</span><b>Web &middot; ONVIF &middot; RTSP &middot; SSH</b></div>
+            <div class="row"><span>Shared with</span><b>Web &middot; SSH</b></div>
             <div class="row"><span>State</span><b id="pw-state">&mdash;</b></div>
           </div>
           <button id="change-password" class="primary">Change password</button>
@@ -135,7 +127,10 @@
           <div class="kv">
             <div class="row"><span>This device</span><b id="time-local">&mdash;</b></div>
             <div class="row"><span>Camera clock</span><b id="time-camera">&mdash;</b></div>
+            <div class="row"><span>Network time</span><b id="ntp-state">&mdash;</b></div>
           </div>
+          <label>NTP server<input id="ntp-server" placeholder="gateway, an IPv4 address, or empty for off" autocomplete="off"></label>
+          <button id="ntp-save">Save NTP server</button>
           <button id="time-sync" class="primary">Sync time &amp; zone to this device</button>
           <label>Or set a specific time<input id="time-manual" type="datetime-local" step="1"></label>
           <button id="time-set-manual">Set this time</button>

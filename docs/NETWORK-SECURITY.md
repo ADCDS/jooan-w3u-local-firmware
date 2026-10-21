@@ -8,21 +8,23 @@ denies:
 - camera-to-Internet traffic;
 - traffic from untrusted LAN, guest, and IoT clients to the camera;
 - camera-initiated connections to other LAN devices, except explicitly needed
-  local NVR, DNS, and time services;
+  local NVR, DNS, and time services (UDP/123 to the configured NTP server);
 - IPv6 paths that would bypass equivalent IPv4 restrictions.
 
-Allow administration only from named management hosts. Allow RTSP only from the
-NVR/viewers that need it. Keep this policy active during installation, every
-reboot, and recovery.
+Allow administration only from named management hosts. Allow the media
+daemon's video and ONVIF ports only from the NVR/viewers that need them. Keep
+this policy active during installation, every reboot, and recovery.
 
 ## Target listener policy
 
 | Port | Protocol | Purpose | Policy |
 |---:|---|---|---|
-| 80/tcp | HTTP | UI, `/api/v1/` and ONVIF `/onvif/` | Authenticated (session, or a WS-Security digest for ONVIF); unencrypted, see [Plain HTTP](#plain-http) |
+| 80/tcp | HTTP | UI and `/api/v1/` | Authenticated session; unencrypted, see [Plain HTTP](#plain-http) |
 | 5353/udp | mDNS/DNS-SD | Host and HTTP/SSH/RTSP/camera discovery | Link-local multicast only |
 | 22/tcp | SSH | Administrative shell | Synchronized `admin` password; optional keys |
-| 554/tcp | RTSP | Local video | TCP transport; restrict to approved viewers |
+
+The separate media daemon adds its own listeners and credentials; it is not
+part of this table.
 
 The runtime removes IPv4/IPv6 default routes, filters public resolvers, kills
 public GoAhead/telnet after the boot hook runs, and confines the exact
@@ -32,12 +34,12 @@ the device-wide inbound and outbound boundary.
 
 The runtime supplies continuous `telnetd` suppression, password-synchronized
 SSH with optional keys, the Web UI on TCP/80, embedded DNS-SD, and an
-exact-hash `jooanipc` containment DSO. The daemon owns public RTSP/TCP
-554 and requires Digest authentication; the guard remaps the retained OEM RTSP
-service to loopback TCP/8554 for the proxy. The OEM ONVIF
-service accepts any credentials, so the guard keeps it on loopback TCP/8899.
-NVRs use the daemon's authenticated ONVIF subset on port 80 instead (see
-[API](API.md#onvif-for-nvrs)).
+exact-hash `jooanipc` containment DSO. The guard keeps the retained OEM RTSP
+service on loopback TCP/8554 and the OEM ONVIF service, which accepts any
+credentials, on loopback TCP/8899. This firmware serves no video or PTZ
+itself: the separate media daemon,
+[jooanipc-open](https://github.com/ADCDS/jooanipc-open), replaces `jooanipc`
+after boot (see [API](API.md#media)). Without it, nothing exposes video or PTZ.
 
 ## Early-boot OEM exposure
 
@@ -56,13 +58,13 @@ the port as a workaround.
 
 Fresh generic installations begin with `admin` / `admin`, a publicly known
 value. It remains valid, setup is not forced, and the Web UI does not warn
-about it; the System zone reports whether it is still in use. Rotate it. The same password is synchronized to SSH and RTSP; optional Ed25519
-keys supplement SSH password authentication. Never place a fresh unit on a
-shared LAN.
+about it; the System zone reports whether it is still in use. Rotate it. The
+same password is synchronized to SSH; optional Ed25519 keys supplement SSH
+password authentication. Never place a fresh unit on a shared LAN.
 
 ## Plain HTTP
 
-The Web UI, `/api/v1/` and ONVIF are plain HTTP on TCP/80. Releases up to
+The Web UI and `/api/v1/` are plain HTTP on TCP/80. Releases up to
 0.2.17 served them over HTTPS with a per-device certificate. That was dropped:
 the camera is only reached from its own isolated network, day-to-day use is an
 NVR speaking ONVIF, and the certificate meant either a browser warning or a
@@ -71,13 +73,10 @@ public name and a renewal job to keep alive.
 What crosses the network in the clear:
 
 - the administrator password, once per sign-in and on a password change. It is
-  also the SSH, RTSP and ONVIF password;
+  also the SSH password;
 - the session cookie, on every request. Whoever reads it acts as the
   administrator until the session ends or the password changes;
 - whatever a request changes, such as a new Wi-Fi passphrase or SSH keys.
-
-ONVIF and RTSP never send the password itself, only digests of it. Their
-video and commands were never encrypted.
 
 So sign in only from a management host on the camera's trusted segment, or
 through a VPN that encrypts the path, never across a network you do not
@@ -91,6 +90,15 @@ its key at the first start. Browsers that opened the HTTPS page by name
 (HSTS) and keep asking for `https://`, which no longer answers. Use the address
 instead, which HSTS never applies to, or clear the name's HSTS entry in that
 browser.
+
+## Network time
+
+Network time is off by default. When set, `joan-daemon` sends SNTP requests on
+UDP/123 to the gateway or to the configured IPv4 address. Replies must echo a
+random origin cookie and pass header, NTP-era and timing checks, but SNTP is
+otherwise unauthenticated: a host on the path can still move the camera's
+clock. Use a server on the camera's own network, and let the router/VLAN allow
+UDP/123 from the camera to that server only.
 
 ## Wi-Fi
 
@@ -137,7 +145,8 @@ After installation and after each update:
 4. verify nothing answers on TCP/443;
 5. verify login throttling and session expiry;
 6. verify SSH `admin` accepts the synchronized password and optional keys;
-7. verify DNS-SD records, direct RTSP, and ONVIF authentication;
+7. verify DNS-SD records, and that OEM RTSP (TCP/8554) and ONVIF (TCP/8899)
+   answer only on loopback;
 8. verify no IPv4/IPv6 default route or public resolver remains;
 9. verify attempted vendor cloud/P2P connections cannot leave the VLAN;
 10. test IPv4 and IPv6 separately.

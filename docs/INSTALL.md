@@ -4,6 +4,11 @@
 physical JA-A12 promotion gates pass. Installation writes only `/opt`; it does
 not replace the bootloader, kernel, rootfs, appfs, calibration, or identity.
 
+This firmware is the platform only. Video, ONVIF, pan/tilt and presets come
+from the separate media daemon,
+[jooanipc-open](https://github.com/ADCDS/jooanipc-open), installed and
+configured per its own documentation; without it the camera exposes no video.
+
 ## Before installation
 
 1. Put the camera and workstation on an isolated VLAN with no Internet route.
@@ -67,8 +72,8 @@ password: admin
 
 The public initial password remains valid; setup is not forced. The UI/API
 shows a persistent warning until it is changed. Change it promptly. The same
-`admin` password is synchronized to SSH and RTSP; optional Ed25519 authorized
-keys supplement SSH password authentication.
+`admin` password is synchronized to SSH; optional Ed25519 authorized keys
+supplement SSH password authentication.
 
 An early `0.1` Web password is preserved during upgrade. Because its one-way
 hash cannot generate the SSH hash, status reports `ssh_password_sync: false`
@@ -85,9 +90,9 @@ routes; connected subnets and explicitly allowed RFC1918/ULA routes remain.
 After a cold reboot:
 
 1. verify warning state, login throttling, and session expiry;
-2. verify both direct RTSP streams in an NVR;
-3. verify ONVIF from the NVR (Frigate: arrows nudge, presets recall) and preset
-   save/delete with `tools/onvif_presets.py`;
+2. verify the OEM RTSP (TCP/8554) and ONVIF (TCP/8899) services answer only on
+   loopback;
+3. if network time is set, verify `GET /api/v1/time` reports it synchronized;
 4. verify SSH `admin` password synchronization and optional keys;
 5. verify DNS-SD announcements for HTTP, SSH, RTSP, and the camera service;
 6. verify no IPv4/IPv6 default route and no public resolver remains;

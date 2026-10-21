@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.21"
+#define JOAN_VERSION "0.2.22"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -23,9 +23,6 @@ typedef struct {
     int plain_mqtt;
     char integration_helper[256];
     unsigned mqtt_port;
-    unsigned rtsp_port;
-    unsigned rtsp_proxy_port;
-    unsigned oem_onvif_port;
     int mdns_enabled;
     unsigned mdns_port;
 } JoanConfig;
@@ -76,16 +73,10 @@ int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out);
 int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
                               const char *old_password, const char *new_password);
 void joan_auth_logout(const JoanAuthz *auth);
-/* Failure budget per remote address, shared with the Web login, for
- * credentials checked outside it (ONVIF). */
-int joan_auth_throttled(const char *remote);
-void joan_auth_note(const char *remote, int ok);
 
 int joan_run_helper(const JoanConfig *cfg, const char *operation,
                     const char *argument_path, const char *id,
                     unsigned char **output, size_t *output_len, unsigned timeout_sec);
-/* Start a jog (up/down/left/right) or, with NULL, stop the OEM motor. */
-int joan_oem_ptz(const JoanConfig *cfg, const char *direction, unsigned speed);
 int joan_stage_blob(const JoanConfig *cfg, const char *category,
                     const void *data, size_t len, char id[65], char path[512]);
 
@@ -105,23 +96,19 @@ int joan_mdns_set_hostname(const JoanConfig *cfg, const char *hostname);
 const char *joan_mdns_status(void);
 
 int joan_tls_ensure_identity(const JoanConfig *cfg);
-int joan_rtsp_proxy_start(const JoanConfig *cfg);
-void joan_rtsp_proxy_stop(void);
-/* -1: no video observed; 0: video stopped; 1: both observed streams progress. */
-int joan_rtsp_proxy_audio_health(void);
-int joan_audio_pause_start(const JoanConfig *cfg);
-void joan_audio_pause_stop(void);
-int joan_audio_pause_set(int enabled);
-void joan_audio_pause_status(char *out, size_t cap);
 
-/* The PTZ order ONVIF goes through; http.c owns it. */
-int joan_ptz_preset_request(unsigned command, const char *payload, char operation[65]);
-int joan_ptz_goto(unsigned token);
-int joan_ptz_nudge(const char *direction);
-/* HTTP status and a malloc'd SOAP reply, or -1. host is the validated
- * authority the client used, for the service addresses it is given. */
-int joan_onvif_handle(const JoanConfig *cfg, const JoanRequest *req, const char *host,
-                      char **reply, size_t *reply_len);
+/* SNTP client for the RTC-less board. The configured server is "gateway"
+ * (the current default route), an IPv4 address with optional :port, or
+ * absent (off). Clock steps go through the privileged time-set helper,
+ * which also persists last-time for the next boot. */
+int joan_ntp_start(const JoanConfig *cfg);
+void joan_ntp_stop(void);
+int joan_ntp_configure(const char *server);
+void joan_ntp_status(char *out, size_t cap);
+/* Pure helpers, exposed for host tests. */
+int joan_ntp_parse_server(const char *text, uint32_t *address, uint16_t *port);
+int joan_ntp_offset(const unsigned char *reply, size_t size, const unsigned char origin[8],
+                    int64_t sent_us, uint64_t round_trip_us, int64_t *offset_us);
 
 int joan_server_run(const JoanConfig *cfg);
 void joan_server_stop(void);

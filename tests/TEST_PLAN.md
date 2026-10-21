@@ -75,18 +75,11 @@ Exercise every allowed transition and every forbidden edge. In particular:
   (`tools/tests/test_http_queue.py`);
 - a certificate enrolled by 0.2.17 or earlier is discarded, key included, at
   the first start;
-- ONVIF requires a fresh WS-Security digest for everything but the clock,
-  rejects a replayed token, shares the login failure budget, parses any
-  namespace prefix, never lets a lost `Stop` run the head past its deadman,
-  answers a recall without waiting for the travel, and holds a recall or
-  nudge made during travel until the OEM reports the head stopped, running
-  only the newest (`ci/check_onvif.sh`, which builds the daemon against
-  mbedTLS for SHA-1);
 - the public initial `admin` / `admin` remains valid until changed, with
   neither forced setup nor a warning banner;
 - the reported state survives restart and flips only after password rotation;
-- Web, RTSP, and SSH password records remain synchronized, with a documented
-  early-`0.1` migration state when SSH cannot yet be derived;
+- Web, SSH, and OEM loopback RTSP password records remain synchronized, with
+  a documented early-`0.1` migration state when SSH cannot yet be derived;
 - password/token rotation revokes old sessions;
 - logout, expiry, reboot, and clock rollback cannot resurrect a session;
 - failed-attempt counters survive service restart when intended but cannot be
@@ -98,6 +91,17 @@ Exercise every allowed transition and every forbidden edge. In particular:
 
 SSH tests cover synchronized password login, optional Ed25519 keys, disabled
 forwarding/PAM/X11/SFTP, and removal of all other OEM login shells.
+
+## Network time
+
+`ci/check_ntp.sh` builds the host daemon against mbedTLS and runs
+`tools/tests/test_ntp.py` against a loopback SNTP server. It requires the
+removed media routes to answer 404, network time to be off by default, only
+`gateway`, an IPv4 address with optional port, or empty to be accepted (with
+CSRF), `gateway` to follow the supervisor's recorded gateway, a forged reply
+without the origin cookie to be ignored, and a large offset to be stepped once
+through the integration helper while a small one is not. Steps reach only the
+fake helper; the host clock never moves.
 
 ## Wi-Fi state machine
 
@@ -159,8 +163,8 @@ logs, and a cold post-test recovery proving both OEM streams and management
 access. Persistent installation requires its separate rollback and pre-boot
 recovery gates.
 
-Promotion also requires direct RTSP for both sensors, ONVIF nudges and preset
-save/recall/delete, DNS-SD, signed update/replay rejection, early-GoAhead
+Promotion also requires loopback-only OEM RTSP and ONVIF, network time,
+DNS-SD, signed update/replay rejection, early-GoAhead
 capture, no-default-route enforcement, the steady 196 KiB/64 KiB contract, the
 single-runtime 196 KiB/56 KiB maintenance contract with SSH recovery, and
 destructive uninstall

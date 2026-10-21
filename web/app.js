@@ -144,10 +144,9 @@ function guard(host, message, verb, run) {
 
 /* ---------- status ---------- */
 const FEATURE_LABELS = {
-  rtsp: ['RTSP', 'digest auth'],
-  ptz: ['Pan / tilt', null],
   ssh: ['SSH', null],
   mdns: ['mDNS', null],
+  media: ['Media', null],
 };
 
 function chip(label, value, tone) {
@@ -209,23 +208,9 @@ async function loadStatus() {
 
 async function load() {
   if (!await loadStatus()) return;
-  const [streamList, mdns, audioPause] = await Promise.all([
-    api('/api/v1/streams'), api('/api/v1/network/mdns'), api('/api/v1/system/audio-pause'),
-  ]);
-  renderAudioPause(audioPause);
+  const [mdns, time] = await Promise.all([api('/api/v1/network/mdns'), api('/api/v1/time')]);
+  renderTime(time);
   $('#rail-host').textContent = mdns.address || '';
-  /* What an NVR needs: both sensors over RTSP, and ONVIF on this very port for
-     pan/tilt and presets (sensor A). */
-  $('#streams').replaceChildren(...[
-    ...streamList.streams.map(s => [`${s.id} · ${s.width}×${s.height}`, s.rtsp]),
-    ['ONVIF', `http://${location.host}/onvif/device_service`],
-  ].map(([label, value]) => {
-    const row = document.createElement('div');
-    row.className = 'row';
-    const k = document.createElement('span'); k.textContent = label;
-    const v = document.createElement('b'); v.textContent = value;
-    row.append(k, v); return row;
-  }));
 
   $('#mdns-form').elements.hostname.value = mdns.hostname;
   $('#mdns-result').textContent = `http://${mdns.address}/`;
@@ -341,29 +326,32 @@ $('#password-form').addEventListener('submit', e => {
 
 $('#change-password').onclick = () => show('#setup');
 
-function renderAudioPause(s) {
-  $('#audio-pause-enabled').checked = !!s.enabled;
-  const states = { running: 'OEM audio is running.', paused: 'OEM audio is paused.',
-    starting: 'Waiting for the audio callback to pause.',
-    waiting_for_video: 'Saved. Waiting for video traffic before pausing audio.',
-    recovered: 'Audio resumed automatically. The pause setting has been disabled.' };
-  $('#audio-pause-status').textContent = states[s.state] || 'Audio state unavailable.';
+/* ---------- camera time ---------- */
+/* The camera has no RTC: boot restores the last saved time, which lags by
+   the downtime. Network time (normally from the gateway) keeps it on UTC;
+   without it, push this device's clock. Idle sessions use a monotonic server
+   clock, unaffected by setting the wall clock. */
+function describeNtp(n) {
+  if (!n?.server) return 'off';
+  const where = n.server === 'gateway' && n.resolved ? `gateway (${n.resolved})` : n.server;
+  return n.synchronized ? `${where} · synchronized ${n.last_sync_age_seconds} s ago`
+    : `${where} · ${n.error || 'waiting for the first reply'}`;
 }
-$('#audio-pause-save').onclick = () => busy($('#audio-pause-save'), async () => {
+function renderTime(d) {
+  $('#time-camera').textContent = new Date(d.epoch * 1000).toLocaleString();
+  $('#ntp-state').textContent = describeNtp(d.ntp);
+  const field = $('#ntp-server');
+  if (field !== document.activeElement) field.value = d.ntp?.server || '';
+}
+$('#ntp-save').onclick = () => busy($('#ntp-save'), async () => {
   try {
-    renderAudioPause(await api('/api/v1/system/audio-pause', {
+    await api('/api/v1/time', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: $('#audio-pause-enabled').checked }),
-    }));
-    notice('Audio setting saved. Refresh to check its current state.');
+      body: JSON.stringify({ ntp: $('#ntp-server').value.trim() }),
+    });
+    renderTime(await api('/api/v1/time'));
   } catch (x) { notice(x.message, 'crit'); }
 });
-
-/* ---------- camera time ---------- */
-/* The camera has no RTC and no NTP route, so its clock defaults years off,
-   which shows in the burned-in OSD overlay and the recorded streams. Push
-   this device's clock (true UTC) so it keeps correct time. Idle sessions use
-   a monotonic server clock, unaffected by setting the wall clock. */
 function tickLocalTime() { const el = $('#time-local'); if (el) el.textContent = new Date().toLocaleString(); }
 setInterval(tickLocalTime, 1000); tickLocalTime();
 async function setCameraTime(epochSeconds) {
