@@ -117,9 +117,21 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         assert ntp['server'] == 'gateway' and ntp['resolved'] == '127.0.0.1' and not ntp['synchronized'] and ntp['error'], ntp
         assert (pathlib.Path(state) / 'ntp-server').read_text() == 'gateway\n'
 
-        # A server 100 s ahead, preceded by a forged reply: one step via the helper.
+        # Never step while an OEM jooanipc process exists: it dies mid-bootstrap.
         sntp.offset = 100.0
         server = f'127.0.0.1:{sntp.port}'
+        oem = pathlib.Path(run) / 'jooanipc'
+        oem.write_bytes(pathlib.Path('/bin/sleep').read_bytes()); oem.chmod(0o755)
+        fake = subprocess.Popen([str(oem), '60'])
+        try:
+            assert request('PUT', '/api/v1/time', {'ntp': server}, cookie, csrf)[0] == 200
+            ntp = wait_for(cookie, lambda n: n.get('attempts', 0) >= 1)
+            assert not ntp['synchronized'] and 'OEM application' in ntp['error'], ntp
+            assert not log.exists() or 'time-set' not in log.read_text()
+        finally:
+            fake.kill(); fake.wait()
+
+        # A server 100 s ahead, preceded by a forged reply: one step via the helper.
         before = time.time()
         assert request('PUT', '/api/v1/time', {'ntp': server}, cookie, csrf)[0] == 200
         ntp = wait_for(cookie, lambda n: n.get('synchronized'))
@@ -141,7 +153,7 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         assert request('PUT', '/api/v1/time', {'ntp': ''}, cookie, csrf)[0] == 200
         assert json.loads(request('GET', '/api/v1/time', cookie=cookie)[2])['ntp']['server'] == ''
         assert not (pathlib.Path(state) / 'ntp-server').exists()
-        print(f'ntp: removed media routes, validation, gateway, forged reply, step and no-step cases PASS '
+        print(f'ntp: removed media routes, validation, gateway, OEM gate, forged reply, step and no-step cases PASS '
               f'({sntp.requests} requests)')
     finally:
         daemon.terminate()

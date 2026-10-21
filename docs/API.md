@@ -63,8 +63,9 @@ Clients must ignore unknown response fields.
 presets and the NVR (Frigate) integration belong to the separate media daemon
 [jooanipc-open](https://github.com/ADCDS/jooanipc-open), which replaces the
 OEM `jooanipc` after boot and documents its own ports, credentials and API.
-The OEM `jooanipc` still starts at every boot to bring up Wi-Fi and home the
-motor before that handoff. Without the media daemon, the guard keeps the OEM
+A native boot never starts the OEM `jooanipc`; the guarded handoff fallback
+still uses it to bring up Wi-Fi and home the motor (see
+[Architecture](ARCHITECTURE.md)). Without the media daemon, the guard keeps the OEM
 RTSP (TCP/8554) and ONVIF (TCP/8899) services on loopback, so this firmware
 alone exposes no video or PTZ. The Web UI is a maintenance console and plays no
 video; the guard keeps OEM alarm and voice playback muted.
@@ -89,7 +90,9 @@ the state directory. `gateway` is the IPv4 gateway the supervisor last pruned
 from the default route, re-read on every attempt; the port defaults to 123.
 The client retries every 30 s until it gets a valid reply, then polls hourly.
 Steps of 2 s or more go through the integration helper's `time-set`, which also
-saves the time the next boot restores. `PUT /api/v1/time` with
+saves the time the next boot restores. While an OEM `jooanipc` process exists
+no step is made and `error` reads "waiting for the OEM application to hand
+over media". `PUT /api/v1/time` with
 `{"epoch":"<UTC seconds>"}` still sets the clock manually.
 
 `GET /api/v1/time` returns the clock and the client's state; the `ntp` object
