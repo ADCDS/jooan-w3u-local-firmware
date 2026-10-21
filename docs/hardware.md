@@ -302,15 +302,17 @@ Frigate measures that offset once, when its ONVIF session starts. The restored
 `last-time` lags real time by the camera's downtime plus the save interval, so
 after a camera reboot every WSSE timestamp falls outside the 300-second window:
 PTZ and presets fail with `'NoneType' object has no attribute 'getroottree'`
-until Frigate restarts. Set `ntp_server` to a local SNTP server, normally the
-IoT gateway, to keep the camera on real UTC instead. The client retries every
-30 seconds until it synchronizes, then polls hourly, and steps the clock when
-the offset reaches one second. Replies must echo a random origin cookie; it is
-otherwise unauthenticated SNTP, so use a server on the camera's own network.
-`GET /api/v1/status` reports `clock`. The controller saves only forward clock
-moves, so the corrected time also becomes the next boot's restored value.
-This needs inbound UDP 123 on the gateway from the camera's network, and
-nothing else; leave `ntp_server` empty to keep the original arrangement.
+until Frigate restarts. Keep the camera on real UTC with SNTP from a server on
+its own network, normally the gateway; that needs inbound UDP 123 on the
+gateway from the camera's network and nothing else. The retained local
+controller owns the clock from its release 0.2.22: set its network time to
+`gateway` and leave `ntp_server` empty here, so one process steps the clock.
+Its steps also persist `last-time`, so the next boot starts close to real time.
+
+`ntp_server` is for deployments without that controller. The client retries
+every 30 seconds until it synchronizes, then polls hourly, and steps the clock
+when the offset reaches one second. Replies must echo a random origin cookie;
+it is otherwise unauthenticated SNTP. `GET /api/v1/status` reports `clock`.
 
 That ONVIF offset is cached by the tested Frigate client. In the 1080p reboot
 test, the camera clock moved backward by about 967 seconds; video recovered
@@ -335,3 +337,42 @@ The Frigate CPU detector can temporarily fill its two-frame processing queue
 during full-scene motion. Observed processing drops recovered to the configured
 5 fps; live capture/recording remained available. SHM had more than 115 MiB free,
 so its sizing recommendation did not indicate an exhausted frame store.
+
+## Camera release bundles
+
+`scripts/install-camera.py` installs both layers of a JA-A12 deployment from
+one bundle directory: a signed local-controller package, applied through its
+authenticated update API, and a rebuilt appfs image carrying one jooanipc-open
+release, flashed on the camera by `scripts/upgrade-appfs.sh`. Each layer
+reboots the camera; the installer waits for the boot handoff to qualify before
+continuing. File-level configuration changes are staged first, so a bundle
+with one layer needs one reboot. Every touched file is copied to
+`BUNDLE/backups/` beforehand and restored if a step fails before the first
+reboot. Without `--yes` only the host and camera preflight runs.
+
+`bundle.json` (schema 1) names the artifacts and their hashes:
+
+```json
+{
+  "schema": 1, "name": "camera-YYYYMMDD-N", "board": "JA-A12",
+  "jooan_local": {"release_version": "0.2.22", "release_sequence": 56,
+                  "package": "JOOAN_FW_PKG", "package_sha256": "…"},
+  "jooanipc_open": {"release": "<app sha256 prefix>-<libimp sha256 prefix>",
+                    "image": "appfs.img", "image_md5": "…",
+                    "expected_current_appfs_md5": "…", "app_md5": "…",
+                    "installer": "upgrade-appfs.sh", "installer_md5": "…"},
+  "config": {"camera_ini": {"set": {}, "unset": ["ntp_server"]},
+             "files": {"/opt/custom/jooan-local/config/ntp-server": "gateway\n",
+                       "/opt/jooanipc-open/state/presets.v1": null},
+             "verify_ntp": true}
+}
+```
+
+Either layer may be omitted. `files` maps camera paths to new contents, or to
+`null` for deletion. Bundles contain vendor-derived appfs images and backups
+holding the camera password, so keep them private. The appfs installer stops
+the native media owner, hands the armed watchdog to a rootfs feeder, keeps a
+RAM copy of the current partition, and verifies the flash by full readback;
+any failure before the flash reboots into the unchanged partition. Stop the
+NVR during a platform update (`--nvr-stop`/`--nvr-start`): memory pressure
+from both streams has stalled the board during that transaction.

@@ -23,7 +23,9 @@ of forcing an AP switch. OEM bootstrap remains for network setup and motor
 homing. This is a local-services replacement, with the
 feature boundaries below; full OEM feature parity is not claimed.
 The guarded boot helper supports versioned releases in internal application
-flash as well as SD storage. Internal releases run without an SD card; private
+flash as well as SD storage. `scripts/install-camera.py` installs a release
+bundle covering this daemon and the retained local controller; see
+[camera release bundles](docs/hardware.md#camera-release-bundles). Internal releases run without an SD card; private
 configuration and presets stay in the writable flash partition. See
 [internal-flash packaging](docs/hardware.md#internal-flash-packaging) for the
 JA-A12 storage budget and required boot dependencies.
