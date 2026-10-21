@@ -2,6 +2,7 @@
 #include "joan_daemon.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -157,6 +158,24 @@ static int exchange(const struct sockaddr_in *server, int64_t *offset_us, char *
 done:
     close(fd); return rc;
 }
+/* Stepping the clock while the OEM application bootstraps kills it (its
+ * watchdog then reboots the camera). Under the guarded handoff it runs for the
+ * first minutes of every boot; a native boot never starts it. */
+static int oem_media_running(void)
+{
+    DIR *proc = opendir("/proc"); struct dirent *entry; int found = 0;
+    if (!proc) return 0;
+    while (!found && (entry = readdir(proc))) {
+        char path[sizeof(entry->d_name) + 16], comm[32]; FILE *file;
+        if (entry->d_name[0] < '1' || entry->d_name[0] > '9') continue;
+        snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
+        if (!(file = fopen(path, "r"))) continue;
+        if (fgets(comm, sizeof(comm), file) && !strcmp(comm, "jooanipc\n")) found = 1;
+        fclose(file);
+    }
+    closedir(proc);
+    return found;
+}
 static int step_clock(int64_t offset_us, char *error, size_t cap)
 {
     struct timespec now; char epoch[24];
@@ -190,7 +209,8 @@ static void *ntp_main(void *unused)
         else ok = !exchange(&address, &offset, error, sizeof(error));
         if (N.quitting) break;
         if (ok && (offset >= NTP_STEP_US || offset <= -NTP_STEP_US)) {
-            if (step_clock(offset, error, sizeof(error))) ok = 0; else stepped = 1;
+            if (oem_media_running()) { ok = 0; snprintf(error, sizeof(error), "waiting for the OEM application to hand over media"); }
+            else if (step_clock(offset, error, sizeof(error))) ok = 0; else stepped = 1;
         }
         pthread_mutex_lock(&N.lock);
         if (!strcmp(server, N.server)) { /* a concurrent change restarts from scratch */

@@ -103,6 +103,46 @@ class RuntimeHookTests(unittest.TestCase):
         self.assertIn('printf \'%s\\n\' released > "$JL_SPEAKER_HOOK_RELEASED.new"', hook)
         self.assertNotIn('echo 0 > "$JL_SPEAKER_PATH/value"', hook[mute:media_wrapper])
 
+    def test_media_boot_mode_selection(self) -> None:
+        """local.rc picks a native boot only when enabled, never after a native
+        boot that did not qualify, and otherwise boots the guarded handoff."""
+        hook = (REPOSITORY / "runtime/boot/local.rc").read_text(encoding="utf-8")
+        section = hook[hook.index("jl_media=/opt/jooanipc-open"):]
+        launch_native = "        jl_native_media\n"
+        launch_handoff = ('        /bin/sh "$jl_media/boot-handoff.sh" </dev/null '
+                          '>/tmp/jipc-handoff.log 2>&1 &\n')
+        self.assertEqual(section.count(launch_native), 1)
+        self.assertEqual(section.count(launch_handoff), 1)
+        native_branch = section[section.index("jooanipc() { :; }"):section.index(launch_native)]
+        self.assertIn("my_watch_dog() { :; }", native_branch)
+        with tempfile.TemporaryDirectory() as temporary:
+            media = Path(temporary)
+            script = (section.replace("jl_media=/opt/jooanipc-open", f"jl_media={media}")
+                      .replace(launch_native, '        echo "native $(type jooanipc | head -1)" >> "$jl_media/out"\n')
+                      .replace(launch_handoff, '        echo handoff >> "$jl_media/out"\n'))
+
+            def boot(*present: str) -> tuple[str, list[str]]:
+                for name in ("out", "enabled", "native", "native-boot.sh", "boot-handoff.sh",
+                             "native-trial", "native-failed"):
+                    (media / name).unlink(missing_ok=True)
+                for name in present:
+                    (media / name).write_text("boot=x\nstage=network\n" if name == "native-trial" else "")
+                subprocess.run(["sh", "-c", script], check=True)
+                out = (media / "out").read_text().strip() if (media / "out").exists() else ""
+                return out, sorted(p.name for p in media.iterdir() if p.name.startswith("native-"))
+
+            scripts = ("native-boot.sh", "boot-handoff.sh")
+            self.assertEqual(boot("enabled", *scripts)[0], "handoff")
+            out, _ = boot("enabled", "native", *scripts)
+            self.assertTrue(out.startswith("native") and "function" in out, out)
+            # A native boot that left its trial marker falls back, keeping the stage.
+            out, names = boot("enabled", "native", "native-trial", *scripts)
+            self.assertEqual((out, names), ("handoff", ["native-boot.sh", "native-failed"]))
+            self.assertIn("stage=network", (media / "native-failed").read_text())
+            self.assertEqual(boot("enabled", "native", "native-failed", *scripts)[0], "handoff")
+            self.assertEqual(boot("enabled", "native", "boot-handoff.sh")[0], "handoff")
+            self.assertEqual(boot("native", *scripts)[0], "")
+
     def test_media_always_homes_and_is_not_the_oom_victim(self) -> None:
         """A crash reboot leaves /opt/silence_reboot, which made jooanipc skip
         PTZ homing and adopt a stale saved position, shifting every preset. And

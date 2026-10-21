@@ -33,8 +33,8 @@ The following remain device-supplied and proprietary:
 - bootloader and OEM Linux 3.10 kernel;
 - ISP, VPU, sensor, audio, motor, and SeekWave kernel modules;
 - sensor IQ/calibration and radio firmware;
-- `jooanipc`, which still starts at every boot to bring up Wi-Fi and home the
-  motor before the media daemon replaces it.
+- `jooanipc`, which a native boot (0.2.23) no longer starts; it remains the
+  guarded fallback that brings up Wi-Fi and homes the motor before a handoff.
 
 These components are not imported into this repository or a generic release.
 They remain on the owner's camera. Their behavior is treated as an untrusted
@@ -89,7 +89,20 @@ The board has no RTC, so boot restores a coarse saved time that lags by the
 downtime. When enabled (it is off by default), the SNTP client in `joan-daemon`
 keeps the clock on UTC from the gateway or another local server and steps it
 through the integration helper's `time-set`, which also saves the time the
-next boot restores. See [API](API.md#camera-time).
+next boot restores. It never steps while an OEM `jooanipc` process exists:
+a step during that bootstrap killed it. See [API](API.md#camera-time).
+
+Since 0.2.23 `/opt/etc/local.rc` owns the media daemon's boot. With
+`/opt/jooanipc-open/native` present, a native boot never starts `jooanipc` or
+its `my_watch_dog`: the controller feeds the hardware watchdog with the rootfs
+`watchdog`, starts `wpa_supplicant` and `udhcpc` with the OEM's arguments, and
+runs the daemon's `native-boot.sh`, which homes pan/tilt, takes over the
+watchdog and qualifies the boot. Until it qualifies, `native-trial` records
+the stage on `/opt`. A boot that finds it latches `native-failed` (keeping
+the recorded stage) and boots the guarded OEM handoff instead; so does any
+boot without `native`. If no daemon takes the watchdog within ten minutes the
+feeder is killed without the magic close, so a hung native boot resets into
+that fallback. Remove `native-failed` to retry.
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
 runtime must total no more than 200704 bytes (196 KiB), with at least 65536 bytes

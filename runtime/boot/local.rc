@@ -122,4 +122,55 @@ else
         done
     ) </dev/null >/dev/null 2>&1 &
 fi
+
+# Media daemon (jooanipc-open, /opt/jooanipc-open). Native boot never starts the
+# OEM application: this controller brings up the watchdog, Wi-Fi and DHCP that
+# jooanipc did, and the daemon homes pan/tilt. The guarded OEM handoff remains
+# the fallback. A native boot that did not qualify leaves native-trial behind;
+# the next boot latches it as native-failed and uses the handoff.
+jl_media=/opt/jooanipc-open
+jl_native_media() {
+    # Feed the hardware watchdog until the media daemon takes it over. If none
+    # does within ten minutes, stop feeding without the magic close: the reset
+    # that follows boots the handoff.
+    (trap '' HUP; exec /sbin/watchdog -F -t 2 -T 60 /dev/watchdog) </dev/null >/dev/null 2>&1 &
+    echo $! > /tmp/jipc-watchdog-feeder.pid
+    (
+        trap '' HUP
+        sleep 600
+        jl_feeder=$(cat /tmp/jipc-watchdog-feeder.pid 2>/dev/null)
+        [ -n "$jl_feeder" ] && [ "$(cat "/proc/$jl_feeder/comm" 2>/dev/null)" = watchdog ] &&
+            kill -KILL "$jl_feeder"
+    ) </dev/null >/dev/null 2>&1 &
+    # Wi-Fi and DHCP as the OEM application started them; the supervisor
+    # applies the committed network once wpa_supplicant answers.
+    (
+        trap '' HUP
+        jl_wait=0
+        while [ ! -d /sys/class/net/wlan0 ] && [ "$jl_wait" -lt 60 ]; do
+            sleep 1; jl_wait=$((jl_wait + 1))
+        done
+        ifconfig wlan0 up
+        printf 'ctrl_interface=/var/run/wpa_supplicant\nap_scan=1\n' > /tmp/wpa_supplicant.conf
+        wpa_supplicant -Dnl80211 -iwlan0 -c /tmp/wpa_supplicant.conf -g /tmp/wpa_global \
+            -B -P/var/run/wpa_supplicant.pid
+        udhcpc -a -i wlan0 -x hostname:JAIPC -b -p /var/run/udhcpc_wlan0_pid.txt \
+            -s /usr/share/udhcpc/default.script
+    ) </dev/null >/tmp/jooan-native-network.log 2>&1 &
+    /bin/sh "$jl_media/native-boot.sh" </dev/null >/tmp/jipc-native.log 2>&1 &
+}
+if [ -f "$jl_media/enabled" ]; then
+    if [ -f "$jl_media/native-trial" ]; then
+        mv -f "$jl_media/native-trial" "$jl_media/native-failed" 2>/dev/null || :
+    fi
+    if [ -f "$jl_media/native" ] && [ ! -f "$jl_media/native-failed" ] &&
+       [ -r "$jl_media/native-boot.sh" ]; then
+        # startapp calls these by name after sourcing this file.
+        jooanipc() { :; }
+        my_watch_dog() { :; }
+        jl_native_media
+    elif [ -r "$jl_media/boot-handoff.sh" ]; then
+        /bin/sh "$jl_media/boot-handoff.sh" </dev/null >/tmp/jipc-handoff.log 2>&1 &
+    fi
+fi
 :
