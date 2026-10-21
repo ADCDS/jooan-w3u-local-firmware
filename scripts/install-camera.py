@@ -211,7 +211,8 @@ def main():
         "echo appfs_md5=$(md5sum /dev/mtdblock4 | cut -c1-32);"
         "echo opt_free=$(df -k /opt | awk 'END {print $4}');"
         "echo trial=$([ -e /opt/jooanipc-open/boot-trial ] && echo yes || echo no);"
-        "echo qualified=$(grep -c 'boot handoff qualified' /tmp/jipc-handoff.log 2>/dev/null);"
+        "echo qualified=$(cat /tmp/jipc-handoff.log /tmp/jipc-native.log 2>/dev/null | "
+        "grep -c -E 'boot handoff qualified|native boot qualified');"
         "echo release=$(sed -n 's/^JIPC_RELEASE=//p' " + ENV + ")").splitlines() if "=" in line)
     status, _, data = cam.platform("GET", "/api/v1/setup/status")
     platform = json.loads(data) if status == 200 else {}
@@ -223,7 +224,7 @@ def main():
     if facts.get("trial") != "no":
         problems.append("a failed jooanipc-open boot trial is latched")
     if facts.get("qualified", "0") == "0":
-        problems.append("jooanipc-open did not qualify on this boot")
+        problems.append("jooanipc-open did not qualify on this boot (reboot to fall back first)")
     if local and platform.get("release_sequence", 0) >= local["release_sequence"]:
         problems.append(f"platform already at sequence {platform.get('release_sequence')}")
     if appfs and facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:

@@ -5,20 +5,17 @@
 #define MOTOR_INFO "/tmp/jipc-test-motor-info"
 #include "../src/platform.c"
 #include <assert.h>
-static int driver_x=1400,driver_y=400,swapped,speed=450,moving,dx,dy,reset_gap;
+static int driver_x=1400,driver_y=400,swapped,speed=450,moving,dx,dy;
 static unsigned commands,stops,resets;
 static int32_t last_reset[4];
 static uint64_t clock_us,previous_us;
 static void advance(uint64_t now)
 {
     unsigned steps=(unsigned)((now-previous_us)*(unsigned)speed/1000000);previous_us=now;clock_us=now;
-    if(reset_gap==2){reset_gap=0;moving=1;return;} /* tilt leg starts after a short idle */
     if(!moving)return;
     int *delta=dx?&dx:&dy,*position=dx?&driver_x:&driver_y;
     int n=abs(*delta)<(int)steps?abs(*delta):(int)steps;if(*delta<0)n=-n;
     *position+=n;*delta-=n;moving=!!(dx||dy);
-    /* The real driver reports idle between its reset's pan and tilt legs. */
-    if(reset_gap==1&&!dx&&dy){moving=0;reset_gap=2;}
 }
 int __wrap_ioctl(int fd,unsigned long request,...)
 {
@@ -30,8 +27,9 @@ int __wrap_ioctl(int fd,unsigned long request,...)
     if(request==MOTOR_RESET){
         int32_t *r=pointer;assert(!moving);memcpy(last_reset,r,sizeof(last_reset));++resets;
         if(r[0]||r[1]||r[2]||r[3]){driver_x=r[2];driver_y=r[3];return 0;} /* declare position */
-        /* The driver's own reset: rammed to its maxima, then back to the reset point. */
-        driver_x=4080;driver_y=1200;dx=2040-4080;dy=200-1200;swapped=0;moving=1;reset_gap=1;return 0;
+        /* The driver's own reset, as observed on the JA-A12: it logs
+         * cx=4080,cy=1200 and ends idle at 2040,1199. */
+        driver_x=4080;driver_y=1199;dx=2040-4080;dy=0;swapped=0;moving=1;return 0;
     }
     assert(request==3||request==8);assert(!moving);
     int32_t *delta=pointer;assert((delta[0]!=0)!=(delta[1]!=0));++commands;

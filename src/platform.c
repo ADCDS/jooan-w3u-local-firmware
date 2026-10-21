@@ -297,11 +297,11 @@ static void home_tick(platform_state *state, uint64_t now)
     }
     if (now < state->homing_settle) return;
     if (motor_read(state)) { state->homing = 0; worker_error(state, "motor homing status"); return; }
-    /* The driver reports idle between its pan and tilt legs: wait for each
-     * stage's end point, not only for the motor to stop. */
     if (state->moving) return;
+    /* The pan run ends at the declared maximum. The driver's reset, like the
+     * OEM's, is complete once idle: it ends at 2040,1199 on this board, not
+     * at the 2040,200 it logs as its reset point (observed on hardware). */
     if (state->homing == 1 && state->x != HOME_PAN_STEPS) return;
-    if (state->homing == 2 && (abs(state->x - HOME_PAN_STEPS / 2) > 2 || abs(state->y - HOME_TILT_RESET) > 2)) return;
     if (state->homing == 1) {
         int32_t reset[4] = {0, 0, 0, 0};
         if (ioctl(state->motor_fd, MOTOR_RESET, reset)) { state->homing = 0; worker_error(state, "motor reset"); return; }
