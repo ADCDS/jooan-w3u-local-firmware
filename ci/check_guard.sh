@@ -6,7 +6,7 @@ make -C "$root/src/guard" clean >/dev/null
 make -C "$root/src/guard" -j2 test
 
 symbols=$(nm -D "$root/src/guard/build/libjooan_guard.so")
-for symbol in accept accept4 bind connect send sendto sendmsg sendmmsg sendfile64 syscall write writev \
+for symbol in usleep pthread_cond_timedwait accept accept4 bind connect send sendto sendmsg sendmmsg sendfile64 syscall write writev \
     open open64 read readv ioctl close dup dup2 dup3 fcntl; do
     printf '%s\n' "$symbols" | grep -Eq " [TW] $symbol$" || {
         echo "guard export missing: $symbol" >&2

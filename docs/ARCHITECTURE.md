@@ -11,7 +11,7 @@ and places a hardened local control plane around it.
 ```text
 Local browser / NVR / administrator
              |
-     HTTPS API and RTSP/TCP
+  HTTP API, ONVIF and RTSP/TCP
              |
   open gateway + policy services
      |                    |
@@ -42,16 +42,17 @@ dependency behind a narrow boundary.
 The open layer is responsible for:
 
 - model-gated, transactional installation and uninstall packages;
-- local HTTPS termination and authenticated session handling;
+- a local HTTP listener with authenticated session handling;
 - the versioned `/api/v1/` management contract;
 - password-synchronized SSH for user `admin`, with optional authorized keys;
 - local RTSP reachability;
 - no-default-route local networking plus exact-process egress containment;
 - embedded mDNS/DNS-SD discovery;
+- an ONVIF device/media/PTZ subset for NVRs, on the same HTTP listener;
 - health checks, update verification, and rollback/fallback handling.
 
-The generic image does not personalize Wi-Fi or embed keys. Per-device HTTPS
-material, the administrator credential, optional SSH authorized keys, and
+The generic image does not personalize Wi-Fi or embed keys. The per-device key
+for the loopback MQTT sink, the administrator credential, optional SSH authorized keys, and
 manual Wi-Fi settings live in device-local persistent state and are excluded
 from release artifacts. The public initial password remains usable until
 changed; warning state, rather than forced setup, records that condition.
@@ -61,13 +62,18 @@ changed; warning state, rather than forced setup, records that condition.
 The implementation includes deterministic signed packaging, a compressed
 controller core plus one compressed runtime and separate SSH recovery, telnet
 suppression, transactional Wi-Fi, password-synchronized Dropbear with optional
-keys, the HTTPS daemon and Web UI, main/sub fMP4, a local TLS MQTT sink, microphone
-and press-to-talk routing, PTZ jog/stop/home/presets, embedded DNS-SD, and an
-exact-binary `LD_PRELOAD` guard. The guard redirects only approved OEM service
-names to loopback and denies other `jooanipc` connect/datagram traffic.
-It also confines OEM RTSP to loopback TCP/8554, suppresses OEM speaker output,
-and grants the amplifier only to bounded local talkback. An authenticated
-Digest proxy exposes RTSP to local clients on TCP/554.
+keys, the HTTP daemon with a maintenance Web UI, a local TLS MQTT sink, ONVIF
+pan/tilt and presets for NVRs, embedded DNS-SD, and an exact-binary
+`LD_PRELOAD` guard. The guard redirects only approved OEM service names to
+loopback and denies other `jooanipc` connect/datagram traffic. It also confines
+OEM RTSP to loopback TCP/8554, the OEM ONVIF service to loopback TCP/8899, and
+suppresses OEM speaker output. An authenticated Digest proxy exposes RTSP to
+local clients on TCP/554.
+
+Viewing, recording and steering moved to the NVR (Frigate over RTSP and ONVIF)
+in 0.2.14. The camera no longer remuxes video for browsers or routes audio,
+which also retired the per-viewer fMP4 buffers and the audio router process: on
+a 38 MB board that memory was part of what the OOM killer fought over.
 
 In steady state, the compressed controller core, SSH recovery bundle, and one
 runtime must total no more than 200704 bytes (196 KiB), with at least 65536 bytes
@@ -92,9 +98,32 @@ for snapshots, but cannot eliminate that immutable early interval. The
 external router or VLAN must block untrusted peers and Internet access before
 power is applied.
 
-For a conforming promoted release, the intended listeners are TCP/80 (redirect only), TCP/443,
-TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
+For a conforming promoted release, the intended listeners are TCP/80 (Web UI,
+API and ONVIF), TCP/554, and—after key enrollment—TCP/22. No cloud or P2P path is part of the
 supported architecture.
+
+## Memory pressure and PTZ homing
+
+The board has about 38 MB of RAM and runs with only a few megabytes free, so
+the kernel OOM killer does fire. It takes the largest process, which used to
+be the retained media process; the OEM watchdog then rebooted the camera and
+flagged the reboot "silent". A silent boot skips PTZ homing and trusts the last
+saved position, which the OEM saves only after manual jogs and never after a
+preset recall, so a crash that followed a recall shifted the whole PTZ frame
+and every preset with it.
+
+The loader wrapper therefore removes `/opt/silence_reboot` so every boot homes,
+and lowers the media process's `oom_score_adj`; `start.sh` raises the daemon's
+instead. When the OOM killer takes the runtime, the supervisor restarts it
+(rate-limited, never while maintenance holds the state lock) and writes the
+kernel's report to `jooan-local/` on the microSD card, since `dmesg` does not
+survive a reboot. The media process reconnects to the local MQTT bridge within
+about 20 seconds.
+
+Heavy memory pressure can also stall the board before any OOM kill, until the
+hardware watchdog resets it without a log. Installing an update while an NVR
+pulls both streams and a browser watched live video has reproduced this; stop
+the NVR during an update.
 
 ## Package format
 

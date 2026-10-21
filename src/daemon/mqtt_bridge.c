@@ -161,7 +161,7 @@ static void *broker(void *arg)
     mbedtls_entropy_init(&entropy); mbedtls_ctr_drbg_init(&drbg);
     mbedtls_ssl_config_init(&sc); mbedtls_x509_crt_init(&cert);
     mbedtls_pk_init(&key); mbedtls_ssl_init(&client_ssl);
-    if (!cfg->plain_http) {
+    if (!cfg->plain_mqtt) {
         snprintf(cert_path,sizeof(cert_path),"%s/tls-cert.pem",cfg->state_dir);
         snprintf(key_path,sizeof(key_path),"%s/tls-key.pem",cfg->state_dir);
         if (mbedtls_ctr_drbg_seed(&drbg,mbedtls_entropy_func,&entropy,
@@ -249,5 +249,10 @@ int joan_mqtt_request(unsigned command,const char*payload,char operation[65])
 int joan_mqtt_operation(const char*operation,char*response,size_t capacity)
 {
     unsigned i;int state=-1;if(!operation||!response||!capacity)return-1;pthread_mutex_lock(&mutex);for(i=0;i<16;i++)if(operations[i].state&&!strcmp(operations[i].id,operation)){state=operations[i].state;if(operations[i].response[0])snprintf(response,capacity,"%s",operations[i].response);else response[0]=0;break;}pthread_mutex_unlock(&mutex);return state==2?0:state==1?1:-1;
+}
+/* Stop waiting for an answer, so the next command of the same kind may go. */
+void joan_mqtt_abandon(const char*operation)
+{
+    unsigned i;pthread_mutex_lock(&mutex);for(i=0;i<16;i++)if(operations[i].state==1&&!strcmp(operations[i].id,operation))operations[i].state=3;pthread_mutex_unlock(&mutex);
 }
 const char *joan_mqtt_bridge_status(void){return state;}

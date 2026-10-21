@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         'JOAN_WEB_DIR': str(ROOT / 'web'), 'JOAN_INTEGRATION_HELPER': str(HELPER),
         'JOAN_MQTT_PORT': '0', 'JOAN_CONNECTIVITY_PORT': '0', 'JOAN_RTSP_PORT': '18594', 'JOAN_MDNS': '0',
     }
-    daemon = subprocess.Popen([BIN, '--plain-http', '--bind', '127.0.0.1', '--port', str(PORT)],
+    daemon = subprocess.Popen([BIN, '--plain-mqtt', '--bind', '127.0.0.1', '--port', str(PORT)],
                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(100):

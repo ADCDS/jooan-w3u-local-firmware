@@ -151,14 +151,13 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         "JOAN_WEB_DIR": str(ROOT / "web"),
         "JOAN_INTEGRATION_HELPER": str(HELPER),
         "JOAN_PORT": str(http_port),
-        "JOAN_REDIRECT_PORT": "0",
         "JOAN_MQTT_PORT": "0",
         "JOAN_RTSP_PORT": str(upstream_port),
         "JOAN_RTSP_PROXY_PORT": str(proxy_port),
         "JOAN_MDNS": "0",
     }
     process = subprocess.Popen(
-        [BIN, "--plain-http", "--bind", "127.0.0.1"],
+        [BIN, "--plain-mqtt", "--bind", "127.0.0.1"],
         env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

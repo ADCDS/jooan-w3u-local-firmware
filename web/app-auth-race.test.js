@@ -45,7 +45,7 @@ globalThis.document = {
   createElement: () => new Element(), hidden: false, addEventListener() {},
 };
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: '' } });
-globalThis.location = { search: '', protocol: 'https:', host: 'camera.local' };
+globalThis.location = { search: '', protocol: 'http:', host: 'camera.local' };
 globalThis.setInterval = () => 0;
 globalThis.FormData = class {
   constructor(form) { this.fields = form.fields || {}; }
@@ -78,8 +78,6 @@ globalThis.fetch = (path, options = {}) => {
   if (path === '/api/v1/streams') return ok({ streams: [] });
   if (path === '/api/v1/network/mdns') return ok({ address: 'camera.local', hostname: 'camera' });
   if (path === '/api/v1/ssh/authorized-keys') return ok({ authorized_keys: '' });
-  if (path === '/api/v1/ptz/presets') return ok({ status: '/op' });
-  if (path === '/op') return ok({ state: 'complete', response: { presets: [] } });
   if (path === '/api/v1/time') return ok({ epoch: 1730000000 });
   if (path === '/api/v1/timezone') return ok({ gmt_tz: 'GMT+00:00' });
   return ok({});

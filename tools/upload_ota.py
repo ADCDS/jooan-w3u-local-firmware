@@ -3,7 +3,7 @@
 
 This transport is intentionally limited to the exact unauthenticated OEM
 bootstrap.  Once jooan-local is active, subsequent releases are uploaded
-through its authenticated HTTPS update API instead.
+through its authenticated update API instead.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import socket
-import ssl
 import sys
 import time
 import uuid
@@ -92,7 +91,7 @@ def verify_release_index(
     return release_version, release_sequence
 
 
-def wait_for_https(
+def wait_for_release(
     host: str,
     port: int,
     timeout: float,
@@ -100,16 +99,9 @@ def wait_for_https(
     expected_sequence: int,
 ) -> bool:
     deadline = time.monotonic() + timeout
-    context = ssl._create_unverified_context()
     while time.monotonic() < deadline:
         try:
-            with socket.create_connection((host, port), timeout=3) as raw:
-                with context.wrap_socket(raw, server_hostname=host) as tls:
-                    certificate = tls.getpeercert(binary_form=True)
-            fingerprint = hashlib.sha256(certificate).hexdigest()
-            connection = http.client.HTTPSConnection(
-                host, port, timeout=5, context=context
-            )
+            connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request("GET", "/api/v1/setup/status")
             response = connection.getresponse()
             body = response.read()
@@ -123,15 +115,15 @@ def wait_for_https(
                 and status.get("release_version") == expected_version
                 and status.get("release_sequence") == expected_sequence
             ):
-                print(f"[+] HTTPS ready; certificate SHA-256 {fingerprint}")
+                print("[+] jooan-local is active")
                 return True
             if response.status == 200:
                 print(
-                    "[*] HTTPS answered but signed release identity is not active "
+                    "[*] the camera answered but signed release identity is not active "
                     f"(got {status.get('release_version')!r}/"
                     f"{status.get('release_sequence')!r})"
                 )
-        except (OSError, ssl.SSLError, http.client.HTTPException):
+        except (OSError, http.client.HTTPException):
             pass
         time.sleep(2)
     return False
@@ -144,7 +136,6 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=80)
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--no-wait", action="store_true")
-    parser.add_argument("--https-port", type=int, default=443)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--manifest-signature", type=Path)
     parser.add_argument(
@@ -194,7 +185,8 @@ def main() -> int:
             return 2
     except (socket.timeout, TimeoutError, ConnectionResetError, OSError) as error:
         # This camera commonly reboots after consuming the request but before
-        # GoAhead emits a valid response.  Post-boot HTTPS is the final proof.
+        # GoAhead emits a valid response.  The post-boot release identity is
+        # the final proof.
         print(f"[*] OEM connection ended after upload: {type(error).__name__}: {error}")
         if args.no_wait:
             print("[-] cannot prove that the camera accepted the upload without post-boot verification")
@@ -212,15 +204,16 @@ def main() -> int:
         "[*] waiting for signed release identity "
         f"{expected_version} sequence {expected_sequence}"
     )
-    if wait_for_https(
+    # jooan-local serves its own API on the port GoAhead used.
+    if wait_for_release(
         args.host,
-        args.https_port,
+        args.port,
         args.timeout,
         expected_version,
         expected_sequence,
     ):
         return 0
-    print("[-] package upload completed but HTTPS did not become healthy")
+    print("[-] package upload completed but jooan-local did not become healthy")
     return 3
 
 

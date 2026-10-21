@@ -43,26 +43,32 @@ shape are not sufficient compatibility evidence. Read
 
 The target release surface is local and authenticated:
 
-- HTTP on TCP/80 redirects to per-device HTTPS on TCP/443;
+- the maintenance Web UI and `/api/v1/` are plain HTTP on TCP/80. The sign-in
+  password and the session cookie cross the network unencrypted, so reach the
+  camera only from the trusted, isolated network it lives on (see below);
 - the administrator is `admin` with initial password `admin`;
   the password remains valid until changed, and the System zone reports whether
   the initial value is still in use;
-- each camera generates its own self-signed HTTPS identity; release artifacts
-  never contain a shared private key;
-- SSH on TCP/22 uses the same `admin` password as HTTPS; changing it updates
-  both services, and optional Ed25519 authorized keys may be added;
+- release artifacts never contain a shared private key; the one key the camera
+  generates for itself only serves TLS on the loopback MQTT sink `jooanipc`
+  connects to;
+- SSH on TCP/22 uses the same `admin` password as the Web UI; changing it
+  updates both services, and optional Ed25519 authorized keys may be added;
 - RTSP over TCP/554 is protected by Digest authentication using the same
   administrator password; the retained OEM RTSP service is loopback-only;
-- embedded DNS-SD advertises HTTPS, SSH, RTSP, and the camera service under a
+- embedded DNS-SD advertises HTTP, SSH, RTSP, and the camera service under a
   configurable `.local` hostname;
 - IPv4 and IPv6 default routes are removed and continuously pruned. Connected
   local-subnet routes remain, so local clients work without an Internet route.
   Administrator-allowlisted RFC1918/ULA prefixes are reinstalled as specific
   routes through the pruned gateway, so management clients on another local
   subnet can still be answered without ever restoring a default route;
-- exact-binary `jooanipc` containment blocks vendor cloud/P2P egress.
-- the OEM speaker and motion-alarm playback paths stay muted; the amplifier is
-  enabled only for a bounded, authenticated WebUI push-to-talk lease.
+- exact-binary `jooanipc` containment blocks vendor cloud/P2P egress;
+- NVRs such as Frigate control pan/tilt and presets over ONVIF, served on the
+  Web UI port under `/onvif/` and authenticated with a WS-Security digest of the
+  same `admin` password, so the password itself never crosses the network. The OEM ONVIF service, which checks no credentials,
+  stays on loopback.
+- the OEM speaker and motion-alarm playback paths stay muted.
 
 The generic image does not contain Wi-Fi credentials. It preserves the
 compatible unit's existing OEM Wi-Fi configuration, and replacement Wi-Fi
@@ -129,25 +135,27 @@ security; several OEM conveniences are intentionally not (yet) reimplemented.
 
 Legend: ✓ implemented · ~ partial · ✗ not implemented.
 
-| Capability (OEM app · `jooanipc`) | Retrofit (local WebUI + API) |
+| Capability (OEM app · `jooanipc`) | Retrofit (local WebUI, API, ONVIF) |
 |---|---|
 | **Video** | |
-| Live view, dual sensor — main 2304×1296 + sub 640×360 | ✓ fMP4 in the WebUI, per-sensor full screen |
+| Live view, dual sensor — main 2304×1296 + sub 640×360 | ✓ in an NVR such as Frigate, over RTSP; the WebUI is a maintenance console and plays no video |
 | Direct RTSP for NVR / VLC clients | ✓ both streams, Digest auth (OEM RTSP kept loopback-only) |
 | JPEG snapshot | ✗ (`/api/v1/snapshot` returns 501 — the loopback-only OEM GoAhead backend is disabled) |
 | Video flip / mirror | ✗ |
 | Digital zoom | ✗ |
 | OSD timestamp / logo overlay | ~ time and time-zone are set; overlay on/off toggles not exposed |
 | **Pan / tilt** | |
-| Jog (up / down / left / right) + stop | ✓ |
-| Presets — save / recall / delete | ✓ |
-| Home / calibration | ✓ go-to-home |
+| Jog (up / down / left / right) | ✓ ONVIF: one ~17° nudge per press, e.g. Frigate's arrows |
+| Presets — save / recall / delete | ✓ ONVIF: Frigate recalls; `tools/onvif_presets.py` saves, renames and deletes |
+| Control from an NVR (Frigate) | ✓ ONVIF on port 80; no zoom or autotracking |
+| Home / calibration | ~ homes on every boot; save a preset for a go-to-home |
 | Cruise / patrol schedule | ✗ |
 | Auto-tracking | ✗ |
 | Privacy / PTZ-hide schedule | ✗ |
 | **Audio** | |
-| Listen (camera microphone) | ✓ |
-| Two-way talk | ✓ push-to-talk over the retrofit's own DSP path (not the OEM video-call) |
+| Listen (camera microphone) | ✗ (retired with the in-browser media client) |
+| Two-way talk | ✗ (retired with the in-browser media client) |
+| Pause OEM microphone processing to save CPU | ✓ persistent, optional System setting with automatic recovery |
 | Speaker volume | ✗ |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |
@@ -173,25 +181,25 @@ Legend: ✓ implemented · ~ partial · ✗ not implemented.
 | Reboot | ✗ (only implicitly, when a signed update is applied) |
 | Device info / UID | ~ version and state in `/api/v1/status` |
 
-Beyond the OEM app, the retrofit adds per-device **HTTPS**, **SSH**
+Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
 (password-synchronized, optional Ed25519 keys), **mDNS** `.local` naming,
-**local-only egress** (continuous default-route pruning), and exact-binary
-`jooanipc` **cloud/P2P containment**.
+**local-only egress** (continuous default-route pruning), exact-binary
+`jooanipc` **cloud/P2P containment**, and an authenticated **ONVIF** subset for
+NVRs.
 
 ## Status and limitations
 
-The implemented software target includes per-device HTTPS; a Web UI with
-main/sub fragmented-MP4 playback; camera-microphone listening and press-to-talk;
-PTZ jog/stop, home, and preset controls; transactional Wi-Fi; password-synchronized
-SSH with optional keys; embedded DNS-SD; signed, sequence-gated updates; and
-exact-binary `jooanipc` containment. Host/native and emulated tests exercise
+The implemented software target includes a maintenance Web UI over plain HTTP;
+Digest-protected RTSP for both sensors; ONVIF pan/tilt and presets for NVRs;
+transactional Wi-Fi; password-synchronized SSH with optional keys; embedded
+DNS-SD; signed, sequence-gated updates; and exact-binary `jooanipc` containment. Host/native and emulated tests exercise
 these contracts. The current `0.1.0` line also replaces the earlier expanded
 on-flash controller with a compressed core, persistent SSH recovery bundle, and
 a journaled single-runtime maintenance transaction for updates and migration.
 
 No release is supported or hardware-qualified yet. The software remains a
-pre-release until signed install/uninstall, migration, Wi-Fi, fMP4, snapshot,
-PTZ, audio, SSH, routing, power-loss, and cold-recovery gates pass on the
+pre-release until signed install/uninstall, migration, Wi-Fi, RTSP, ONVIF PTZ,
+SSH, routing, power-loss, and cold-recovery gates pass on the
 physical JA-A12 unit and a supported tag is published.
 
 The verified SKW6316 firmware connects to Realtek-based WPA bench access

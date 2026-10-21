@@ -38,13 +38,16 @@ $(BUILD)/guard_probe: guard_probe.c guard_policy.c guard_sha256.c $(AUDIO_GUARD)
 $(BUILD)/guard_child_probe: guard_child_probe.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c99 -o $@ guard_child_probe.c
 
-test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
+$(BUILD)/test_audio_pause_guard: test_audio_pause_guard.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c99 -o $@ $< -pthread -ldl
+
+test: $(BUILD)/test_audio_pause_guard $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	$(BUILD)/test_guard $(BUILD)/guard_probe $(BUILD)/guard_child_probe
 	$(BUILD)/test_guard
 	@set -eu; \
 	case "$(CURDIR)" in *:*) echo "test path cannot contain ':'" >&2; exit 1;; esac; \
 	test_tmp=$$(mktemp -d /tmp/jooan-guard-test.XXXXXX); \
-	trap 'rm -f "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/speaker-direction" "$$test_tmp/speaker-value" "$$test_tmp/speaker-ready" "$$test_tmp/speaker-released" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
+	trap 'rm -f "$$test_tmp/audio-lease" "$$test_tmp/audio-active" "$$test_tmp/dsp" "$$test_tmp/talkback.sock" "$$test_tmp/mic.sock" "$$test_tmp/speaker-direction" "$$test_tmp/speaker-value" "$$test_tmp/speaker-ready" "$$test_tmp/speaker-released" "$$test_tmp/jooanipc" "$$test_tmp/rtsp.password" "$$test_tmp/rtsp.synced"; rmdir "$$test_tmp"' EXIT; \
 	printf out > "$$test_tmp/speaker-direction"; \
 	printf 1 > "$$test_tmp/speaker-value"; \
 	printf released > "$$test_tmp/speaker-released"; \
@@ -61,6 +64,8 @@ test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	export JOOAN_GUARD_TEST_RTSP_PASSWORD_PATH="$$test_tmp/rtsp.password"; \
 	export JOOAN_GUARD_TEST_RTSP_SYNC_PATH="$$test_tmp/rtsp.synced"; \
 	export JOOAN_GUARD_TEST_RTSP_GATE_ALL=1; \
+	export JOOAN_GUARD_TEST_AUDIO_LEASE="$$test_tmp/audio-lease"; \
+	export JOOAN_GUARD_TEST_AUDIO_ACTIVE="$$test_tmp/audio-active"; \
 	export LD_PRELOAD="$(CURDIR)/$(BUILD)/libjooan_guard_test.so"; \
 	$(BUILD)/guard_probe policy; \
 	$(BUILD)/guard_probe talkback; \
@@ -73,11 +78,12 @@ test: $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 	set +e; LD_PRELOAD="$(CURDIR)/$(BUILD)/libjooan_guard.so" \
 		"$$test_tmp/jooanipc"; unsupported_rc=$$?; set -e; \
 	[ "$$unsupported_rc" = 126 ]; \
+	JOOAN_GUARD_TEST_EXE="$(CURDIR)/$(BUILD)/test_audio_pause_guard" $(BUILD)/test_audio_pause_guard; \
 	echo "guard preload tests: ok"
 
 clean:
 	rm -f $(BUILD)/libjooan_guard.so $(BUILD)/libjooan_guard_test.so \
 		$(BUILD)/libjooan_guard.mips-glibc.so $(BUILD)/test_guard \
-		$(BUILD)/guard_probe $(BUILD)/guard_child_probe \
+		$(BUILD)/guard_probe $(BUILD)/test_audio_pause_guard $(BUILD)/guard_child_probe \
 		$(BUILD)/guard_child_probe.mips
 	@rmdir $(BUILD) 2>/dev/null || :
