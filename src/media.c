@@ -50,26 +50,34 @@ static size_t annexb_next(const unsigned char *data, size_t size, size_t start,
 int jipc_streams_init(jipc_app *app)
 {
     memset(app->streams, 0, sizeof app->streams);
+    /* Reader deadlines use the monotonic clock: an NTP step of the wall clock
+     * must not stall or prematurely expire stream consumers. */
+    pthread_condattr_t monotonic;
+    if (pthread_condattr_init(&monotonic)) return -1;
+    if (pthread_condattr_setclock(&monotonic, CLOCK_MONOTONIC)) { pthread_condattr_destroy(&monotonic); return -1; }
     for (unsigned i = 0; i < JIPC_STREAMS; ++i) {
         if (pthread_mutex_init(&app->streams[i].mutex, NULL)) {
             while (i--) {
                 pthread_cond_destroy(&app->streams[i].ready);
                 pthread_mutex_destroy(&app->streams[i].mutex);
             }
+            pthread_condattr_destroy(&monotonic);
             return -1;
         }
-        if (pthread_cond_init(&app->streams[i].ready, NULL)) {
+        if (pthread_cond_init(&app->streams[i].ready, &monotonic)) {
             pthread_mutex_destroy(&app->streams[i].mutex);
             while (i--) {
                 pthread_cond_destroy(&app->streams[i].ready);
                 pthread_mutex_destroy(&app->streams[i].mutex);
             }
+            pthread_condattr_destroy(&monotonic);
             return -1;
         }
         app->streams[i].width = jipc_video_width(&app->config, i);
         app->streams[i].height = jipc_video_height(&app->config, i);
         app->streams[i].fps = app->config.fps;
     }
+    pthread_condattr_destroy(&monotonic);
     return 0;
 }
 
@@ -138,7 +146,7 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
     memset(out, 0, sizeof *out);
     jipc_stream *stream = &app->streams[channel];
     struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
     deadline.tv_sec += timeout_ms / 1000;
     deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
     if (deadline.tv_nsec >= 1000000000L) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000L; }

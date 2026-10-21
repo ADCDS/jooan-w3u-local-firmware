@@ -45,6 +45,9 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     char status[8192]; if (jipc_platform_status_json(app, status, sizeof(status)) >= 0) {
         cJSON *platform = cJSON_Parse(status); if (platform) cJSON_AddItemToObject(o, "platform", platform);
     }
+    if (jipc_ntp_status_json(app, status, sizeof(status)) >= 0) {
+        cJSON *clock = cJSON_Parse(status); if (clock) cJSON_AddItemToObject(o, "clock", clock);
+    }
     char *text = cJSON_PrintUnformatted(o); int rc = -1;
     if (text && strlen(text) < capacity) { strcpy(out, text); rc = (int)strlen(text); }
     cJSON_free(text); cJSON_Delete(o); return rc;
@@ -137,7 +140,7 @@ int main(int argc, char **argv)
         pthread_mutex_init(&app->config_mutex, NULL); pthread_mutex_init(&app->control_mutex, NULL);
         atomic_init(&app->backend_ready, 0); atomic_init(&app->control_waiters, 0);
         if (jipc_mkdirs(config.state_dir, 0700) || jipc_streams_init(app)) { free(app); return 1; }
-        if (jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {
+        if (jipc_ntp_start(app) || jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {
             jipc_log("error", "startup failed: %s", app->backend_error[0] ? app->backend_error : "see previous service diagnostics"); result = 1;
         } else {
             jipc_log("info", "ready: backend=%s, %u video streams", config.backend, config.sensors * 2);
@@ -162,7 +165,7 @@ int main(int argc, char **argv)
             }
         }
         int restart = !result && !interrupted && (!deadline || jipc_now_us() < deadline) && (reload_requested || app->restart);
-        app->stop = 1; jipc_discovery_stop(app); jipc_http_stop(app); jipc_rtsp_stop(app); jipc_record_stop(app);
+        app->stop = 1; jipc_discovery_stop(app); jipc_http_stop(app); jipc_ntp_stop(app); jipc_rtsp_stop(app); jipc_record_stop(app);
         jipc_backend_stop(app); jipc_platform_stop(app); jipc_streams_destroy(app);
         pthread_mutex_destroy(&app->control_mutex); pthread_mutex_destroy(&app->config_mutex); free(app);
         if (!restart) break;

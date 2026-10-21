@@ -274,7 +274,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
     span action=d.el[d.action].name;envelope(&w);
     if(named(action,"GetSystemDateAndTime")){
         time_t now=time(NULL);struct tm utc;if(!gmtime_r(&now,&utc))return fault(&w,"Action","Clock unavailable");
-        put(&w,"<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:DateTimeType>Manual</tt:DateTimeType><tt:DaylightSavings>false</tt:DaylightSavings><tt:TimeZone><tt:TZ>UTC0</tt:TZ></tt:TimeZone><tt:UTCDateTime>");date_xml(&w,&utc);put(&w,"</tt:UTCDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>");
+        put(&w,"<tds:GetSystemDateAndTimeResponse><tds:SystemDateAndTime><tt:DateTimeType>%s</tt:DateTimeType><tt:DaylightSavings>false</tt:DaylightSavings><tt:TimeZone><tt:TZ>UTC0</tt:TZ></tt:TimeZone><tt:UTCDateTime>",c.ntp_server[0]?"NTP":"Manual");date_xml(&w,&utc);put(&w,"</tt:UTCDateTime></tds:SystemDateAndTime></tds:GetSystemDateAndTimeResponse>");
     }else if(named(action,"GetDeviceInformation")){
         put(&w,"<tds:GetDeviceInformationResponse><tds:Manufacturer>jooanipc-open</tds:Manufacturer><tds:Model>JOOAN W3-U local replacement</tds:Model><tds:FirmwareVersion>%s</tds:FirmwareVersion><tds:SerialNumber>local-camera</tds:SerialNumber><tds:HardwareId>Ingenic-T23</tds:HardwareId></tds:GetDeviceInformationResponse>",JIPC_VERSION);
     }else if(named(action,"GetCapabilities")){

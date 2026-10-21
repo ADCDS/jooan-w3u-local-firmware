@@ -38,6 +38,7 @@ JA-A12 storage budget and required boot dependencies.
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery |
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
+| Clock | Optional SNTP client for the RTC-less board: random origin cookie, clock steps of one second or more, status under `clock` |
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
 | Audio | Native microphone PCM to 8 kHz PCMA, PCMA speaker input; replay produces labeled simulated silence |

@@ -13,8 +13,10 @@ import secrets
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -32,6 +34,40 @@ def run(command, **kwargs):
     if result.returncode:
         raise AssertionError(f"Command failed ({result.returncode}): {command[0]}\n{result.stdout}\n{result.stderr}")
     return result
+
+
+def sntp_server(stop):
+    """Loopback SNTP server answering with this host's own clock.
+
+    Every request first receives a forged reply with the wrong origin cookie,
+    which the daemon must ignore. The genuine reply's offset is below the
+    daemon's step threshold, so the test never moves the host clock.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(0.2)
+    counts = {"requests": 0, "forged": 0}
+
+    def stamp(now):
+        return struct.pack("!II", (int(now) + 2208988800) & 0xffffffff, int((now % 1) * 2**32))
+
+    def serve():
+        while not stop.is_set():
+            try:
+                request, peer = sock.recvfrom(512)
+            except socket.timeout:
+                continue
+            if len(request) < 48 or request[0] & 7 != 3:
+                continue
+            counts["requests"] += 1
+            received = stamp(time.time())
+            sock.sendto(bytes([0x24, 2]) + bytes(30) + received + stamp(time.time()), peer)
+            counts["forged"] += 1
+            sock.sendto(bytes([0x24, 2]) + bytes(22) + request[40:48] + received + stamp(time.time()), peer)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    return sock, thread, counts
 
 
 def main():
@@ -65,12 +101,16 @@ def main():
                  "-pix_fmt", "yuv420p", "-f", "h264", fixed_fixture])
         http_port, rtsp_port, discovery_port = port(), port(), port(socket.SOCK_DGRAM)
         secret = "test-" + secrets.token_hex(12)
+        ntp_stop = threading.Event()
+        ntp_socket, ntp_thread, ntp_counts = sntp_server(ntp_stop)
+        ntp_port = ntp_socket.getsockname()[1]
         config = root / "camera.ini"
         # Empty file-side input intentionally exercises CLI override bootstrap/reload.
         config.write_text(f"username=admin\npassword={secret}\nbackend=replay\ninput0=\n"
                           f"width=320\nheight=240\nsub_width=320\nsub_height=240\n"
                           f"state_dir={root / 'state'}\nrecord_dir={root / 'recordings'}\n"
-                          f"record_seconds=1\nrecord_max_mb=2\ndiscovery_port={discovery_port}\n")
+                          f"record_seconds=1\nrecord_max_mb=2\ndiscovery_port={discovery_port}\n"
+                          f"ntp_server=127.0.0.1:{ntp_port}\n")
         if args.main_only:
             text = config.read_text().replace("sub_width=320", "sub_width=160").replace("sub_height=240", "sub_height=120")
             config.write_text(text + f"main_only=1\nwidth1=160\nheight1=120\ninput2={fixed_fixture}\n")
@@ -122,6 +162,27 @@ def main():
             status = wait_ready()
             assert status["backend"] == "replay" and "platform" in status
             result["checks"].append("CLI input override and ready status")
+            deadline = time.monotonic() + 10
+            while True:
+                clock = json.loads(request("GET", "/api/v1/status")[1])["clock"]
+                if clock["synchronized"] or time.monotonic() > deadline:
+                    break
+                time.sleep(0.1)
+            assert clock["source"] == "ntp" and clock["synchronized"], clock
+            assert clock["error"] == "" and abs(clock["last_offset_ms"]) < 1000, clock
+            assert ntp_counts["forged"] >= 1, ntp_counts
+            client = (http.client.HTTPSConnection("127.0.0.1", http_port, context=context, timeout=5)
+                      if args.tls else http.client.HTTPConnection("127.0.0.1", http_port, timeout=5))
+            try:
+                client.request("POST", "/onvif/device_service", headers={"Content-Type": "application/soap+xml"},
+                               body='<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>'
+                                    '<GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/>'
+                                    '</s:Body></s:Envelope>')
+                assert b"<tt:DateTimeType>NTP</tt:DateTimeType>" in client.getresponse().read()
+            finally:
+                client.close()
+            result["clock"] = clock
+            result["checks"].append("SNTP sync ignoring a forged-origin reply; ONVIF reports NTP time")
             protocol = run(["python3", here / "test_rtsp.py", "--port", rtsp_port,
                             "--username", "admin", "--password", secret, "--audio"], timeout=100)
             result["rtsp_protocol"] = protocol.stderr.strip()
@@ -216,6 +277,7 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill(); process.wait()
                 raise AssertionError("Daemon did not shut down within15seconds")
+            ntp_stop.set(); ntp_thread.join(); ntp_socket.close()
             log.close()
             result["daemon_exit"] = process.returncode
             result["daemon_log"] = (root / "daemon.log").read_text()

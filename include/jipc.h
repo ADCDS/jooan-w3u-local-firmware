@@ -35,6 +35,7 @@ typedef struct {
     char backend[16], replay[JIPC_VIDEO_STREAMS][512], libimp[512];
     char state_dir[512], record_dir[512], config_path[512];
     char tls_cert[512], tls_key[512];
+    char ntp_server[64];
     unsigned http_port, rtsp_port, max_clients, fps, bitrate;
     unsigned width, height, sub_width, sub_height;
     unsigned width1, height1, bitrate1, sub_bitrate, gop_frames;
@@ -62,6 +63,9 @@ typedef struct jipc_app {
     void *discovery_state;
     pthread_t discovery_thread;
     int discovery_started;
+    void *ntp_state;
+    pthread_t ntp_thread;
+    int ntp_started;
     pthread_mutex_t control_mutex;
     atomic_int backend_ready;
     atomic_int control_waiters;
@@ -141,6 +145,13 @@ int jipc_http_start(jipc_app *app);
 void jipc_http_stop(jipc_app *app);
 int jipc_discovery_start(jipc_app *app);
 void jipc_discovery_stop(jipc_app *app);
+/* SNTP client for a board without an RTC; ntp_server is "IPv4[:port]". */
+int jipc_ntp_server(const char *text, uint32_t *address, uint16_t *port);
+int jipc_ntp_offset(const unsigned char *reply, size_t size, const unsigned char origin[8],
+                    int64_t sent_us, uint64_t round_trip_us, int64_t *offset_us);
+int jipc_ntp_start(jipc_app *app);
+void jipc_ntp_stop(jipc_app *app);
+int jipc_ntp_status_json(jipc_app *app, char *out, size_t capacity);
 int jipc_record_start(jipc_app *app);
 void jipc_record_stop(jipc_app *app);
 int jipc_record_set(jipc_app *app, int enabled);

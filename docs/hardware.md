@@ -296,8 +296,21 @@ public UTC and offsets WSSE timestamps while retaining PasswordDigest. Use
 `tls_insecure: false` on this Frigate version: its option also changes token
 encoding. Configure ONVIF host as HTTPS and the actual 18443 port. Native RTSP
 on 18554 uses ch0 for the movable view and ch2 for the second lens. Frigate's
-recording timeline uses the NVR host's clock. No camera egress or router changes
-are required for this arrangement.
+recording timeline uses the NVR host's clock.
+
+Frigate measures that offset once, when its ONVIF session starts. The restored
+`last-time` lags real time by the camera's downtime plus the save interval, so
+after a camera reboot every WSSE timestamp falls outside the 300-second window:
+PTZ and presets fail with `'NoneType' object has no attribute 'getroottree'`
+until Frigate restarts. Set `ntp_server` to a local SNTP server, normally the
+IoT gateway, to keep the camera on real UTC instead. The client retries every
+30 seconds until it synchronizes, then polls hourly, and steps the clock when
+the offset reaches one second. Replies must echo a random origin cookie; it is
+otherwise unauthenticated SNTP, so use a server on the camera's own network.
+`GET /api/v1/status` reports `clock`. The controller saves only forward clock
+moves, so the corrected time also becomes the next boot's restored value.
+This needs inbound UDP 123 on the gateway from the camera's network, and
+nothing else; leave `ntp_server` empty to keep the original arrangement.
 
 That ONVIF offset is cached by the tested Frigate client. In the 1080p reboot
 test, the camera clock moved backward by about 967 seconds; video recovered

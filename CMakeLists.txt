@@ -32,7 +32,7 @@ add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
 add_library(jipc_core STATIC src/util.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
-  src/platform.c src/rtsp.c src/http.c src/onvif.c src/discovery.c src/record.c)
+  src/platform.c src/rtsp.c src/http.c src/onvif.c src/discovery.c src/ntp.c src/record.c)
 target_include_directories(jipc_core PUBLIC include)
 target_compile_definitions(jipc_core PUBLIC JIPC_WITH_MBEDTLS _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE _LARGEFILE64_SOURCE)
 target_compile_options(jipc_core PRIVATE -Wall -Wextra -Werror -ffunction-sections -fdata-sections)

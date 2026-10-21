@@ -53,6 +53,7 @@ static const setting settings[] = {
     STRING_SETTING("input2", replay[2]), STRING_SETTING("input3", replay[3]),
     STRING_SETTING("state_dir", state_dir), STRING_SETTING("record_dir", record_dir),
     STRING_SETTING("tls_cert", tls_cert), STRING_SETTING("tls_key", tls_key),
+    STRING_SETTING("ntp_server", ntp_server),
     NUMBER_SETTING("http_port", http_port), NUMBER_SETTING("rtsp_port", rtsp_port),
     NUMBER_SETTING("max_clients", max_clients), NUMBER_SETTING("fps", fps), NUMBER_SETTING("bitrate", bitrate),
     NUMBER_SETTING("width", width), NUMBER_SETTING("height", height), NUMBER_SETTING("sub_width", sub_width),
@@ -135,6 +136,9 @@ int jipc_config_validate(const jipc_config *c, char *error, size_t capacity)
         !c->rtsp_port || c->rtsp_port > 65535 || c->http_port == c->rtsp_port)
         return fail(error, capacity, "bind must be an IPv4 address with distinct valid server ports");
     if ((c->tls_cert[0] != 0) != (c->tls_key[0] != 0)) return fail(error, capacity, "TLS requires both certificate and private key");
+    uint32_t ntp_address; uint16_t ntp_port;
+    if (c->ntp_server[0] && jipc_ntp_server(c->ntp_server, &ntp_address, &ntp_port))
+        return fail(error, capacity, "ntp_server must be an IPv4 address with an optional :port");
     if (!c->tls_cert[0] && !c->allow_plain_http && (ntohl(bind_address.s_addr) >> 24) != 127)
         return fail(error, capacity, "LAN HTTP requires TLS or explicit allow_plain_http=1");
     if (c->sensors < 1 || c->sensors > 2 || c->max_clients < 1 || c->max_clients > 8 || c->fps < 1 || c->fps > 30 || c->bitrate < 64 || c->bitrate > 8192)
@@ -202,9 +206,11 @@ int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capac
     for (cJSON *v = o->child; v; v = v->next) {
         for (cJSON *w = v->next; w; w = w->next) if (!strcmp(v->string, w->string)) goto invalid;
         const setting *s = find_setting(v->string);
-        /* Filesystem roots, listener endpoints and input/plugin paths are local-administrator settings. */
+        /* Filesystem roots, listener endpoints, input/plugin paths and the
+         * system clock source are local-administrator settings. */
         if (!s || !strcmp(s->name, "bind") || strstr(s->name, "port") || !strcmp(s->name, "backend") ||
             !strcmp(s->name, "realm") || strstr(s->name, "dir") || !strcmp(s->name, "libimp") ||
+            !strcmp(s->name, "ntp_server") ||
             !strncmp(s->name, "input", 5) || !strncmp(s->name, "tls_", 4) || !strcmp(s->name, "allow_plain_http") || !strcmp(s->name,"watchdog")) goto invalid;
         unsigned char *dest = (unsigned char *)&next + s->offset;
         if (!s->numeric) { if (!cJSON_IsString(v) || strlen(v->valuestring) >= s->capacity) goto invalid; strcpy((char *)dest, v->valuestring); }

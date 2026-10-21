@@ -8,6 +8,70 @@
 #include <unistd.h>
 static unsigned checks;
 #define CHECK(expression) do { ++checks; if (!(expression)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expression); exit(1); } } while (0)
+static void ntp_stamp(unsigned char *p, int64_t unix_us)
+{
+    uint64_t seconds = ((uint64_t)(unix_us / 1000000) + 2208988800ULL) & 0xffffffffu;
+    uint64_t value = seconds << 32 | (((uint64_t)(unix_us % 1000000) << 32) / 1000000);
+    for (int i = 7; i >= 0; --i) { p[i] = (unsigned char)value; value >>= 8; }
+}
+static void ntp_reply(unsigned char reply[48], const unsigned char origin[8], int64_t received, int64_t transmitted)
+{
+    memset(reply, 0, 48); reply[0] = 0x24; reply[1] = 2; /* leap 0, version 4, server; stratum 2 */
+    memcpy(reply + 24, origin, 8); ntp_stamp(reply + 32, received); ntp_stamp(reply + 40, transmitted);
+}
+static void ntp_checks(jipc_app *app)
+{
+    uint32_t address = 0; uint16_t port = 0; char error[256];
+    CHECK(!jipc_ntp_server("192.0.2.1", &address, &port) && address == 0xc0000201u && port == 123);
+    CHECK(!jipc_ntp_server("127.0.0.1:12345", &address, &port) && address == 0x7f000001u && port == 12345);
+    const char *bad_servers[] = { "", "0.0.0.0", "gateway.lan", "1.2.3.4:", "1.2.3.4:0", "1.2.3.4:65536",
+                                  "1.2.3.4:+5", "1.2.3.4:5x", "1.2.3.4 ", "::1" };
+    for (size_t i = 0; i < sizeof(bad_servers) / sizeof(bad_servers[0]); ++i)
+        CHECK(jipc_ntp_server(bad_servers[i], &address, &port) < 0);
+
+    /* Local-only setting: validated, persisted, never accepted from the API. */
+    strcpy(app->config.ntp_server, "gateway.lan"); CHECK(jipc_config_validate(&app->config, error, sizeof(error)) < 0);
+    strcpy(app->config.ntp_server, "192.0.2.1"); CHECK(!jipc_config_validate(&app->config, error, sizeof(error)));
+    CHECK(!jipc_config_save(&app->config));
+    jipc_config loaded; jipc_config_defaults(&loaded);
+    CHECK(!jipc_config_load(&loaded, app->config.config_path, error, sizeof(error)) && !strcmp(loaded.ntp_server, "192.0.2.1"));
+    CHECK(jipc_config_patch(app, "{\"ntp_server\":\"10.0.0.1\"}", error, sizeof(error)) < 0);
+    CHECK(!strcmp(app->config.ntp_server, "192.0.2.1"));
+
+    const unsigned char origin[8] = {1, 2, 3, 4, 5, 6, 7, 8}, other[8] = {8, 7, 6, 5, 4, 3, 2, 1};
+    const int64_t real = 1792588800LL * 1000000; /* 2026-10-21T00:00:00Z */
+    unsigned char reply[48]; int64_t offset = 0;
+    /* Camera restored a saved clock nine hours behind; 30 ms round trip. */
+    int64_t sent = real - 9LL * 3600 * 1000000;
+    ntp_reply(reply, origin, real + 10000, real + 11000);
+    CHECK(!jipc_ntp_offset(reply, 48, origin, sent, 30000, &offset) && offset == 9LL * 3600 * 1000000 - 4500);
+    /* Camera ahead of the server. */
+    ntp_reply(reply, origin, real, real);
+    CHECK(!jipc_ntp_offset(reply, 48, origin, real + 120000000, 0, &offset) && offset == -120000000);
+    /* NTP era 1 (after 2036-02-07) decodes from the wrapped seconds field. */
+    const int64_t era1 = 2208988800LL * 1000000; /* 2040-01-01T00:00:00Z */
+    ntp_reply(reply, origin, era1 + 5000000, era1 + 5000000);
+    CHECK(!jipc_ntp_offset(reply, 48, origin, era1, 0, &offset) && offset == 5000000);
+
+    ntp_reply(reply, origin, real, real);
+    CHECK(jipc_ntp_offset(reply, 47, origin, real, 1000, &offset) < 0);
+    CHECK(jipc_ntp_offset(reply, 48, other, real, 1000, &offset) < 0);
+    reply[0] = 0x23; CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);  /* client mode */
+    reply[0] = 0xe4; CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);  /* leap 3 */
+    reply[0] = 0x14; CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);  /* version 2 */
+    reply[0] = 0x1c; CHECK(!jipc_ntp_offset(reply, 48, origin, real, 1000, &offset)); /* version 3 */
+    reply[0] = 0x24; reply[1] = 0; CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);
+    reply[1] = 16; CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);
+    reply[1] = 2; memset(reply + 40, 0, 8); CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);
+    ntp_reply(reply, origin, real + 2000, real + 1000);   /* transmitted before received */
+    CHECK(jipc_ntp_offset(reply, 48, origin, real, 5000, &offset) < 0);
+    ntp_reply(reply, origin, real, real + 6000);          /* server time exceeds round trip */
+    CHECK(jipc_ntp_offset(reply, 48, origin, real, 5000, &offset) < 0);
+    ntp_reply(reply, origin, 1735689600LL * 1000000, 1735689600LL * 1000000); /* 2025 */
+    CHECK(jipc_ntp_offset(reply, 48, origin, real, 1000, &offset) < 0);
+
+    app->config.ntp_server[0] = 0; CHECK(!jipc_config_save(&app->config));
+}
 int main(void)
 {
     CHECK(sizeof(off_t) >= 8);
@@ -109,6 +173,7 @@ int main(void)
     jipc_ptz_status status; CHECK(!jipc_platform_status(&app, &status, error, sizeof(error))); CHECK(status.white_light == 1);
     CHECK(jipc_platform_control(&app, "ptz", 101, 0, error, sizeof(error)) < 0);
     CHECK(jipc_platform_status_json(&app, json, sizeof(json)) > 0);
+    ntp_checks(&app);
     jipc_platform_stop(&app); jipc_streams_destroy(&app);
     pthread_mutex_destroy(&app.control_mutex); pthread_mutex_destroy(&app.config_mutex);
     unlink(app.config.config_path); rmdir(app.config.state_dir); rmdir(temporary);
