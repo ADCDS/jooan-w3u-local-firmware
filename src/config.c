@@ -66,7 +66,7 @@ static const setting settings[] = {
     BOOL_SETTING("audio", audio), BOOL_SETTING("recording", recording), BOOL_SETTING("allow_plain_http", allow_plain_http),
     BOOL_SETTING("discovery", discovery), NUMBER_SETTING("discovery_port", discovery_port),
     BOOL_SETTING("watchdog", watchdog), BOOL_SETTING("onvif_nudge", onvif_nudge),
-    BOOL_SETTING("main_only", main_only),
+    BOOL_SETTING("main_only", main_only), BOOL_SETTING("motor_home", motor_home),
 };
 static const setting *find_setting(const char *name)
 {
@@ -210,7 +210,7 @@ int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capac
          * system clock source are local-administrator settings. */
         if (!s || !strcmp(s->name, "bind") || strstr(s->name, "port") || !strcmp(s->name, "backend") ||
             !strcmp(s->name, "realm") || strstr(s->name, "dir") || !strcmp(s->name, "libimp") ||
-            !strcmp(s->name, "ntp_server") ||
+            !strcmp(s->name, "ntp_server") || !strcmp(s->name, "motor_home") ||
             !strncmp(s->name, "input", 5) || !strncmp(s->name, "tls_", 4) || !strcmp(s->name, "allow_plain_http") || !strcmp(s->name,"watchdog")) goto invalid;
         unsigned char *dest = (unsigned char *)&next + s->offset;
         if (!s->numeric) { if (!cJSON_IsString(v) || strlen(v->valuestring) >= s->capacity) goto invalid; strcpy((char *)dest, v->valuestring); }

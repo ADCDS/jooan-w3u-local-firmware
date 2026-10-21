@@ -143,6 +143,7 @@ int main(int argc, char **argv)
         if (jipc_ntp_start(app) || jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {
             jipc_log("error", "startup failed: %s", app->backend_error[0] ? app->backend_error : "see previous service diagnostics"); result = 1;
         } else {
+            if (jipc_platform_start(app)) jipc_log("error", "pan/tilt homing failed; PTZ reports the fault");
             jipc_log("info", "ready: backend=%s, %u video streams", config.backend, config.sensors * 2);
             while (!interrupted && !reload_requested && !app->restart && (!deadline || jipc_now_us() < deadline)) {
                 int ready = app->backend_ready;

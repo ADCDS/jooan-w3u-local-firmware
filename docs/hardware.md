@@ -338,6 +338,23 @@ during full-scene motion. Observed processing drops recovered to the configured
 5 fps; live capture/recording remained available. SHM had more than 115 MiB free,
 so its sizing recommendation did not indicate an exhausted frame store.
 
+## Native boot
+
+With the local controller 0.2.23 or later, `/opt/jooanipc-open/native` selects
+a boot in which the OEM application never starts. The controller's `local.rc`
+turns `startapp`'s `jooanipc` and `my_watch_dog` into no-ops, feeds the hardware
+watchdog with the rootfs `watchdog`, starts `wpa_supplicant` and `udhcpc` with
+the OEM's arguments, and runs `scripts/native-boot.sh` installed as
+`/opt/jooanipc-open/native-boot.sh`. That script verifies the release as the
+handoff does, waits for the gateway, stops the feeder, launches the daemon
+(which requires `motor_home=1`, homes pan/tilt and arms its own watchdog) and
+qualifies for one watchdog period with homing complete. Its stages are kept in
+`/opt/jooanipc-open/native-trial` until qualification. A boot that finds that
+file renames it `native-failed` and boots the guarded handoff instead, as does
+any boot without `native`; delete `native-failed` to retry. If nothing takes
+over the feeder within ten minutes it is killed without the magic close, so a
+hung native boot resets into that fallback.
+
 ## Camera release bundles
 
 `scripts/install-camera.py` installs both layers of a JA-A12 deployment from
@@ -368,8 +385,10 @@ reboot. Without `--yes` only the host and camera preflight runs.
 }
 ```
 
-Either layer may be omitted. `files` maps camera paths to new contents, or to
-`null` for deletion. Bundles contain vendor-derived appfs images and backups
+Either layer may be omitted. `files` maps camera paths to new contents, to
+`{"from": "<file in the bundle>", "mode": "700"}`, or to `null` for deletion.
+With a media layer, `camera_ini` changes go into the staged configuration the
+appfs installer commits, so new keys meet the binary that accepts them. Bundles contain vendor-derived appfs images and backups
 holding the camera password, so keep them private. The appfs installer stops
 the native media owner, hands the armed watchdog to a rootfs feeder, keeps a
 RAM copy of the current partition, and verifies the flash by full readback;

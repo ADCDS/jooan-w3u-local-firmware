@@ -19,7 +19,7 @@ numbers synthesized for the host architecture.
 | Request | Argument | Use |
 | --- | --- | --- |
 | 1 | none | Stop |
-| 2 | four int32: maximum X, maximum Y, current X, current Y | Reset/calibration; deliberately not issued automatically |
+| 2 | four int32: maximum X, maximum Y, current X, current Y | Reset/calibration; boot homing only (`motor_home=1`) |
 | 3 | two signed int32: delta X, delta Y | Move; can block when both axes are requested |
 | 4 | four int32 returned: X, Y, moving, speed | Position/status |
 | 5 | int32 pointer, accepted range 100–900 | Speed |
@@ -74,12 +74,21 @@ guarantee physical stopping or syscall completion during a kernel/driver fault.
 Native pan, tilt, the manual deadman stop, and repeated mixed-axis preset
 return passed on this target. This does not establish fault-time stop latency.
 
-No implicit homing is performed. On a fresh kernel/module load the driver's
-coordinate origin may not match the physical camera until calibration. Saved
-presets are meaningful only in the same calibrated coordinate system; the
-replacement does not silently perform the OEM's long end-stop reset sequence.
-The optional boot handoff retains OEM calibration and requires a fresh
-successful complete `motor_step_reset` episode before stopping the bootstrap owner.
+On a fresh kernel/module load the driver's coordinate origin may not match
+the physical camera until calibration, and saved presets are meaningful only
+in that calibrated coordinate system. With `motor_home=1` (local-only) the
+daemon replays the OEM `motor_step_reset` once per boot, asynchronously after
+startup: request 5 speed 450; request 2 `{4080, 1200, 2040, 200}` from the
+factory `HorizontalMaxStep`, `VerticalMaxStep` and `VerticalResetStep`;
+request 3 `{+2040, 0}` into the pan end stop; then request 2 `{0, 0, 0, 0}`,
+the driver's own reset, which rams both axes and returns to `2040,200` (the
+kernel logs `cx=4080,cy=1200,x move=-2040,y move=-1000`). Each stage is polled
+with request 4 for up to 60 s. Limits are then reread and the head returns to
+the last position, which the daemon saves in `state_dir/position` once the head
+has rested at a new place for five seconds. PTZ and presets are refused while
+homing; status reports `homing` and `homed`. `/tmp/jooanipc-open.homed` marks
+the boot so restarts and reloads do not repeat it. The guarded OEM handoff
+creates that marker after the OEM's own homing, so the setting may stay on.
 
 ## Presets and status
 

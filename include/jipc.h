@@ -46,6 +46,7 @@ typedef struct {
     int watchdog;
     int onvif_nudge;
     int main_only;
+    int motor_home;
     unsigned discovery_port;
 } jipc_config;
 typedef struct jipc_app {
@@ -135,6 +136,8 @@ int jipc_platform_control(jipc_app *app, const char *operation, int value,
 int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacity);
 int jipc_platform_preset_create(jipc_app *app, int *slot, const char *name, char *error, size_t capacity);
 int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *error, size_t capacity);
+/* Boot homing when motor_home=1 (no OEM bootstrap); once per boot. */
+int jipc_platform_start(jipc_app *app);
 void jipc_platform_stop(jipc_app *app);
 int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, size_t capacity);
 int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity);

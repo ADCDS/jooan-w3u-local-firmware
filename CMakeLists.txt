@@ -89,6 +89,9 @@ if(JIPC_BUILD_TESTS)
   add_test(NAME boot-release-storage COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_boot_release_storage.py
     ${CMAKE_SOURCE_DIR}/scripts/oem-boot-handoff.sh)
+  add_test(NAME native-boot COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_native_boot.py
+    ${CMAKE_SOURCE_DIR}/scripts/native-boot.sh ${CMAKE_SOURCE_DIR}/src/main.c)
 endif()
 install(TARGETS jooanipc-open RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/replay.example.ini config/ja-a12.example.ini

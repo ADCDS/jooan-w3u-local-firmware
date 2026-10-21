@@ -128,15 +128,31 @@ def wait(predicate, seconds, what, step=3):
     raise RuntimeError(f"timed out waiting for {what}")
 
 
+def boot_mode(cam):
+    """'native' or 'handoff' once this boot's media qualified; None until then."""
+    logs = cam.ssh("cat /tmp/jipc-native.log /tmp/jipc-handoff.log 2>/dev/null", check=False)
+    if "native boot qualified" in logs:
+        return "native"
+    if "boot handoff qualified" in logs:
+        return "handoff"
+    if "leaving current owner alone" in logs:
+        raise RuntimeError("the boot handoff gave up:\n" + logs[-600:])
+    return None
+
+
 def wait_reboot(cam, seconds=600):
     # A platform apply runs its whole maintenance transaction before rebooting.
     wait(lambda: not cam.up(), 600, "the camera to go down", step=2)
     log("camera rebooting")
     wait(cam.up, seconds, "SSH after reboot")
-    log("SSH is back; waiting for the boot handoff")
-    wait(lambda: "boot handoff qualified" in cam.ssh("cat /tmp/jipc-handoff.log 2>/dev/null", check=False),
-         seconds, "the jooanipc-open handoff to qualify", step=5)
-    log("handoff qualified")
+    log("SSH is back; waiting for the media daemon to qualify")
+    deadline = time.monotonic() + seconds
+    while (mode := boot_mode(cam)) is None:
+        if time.monotonic() > deadline:
+            raise RuntimeError("timed out waiting for the media daemon to qualify")
+        time.sleep(5)
+    log(f"media qualified ({mode} boot)")
+    return mode
 
 
 def ini_edit(text, settings, unset):
@@ -256,15 +272,20 @@ def main():
         log("configuration restored from backup")
 
     rebooted = nvr_stopped = False
+    mode = boot_mode(cam)
     try:
         # ---- config, staged before any reboot
-        if config.get("camera_ini"):
-            ini = saved[INI].decode()
-            write_remote(cam, INI, ini_edit(ini, config["camera_ini"].get("set", {}),
-                                            set(config["camera_ini"].get("unset", []))))
+        # New camera.ini keys must meet the binary that knows them: with a media
+        # layer they go into the staged copy the appfs installer commits.
+        ini_set = config.get("camera_ini", {}).get("set", {})
+        ini_unset = set(config.get("camera_ini", {}).get("unset", []))
+        if (ini_set or ini_unset) and not appfs:
+            write_remote(cam, INI, ini_edit(saved[INI].decode(), ini_set, ini_unset))
         for path, content in config.get("files", {}).items():
             if content is None:
                 cam.ssh(f"rm -f {shlex.quote(path)} && sync")
+            elif isinstance(content, dict):
+                write_remote(cam, path, (bundle / content["from"]).read_bytes(), content.get("mode", "600"))
             else:
                 write_remote(cam, path, content)
         if config:
@@ -287,7 +308,7 @@ def main():
             if status != 200:
                 raise RuntimeError(f"platform apply failed: {status} {data[:300]!r}")
             rebooted = True
-            wait_reboot(cam)
+            mode = wait_reboot(cam)
             wait(lambda: json.loads(cam.platform("GET", "/api/v1/setup/status")[2]).get("release_sequence")
                  == local["release_sequence"], 300, "the new platform release")
             log(f"platform {local['release_version']} running")
@@ -297,7 +318,7 @@ def main():
             release = f"{RELEASES}/{appfs['release']}"
             cur_ini = cam.ssh(f"cat {INI}"); cur_env = cam.ssh(f"cat {ENV}")
             old = cur_env.split("JIPC_RELEASE=", 1)[1].split("\n", 1)[0]
-            next_ini = cur_ini.replace(old + "/", release + "/")
+            next_ini = ini_edit(cur_ini.replace(old + "/", release + "/"), ini_set, ini_unset)
             next_env = "".join(
                 f"JIPC_RELEASE={release}\n" if line.startswith("JIPC_RELEASE=") else
                 f"JIPC_APP_MD5={appfs['app_md5']}\n" if line.startswith("JIPC_APP_MD5=") else line + "\n"
@@ -313,7 +334,7 @@ def main():
             cam.ssh(f"( trap '' HUP; exec sh /tmp/upgrade-appfs.sh {appfs['image_md5']} {current} ) "
                     "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")
             rebooted = True
-            wait_reboot(cam)
+            mode = wait_reboot(cam)
             flashed = cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip()
             if flashed != appfs["image_md5"]:
                 raise RuntimeError(f"appfs is {flashed} after reboot; the installer rolled back")
@@ -321,9 +342,9 @@ def main():
 
         if config and not rebooted:
             log("rebooting to apply staged config")
-            cam.ssh("sync; (sleep 1; reboot) >/dev/null 2>&1 &", check=False)
+            cam.ssh("sync; (sleep 1; reboot) </dev/null >/dev/null 2>&1 &", check=False)
             rebooted = True
-            wait_reboot(cam)
+            mode = wait_reboot(cam)
     except Exception:
         if not rebooted:
             restore()
@@ -345,7 +366,10 @@ def main():
         "bundle": spec["name"], "installed_utc": stamp, "camera": args.camera,
         "platform": json.loads(cam.platform("GET", "/api/v1/setup/status")[2]),
         "platform_ntp": time_report["ntp"], "camera_clock_skew_seconds": round(skew, 1),
+        "boot_mode": mode, "native_failed": cam.ssh("cat /opt/jooanipc-open/native-failed 2>/dev/null",
+                                                     check=False).strip() or None,
         "media_ready": status == 200 and media.get("ready"), "media_clock": media.get("clock"),
+        "homed": media.get("platform", {}).get("homed"),
         "appfs_md5": cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip(),
         "media_release": cam.ssh(f"sed -n 's/^JIPC_RELEASE=//p' {ENV}").strip(),
     }

@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 /* Independently emulate the recovered finite-step ABI and its axis swap.
  * A completed move drops coils; smooth nudges must submit only one move. */
+#define HOMED_MARKER "/tmp/jipc-test-homed"
+#define MOTOR_INFO "/tmp/jipc-test-motor-info"
 #include "../src/platform.c"
 #include <assert.h>
 static int driver_x=1400,driver_y=400,swapped,speed=450,moving,dx,dy;
-static unsigned commands,stops;
+static unsigned commands,stops,resets;
+static int32_t last_reset[4];
 static uint64_t clock_us,previous_us;
 static void advance(uint64_t now)
 {
@@ -21,6 +24,12 @@ int __wrap_ioctl(int fd,unsigned long request,...)
     va_list ap;va_start(ap,request);void *pointer=va_arg(ap,void *);va_end(ap);
     if(request==MOTOR_POSITION){*(motor_position*)pointer=(motor_position){driver_x,driver_y,moving,speed};return 0;}
     if(request==MOTOR_SPEED){speed=*(int*)pointer;assert(speed>=100&&speed<=900);return 0;}
+    if(request==MOTOR_RESET){
+        int32_t *r=pointer;assert(!moving);memcpy(last_reset,r,sizeof(last_reset));++resets;
+        if(r[0]||r[1]||r[2]||r[3]){driver_x=r[2];driver_y=r[3];return 0;} /* declare position */
+        /* The driver's own reset: rammed to its maxima, then back to the reset point. */
+        driver_x=4080;driver_y=1200;dx=2040-4080;dy=200-1200;swapped=0;moving=1;return 0;
+    }
     assert(request==3||request==8);assert(!moving);
     int32_t *delta=pointer;assert((delta[0]!=0)!=(delta[1]!=0));++commands;
     if(delta[0]){swapped=1;dx=delta[0];}
@@ -39,9 +48,31 @@ static void go(platform_state *state,int x,int y)
     assert(driver_x==x&&driver_y==y&&state->x==x&&state->y==y);
     assert(commands-before==2); /* one continuous displacement per axis */
 }
+static void homing(void)
+{
+    FILE *info=fopen(MOTOR_INFO,"w");assert(info);
+    fputs("## motor is Horizontal motor ##\nmax steps 4080\n## motor is Vertical motor ##\nmax steps 1230\n",info);fclose(info);
+    unlink(HOMED_MARKER);
+    platform_state s=state_new();s.saved_valid=1;s.saved_x=1378;s.saved_y=397;
+    driver_x=900;driver_y=50;unsigned before=resets;
+    assert(!motor_home_begin(&s,clock_us));
+    assert(speed==450&&resets==before+1&&s.homing==1);
+    assert(last_reset[0]==4080&&last_reset[1]==1200&&last_reset[2]==2040&&last_reset[3]==200);
+    assert(moving&&dx==2040&&driver_x==2040&&driver_y==200); /* pan run into the end stop */
+    jipc_app app={0};pthread_mutex_init(&s.mutex,NULL);app.platform_state=&s;s.app=&app;char error[128];
+    assert(platform_control(&app,"ptz",50,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"homing"));
+    assert(platform_control(&app,"preset_goto",1,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"homing"));
+    for(unsigned i=0;i<20000&&(s.homing||s.goto_active);++i)tick(&s,clock_us+10000);
+    assert(s.homed&&!s.homing&&!s.faulted&&!s.goto_active);
+    assert(resets==before+2&&!last_reset[0]&&!last_reset[1]&&!last_reset[2]&&!last_reset[3]);
+    assert(driver_x==1378&&driver_y==397&&s.x==1378&&s.y==397); /* back at the last position */
+    assert(s.pan_max==4080&&s.tilt_max==1230&&!access(HOMED_MARKER,F_OK));
+    pthread_mutex_destroy(&s.mutex);unlink(HOMED_MARKER);unlink(MOTOR_INFO);
+    driver_x=1400;driver_y=400;moving=dx=dy=swapped=0; /* the motion tests below start here */
+}
 int main(void)
 {
-    clock_us=previous_us=1000000;platform_state state=state_new();
+    clock_us=previous_us=1000000;homing();platform_state state=state_new();
     go(&state,1650,680);go(&state,1400,400);go(&state,1280,620);go(&state,1400,400);
     state.goto_active=1;state.goto_until=clock_us-1;native_tick(&state,clock_us);
     assert(state.faulted&&!state.goto_active&&strstr(state.last_error,"preset"));

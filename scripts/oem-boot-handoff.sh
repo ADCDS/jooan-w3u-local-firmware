@@ -263,6 +263,8 @@ until control_ready; do
     [ "$((now - net_wait))" -lt 45 ] || fail 'network did not settle after OEM stop; armed watchdog will recover'
     sleep 1
 done
+# The OEM bootstrap homed pan/tilt this boot; a motor_home=1 daemon skips it.
+: > /tmp/jooanipc-open.homed
 log 'OEM media detached; transferring the armed watchdog to native media'
 (
     trap '' HUP

@@ -18,12 +18,26 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { MOTOR_STOP = 1, MOTOR_POSITION = 4, MOTOR_SPEED = 5,
+enum { MOTOR_STOP = 1, MOTOR_RESET = 2, MOTOR_POSITION = 4, MOTOR_SPEED = 5,
        MOTOR_MOVE = 3, PAN_MAX = 4080, TILT_MAX = 1230,
        MOTOR_RATE = 450, NUDGE_RATE = 540, PRESET_COUNT = 16 };
+/* Boot homing replays the OEM joa_ptz.c motor_step_reset with this board's
+ * factory PtzParam: HorizontalMaxStep, VerticalMaxStep, VerticalResetStep and
+ * ResetSpeed. See docs/platform.md. */
+enum { HOME_PAN_STEPS = 4080, HOME_TILT_STEPS = 1200, HOME_TILT_RESET = 200, HOME_SPEED = 450 };
 #define MANUAL_LEASE_US UINT64_C(1200000)
 #define NUDGE_US UINT64_C(350000)
 #define PRESET_LIMIT_US UINT64_C(45000000)
+#define HOME_STAGE_US UINT64_C(60000000)
+#define HOME_SETTLE_US UINT64_C(1000000)
+#define POSITION_QUIET_US UINT64_C(5000000)
+/* Per boot (tmpfs): a daemon restart or reload must not sweep the head again. */
+#ifndef HOMED_MARKER
+#define HOMED_MARKER "/tmp/jooanipc-open.homed"
+#endif
+#ifndef MOTOR_INFO
+#define MOTOR_INFO "/proc/jz/motor/motor_info"
+#endif
 
 typedef struct { int32_t x, y, moving, speed; } motor_position;
 typedef struct { int valid, x, y; char name[65]; } saved_preset;
@@ -41,6 +55,10 @@ typedef struct {
     double replay_x, replay_y;
     saved_preset presets[PRESET_COUNT];
     char path[640], last_error[192];
+    /* homing: 0 idle, 1 pan sweep into the end stop, 2 driver reset. */
+    int homing, homed, saved_valid, saved_x, saved_y;
+    uint64_t homing_until, homing_settle, position_quiet_until;
+    char position_path[640];
 } platform_state;
 
 /* Protects app->platform_state lifetime. HTTP/ONVIF controls and shutdown may
@@ -135,7 +153,7 @@ static int motor_read(platform_state *state)
 
 static int motor_limits(platform_state *state)
 {
-    FILE *file = fopen("/proc/jz/motor/motor_info", "r");
+    FILE *file = fopen(MOTOR_INFO, "r");
     if (!file) return -1;
     char line[160]; int axis = -1, limits[2] = {0};
     while (fgets(line, sizeof(line), file)) {
@@ -230,12 +248,86 @@ static void replay_tick(platform_state *state, uint64_t now)
     state->moving = state->goto_active || state->vx || state->vy;
 }
 
+/* Last position, so a homed boot returns to the view it had. Written once the
+ * head has rested at a new place, not per move: /opt is small JFFS2. */
+static void position_load(platform_state *state)
+{
+    FILE *file = fopen(state->position_path, "r");
+    int x, y;
+    if (!file) return;
+    if (fscanf(file, "%d %d", &x, &y) == 2 && x >= 0 && x <= PAN_MAX && y >= 0 && y <= TILT_MAX) {
+        state->saved_x = x; state->saved_y = y; state->saved_valid = 1;
+    }
+    fclose(file);
+}
+static void position_track(platform_state *state, uint64_t now)
+{
+    char text[32];
+    int n;
+    if (state->replay || !state->known || state->homing || state->moving || state->goto_active ||
+        state->lease_until || (state->saved_valid && state->x == state->saved_x && state->y == state->saved_y)) {
+        state->position_quiet_until = 0; return;
+    }
+    if (!state->position_quiet_until) { state->position_quiet_until = now + POSITION_QUIET_US; return; }
+    if (now < state->position_quiet_until) return;
+    state->position_quiet_until = 0;
+    n = snprintf(text, sizeof(text), "%d %d\n", state->x, state->y);
+    if (jipc_atomic_file(state->position_path, text, (size_t)n, 0600)) {
+        jipc_log("warning", "platform: cannot save last position: %s", strerror(errno)); return;
+    }
+    state->saved_x = state->x; state->saved_y = state->y; state->saved_valid = 1;
+}
+/* The OEM sequence: declare the head centred, run pan into its end stop,
+ * then the driver's own reset rams both axes and returns to the reset point. */
+static int motor_home_begin(platform_state *state, uint64_t now)
+{
+    int32_t speed = HOME_SPEED, sweep[2] = {HOME_PAN_STEPS / 2, 0};
+    int32_t reset[4] = {HOME_PAN_STEPS, HOME_TILT_STEPS, HOME_PAN_STEPS / 2, HOME_TILT_RESET};
+    if (motor_stop_motion(state) || ioctl(state->motor_fd, MOTOR_SPEED, &speed) ||
+        ioctl(state->motor_fd, MOTOR_RESET, reset) || ioctl(state->motor_fd, MOTOR_MOVE, sweep)) return -1;
+    state->homing = 1; state->homed = 0; state->moving = 1;
+    state->homing_until = now + HOME_STAGE_US; state->homing_settle = now + HOME_SETTLE_US;
+    jipc_log("info", "motor homing: pan sweep into the end stop");
+    return 0;
+}
+static void home_tick(platform_state *state, uint64_t now)
+{
+    if (now >= state->homing_until) {
+        state->homing = 0; errno = ETIMEDOUT; worker_error(state, "motor homing"); return;
+    }
+    if (now < state->homing_settle) return;
+    if (motor_read(state)) { state->homing = 0; worker_error(state, "motor homing status"); return; }
+    if (state->moving) return;
+    if (state->homing == 1) {
+        int32_t reset[4] = {0, 0, 0, 0};
+        if (ioctl(state->motor_fd, MOTOR_RESET, reset)) { state->homing = 0; worker_error(state, "motor reset"); return; }
+        state->homing = 2; state->moving = 1;
+        state->homing_until = now + HOME_STAGE_US; state->homing_settle = now + HOME_SETTLE_US;
+        jipc_log("info", "motor homing: driver reset to the reference point");
+        return;
+    }
+    if (ioctl(state->motor_fd, MOTOR_STOP, 0) || motor_limits(state) || motor_read(state)) {
+        state->homing = 0; worker_error(state, "motor homing completion"); return;
+    }
+    state->homing = 0; state->homed = 1;
+    int marker = open(HOMED_MARKER, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (marker >= 0) close(marker);
+    jipc_log("info", "motor homing complete at %d,%d (limits %d,%d)", state->x, state->y, state->pan_max, state->tilt_max);
+    if (state->saved_valid && (state->saved_x != state->x || state->saved_y != state->y)) {
+        state->target_x = clamp(state->saved_x, 0, state->pan_max);
+        state->target_y = clamp(state->saved_y, 0, state->tilt_max);
+        state->goto_active = 1; state->goto_until = now + PRESET_LIMIT_US;
+        jipc_log("info", "motor returning to last position %d,%d", state->target_x, state->target_y);
+    }
+}
+
 /* One finite displacement stays energized until Stop or completion. Never
  * restart a manual job at each worker tick: natural completion drops the coils.
  * Request3 also restores the driver's axis bookkeeping before a Y move. */
 static void native_tick(platform_state *state, uint64_t now)
 {
     int32_t move[2] = {0};
+    if (state->homing && state->motor_fd >= 0) { home_tick(state, now); return; }
     if (state->motor_fd < 0 || state->faulted ||
         (!state->goto_active && !state->lease_until && !state->chunk_active)) return;
     if (state->goto_active && now >= state->goto_until) {
@@ -289,7 +381,7 @@ static void *platform_worker(void *argument)
             return NULL;
         }
         if (state->replay) replay_tick(state, now);
-        else native_tick(state, now);
+        else { native_tick(state, now); position_track(state, now); }
         pthread_mutex_unlock(&state->mutex);
         jipc_sleep_ms(10);
     }
@@ -436,9 +528,12 @@ static platform_state *platform_get(jipc_app *app, char *error, size_t capacity)
     state->night = state->white_light = state->pilot_led = state->speaker_enable = -1;
     state->replay_previous = jipc_now_us();
     if (snprintf(state->path, sizeof(state->path), "%s/presets.v2.json", config.state_dir)
-        >= (int)sizeof(state->path)) {
-        free(state); fail(error, capacity, "preset path is too long"); return NULL;
+        >= (int)sizeof(state->path) ||
+        snprintf(state->position_path, sizeof(state->position_path), "%s/position", config.state_dir)
+        >= (int)sizeof(state->position_path)) {
+        free(state); fail(error, capacity, "state path is too long"); return NULL;
     }
+    position_load(state);
     rc = pthread_mutex_init(&state->mutex, NULL);
     if (rc) { free(state); fail(error, capacity, "platform mutex: %s", strerror(rc)); return NULL; }
     if (presets_load(state)) {
@@ -491,6 +586,9 @@ static int platform_control(jipc_app *app, const char *operation, int value,
     }
     if ((motion || (preset_op && strcmp(operation, "preset_remove"))) && motor_open_device(state)) {
         rc = fail(error, capacity, "motor device: %s", strerror(errno)); goto done;
+    }
+    if (state->homing && (motion || preset_op || !strcmp(operation, "ptz_stop"))) {
+        rc = fail(error, capacity, "pan/tilt homing in progress"); goto done;
     }
     if (motion) {
         int vx=value*state->pan_sign, vy=value2*state->tilt_sign;
@@ -654,11 +752,12 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity)
         strcpy(escaped, "\"error encoding platform status\"");
     n = snprintf(out, capacity,
                  "{\"backend\":\"%s\",\"position_known\":%s,\"position_x\":%d,\"position_y\":%d,"
-                 "\"moving\":%s,\"preset_motion\":%s,\"night\":%d,\"white_light\":%d,"
+                 "\"moving\":%s,\"preset_motion\":%s,\"homing\":%s,\"homed\":%s,\"night\":%d,\"white_light\":%d,"
                  "\"pilot_led\":%d,\"speaker_enable\":%d,\"manual_timeout_ms\":1200,\"last_error\":%s,\"presets\":[",
                  state->replay ? "replay" : "imp", state->known ? "true" : "false", x, y,
                  (state->moving || state->goto_active || state->vx || state->vy) ? "true" : "false",
-                 state->goto_active ? "true" : "false", state->night, state->white_light,
+                 state->goto_active ? "true" : "false", state->homing ? "true" : "false",
+                 state->homed ? "true" : "false", state->night, state->white_light,
                  state->pilot_led, state->speaker_enable, escaped);
     if (n < 0 || (size_t)n >= capacity) goto done;
     used = (size_t)n;
@@ -678,6 +777,30 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity)
     memcpy(out + used, "]}", 3);
     rc = (int)(used + 2);
 done:
+    pthread_mutex_unlock(&state->mutex);
+    pthread_mutex_unlock(&platform_lifetime);
+    return rc;
+}
+
+/* Boot homing (motor_home=1) replaces the OEM bootstrap's calibration. It runs
+ * once per boot, asynchronously in the worker; PTZ is refused until it ends. */
+int jipc_platform_start(jipc_app *app)
+{
+    jipc_config config;
+    platform_state *state;
+    char error[192];
+    int rc = 0;
+    jipc_config_copy(app, &config);
+    if (!config.motor_home) return 0;
+    if (strcmp(config.backend, "imp")) { jipc_log("info", "motor homing skipped: %s backend", config.backend); return 0; }
+    if (!access(HOMED_MARKER, F_OK)) { jipc_log("info", "motor already homed this boot"); return 0; }
+    pthread_mutex_lock(&platform_lifetime);
+    state = platform_get(app, error, sizeof(error));
+    if (!state) { pthread_mutex_unlock(&platform_lifetime); jipc_log("error", "motor homing: %s", error); return -1; }
+    pthread_mutex_lock(&state->mutex);
+    if (motor_open_device(state) || motor_home_begin(state, jipc_now_us())) {
+        rc = -1; worker_error(state, "motor homing start");
+    }
     pthread_mutex_unlock(&state->mutex);
     pthread_mutex_unlock(&platform_lifetime);
     return rc;
