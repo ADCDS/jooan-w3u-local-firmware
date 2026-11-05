@@ -95,9 +95,14 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
             memset(x,0,sizeof(x));memset(y,0,sizeof(y));
             return error_json(c,400,"password_rejected","password change was rejected");
         }
-        json_escape((const unsigned char*)y,strlen(y),escaped,sizeof(escaped));
+        /* The OEM application's RTSP gets the random secret the password change
+         * just wrote to rtsp.password, never the admin password. */
+        {char path[512];unsigned char*raw=NULL;size_t n=0;escaped[0]=0;
+         snprintf(path,sizeof(path),"%s/rtsp.password",G.state_dir);
+         if(!joan_read_file(path,&raw,&n,sizeof(escaped)-1)){while(n&&(raw[n-1]=='\n'||raw[n-1]=='\r'))n--;memcpy(escaped,raw,n);escaped[n]=0;memset(raw,0,n);free(raw);}
+         if(strspn(escaped,"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")!=strlen(escaped))escaped[0]=0;}
         snprintf(command,sizeof(command),"{\"cmd\":66516,\"cmd_type\":\"request\",\"sessionid\":0,\"value\":0,\"security_enhanced_switch\":1}");
-        if(!joan_mqtt_request(66516,command,operation)){
+        if(escaped[0]&&!joan_mqtt_request(66516,command,operation)){
             snprintf(command,sizeof(command),"{\"cmd\":66517,\"cmd_type\":\"request\",\"sessionid\":0,\"value\":0,\"security_password\":\"%s\"}",escaped);
             rtsp_ok=!joan_mqtt_request(66517,command,operation);
         }

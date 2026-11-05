@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -280,6 +281,35 @@ class RuntimeHookTests(unittest.TestCase):
             calls = log.read_text(encoding="utf-8")
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
+
+    def test_health_accepts_native_boot_and_guards_the_oem_application(self) -> None:
+        """A native boot never starts jooanipc, so its absence must pass a
+        runtime trial; whenever jooanipc does run, it needs the guard."""
+        health = REPOSITORY / "runtime/slot/health.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            executable(fake_bin / "netstat",
+                       "#!/bin/sh\nprintf 'tcp 0 0 0.0.0.0:80 0.0.0.0:* LISTEN\\n'\n")
+            environment = os.environ | {"PATH": f"{fake_bin}:/bin:/usr/bin", "JL_RUN": str(root)}
+            daemon = root / "joan-daemon"
+            shutil.copy("/bin/sleep", daemon)
+            process = subprocess.Popen([str(daemon), "30"])
+            try:
+                (root / "daemon.pid").write_text(f"{process.pid}\n")
+                self.assertEqual(subprocess.run([str(health)], env=environment).returncode, 0)
+                oem = root / "jooanipc"
+                shutil.copy("/bin/sleep", oem)
+                unguarded = subprocess.Popen([str(oem), "30"])
+                try:
+                    self.assertEqual(subprocess.run([str(health)], env=environment).returncode, 1)
+                finally:
+                    unguarded.kill()
+                    unguarded.wait()
+            finally:
+                process.kill()
+                process.wait()
 
     def test_wifi_hook_leaves_a_renewing_dhcp_client(self) -> None:
         """The apply kills every udhcpc. The client it starts must stay alive

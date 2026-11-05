@@ -134,8 +134,9 @@ done:
 
 /* Replace the OEM RTSP secret on every start. This also overwrites the
  * plaintext admin password that releases before 0.2.24 kept in this file.
- * Until the bridge pushes the new secret, the guard keeps the OEM RTSP port
- * closed, which is the fail-closed state. */
+ * The OEM application only runs in the fallback modes; the guard binds its
+ * RTSP to loopback and refuses non-loopback accepts until the bridge has
+ * pushed this secret and rtsp.synced matches it. */
 static int refresh_oem_rtsp_secret(const JoanConfig *cfg)
 {
     char path[512],marker[512],secret[32];unsigned char raw[12];int rc;

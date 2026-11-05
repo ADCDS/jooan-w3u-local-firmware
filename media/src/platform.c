@@ -668,7 +668,11 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             if (pin == 63) state->speaker_used = 1;
             else state->gpio_used = 1;
         }
-        if (!state->replay && gpio_output(pin, value))
+        /* The JA-A12 speaker amplifier is active-low (factory SpeakLevelEx=0,
+         * and the platform's boot hook mutes the OEM siren by holding it high):
+         * speaker_enable=1 drives GPIO63 low. */
+        int level = pin == 63 ? !value : value;
+        if (!state->replay && gpio_output(pin, level))
             rc = fail(error, capacity, "GPIO%d: %s", pin, strerror(errno));
         else if (pin == 60) state->white_light = value;
         else if (pin == 63) state->speaker_enable = value;
@@ -835,7 +839,7 @@ void jipc_platform_stop(jipc_app *app)
         (void)gpio_output(60, 0);
         (void)gpio_output(58, 0);
     }
-    if (!state->replay && state->speaker_used) (void)gpio_output(63, 0);
+    if (!state->replay && state->speaker_used) (void)gpio_output(63, 1); /* active-low: mute */
     if (state->motor_fd >= 0) close(state->motor_fd);
     pthread_mutex_destroy(&state->mutex);
     app->platform_state = NULL;
