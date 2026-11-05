@@ -170,7 +170,11 @@ the controller and recovery path are durable, selection becomes `- - 0`, the old
 persistent runtime is removed, and one signed candidate is staged while at least
 57344 bytes (56 KiB) remain free. This exceeds the OEM 50 KiB cleanup threshold.
 Failure leaves controller-owned SSH recovery; successful health promotion selects
-the candidate and restores the 64 KiB steady reserve.
+the candidate and restores the 64 KiB steady reserve. The candidate is healthy
+when `joan-daemon` runs and listens on port 80; if the OEM application is
+running (fallback modes only), it must also have the containment guard mapped.
+Before 0.2.24 health also required the OEM application, so no platform update
+could pass its trial on a native boot.
 
 No kernel-wide firewall is claimed. The supervisor repeatedly removes IPv4 and
 IPv6 default routes and filters public resolvers; explicitly configured

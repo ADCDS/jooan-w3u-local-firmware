@@ -144,17 +144,18 @@ operation. `white_light` and `pilot_led` accept 0 or 1.
 `speaker_enable` accepts 0 or 1 and drives GPIO63. Its source is factory
 `HardwareParam/AudioParam/SpeakGpio`, with the enable/settle sequence recovered
 from `0x4808fc`. The OEM audio module leaves its own `spk_gpio` unset, so
-userspace owns the amplifier control. The media backend enables it before
-talkback and waits 200 ms. Shutdown drives GPIO63 low if this application used
-it. Replay records the simulated state without GPIO access.
+userspace owns the amplifier control. The amplifier is active-low on this
+board (factory `SpeakLevelEx=0`): `speaker_enable=1` drives GPIO63 low and `0`
+drives it high. The media backend enables it before talkback and waits 200 ms.
+Shutdown mutes it (GPIO63 high) if this application used it. Replay records
+the simulated state without GPIO access. Releases before 0.2.24's media
+release `8bacc63a` had this polarity inverted.
 
 The platform's `local.rc` also drives GPIO63 at every boot: it writes `1`
-every 20 ms for roughly the first minute (in a native boot, where no
+(mute) every 20 ms for roughly the first minute (in a native boot, where no
 containment guard takes the pin over, for the whole window) and leaves it at
-`1`. The platform treats the pin as active-low, `1` being its mute level, from
-the board's `SpeakLevelEx=0`; that disagrees with the active-high polarity
-above. Settle the polarity on hardware before relying on `speaker_enable`, and
-do not race that early-boot hook.
+`1`. Holding the pin high is what silenced the OEM motion siren on hardware.
+Do not race that early-boot hook with `speaker_enable`.
 
 GPIO57 is not exposed as a blue LED: factory `IndicatorParam/type` is zero,
 and `HardwareParam/OneTouchCallGpio` identifies GPIO57 as a button input.
