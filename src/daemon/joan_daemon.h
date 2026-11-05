@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.26"
+#define JOAN_VERSION "0.2.27"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -19,6 +19,7 @@ typedef struct {
     char run_dir[256];
     char release_sequence_path[256];
     char web_dir[256];
+    char media_ui_marker[256]; /* present when the media daemon serves the admin UI */
     char bind_addr[64];
     unsigned port;
     int plain_mqtt;

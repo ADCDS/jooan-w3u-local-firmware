@@ -19,6 +19,7 @@ int main(int argc,char**argv)
     copy_env(c.run_dir,sizeof(c.run_dir),"JOAN_RUN_DIR",c.staging_dir);
     copy_env(c.release_sequence_path,sizeof(c.release_sequence_path),"JOAN_RELEASE_SEQUENCE_PATH","/opt/custom/jooan-local/state/release-sequence");
     copy_env(c.web_dir,sizeof(c.web_dir),"JOAN_WEB_DIR","/usr/share/joan/web");
+    copy_env(c.media_ui_marker,sizeof(c.media_ui_marker),"JOAN_MEDIA_UI_MARKER","/opt/jooanipc-open/deployment.env");
     copy_env(c.bind_addr,sizeof(c.bind_addr),"JOAN_BIND","0.0.0.0");
     copy_env(c.integration_helper,sizeof(c.integration_helper),"JOAN_INTEGRATION_HELPER","/usr/libexec/joan-integration");
     c.port=80;c.mqtt_port=1883;c.mdns_enabled=1;c.mdns_port=5353;

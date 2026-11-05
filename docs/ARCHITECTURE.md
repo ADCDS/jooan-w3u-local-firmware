@@ -15,7 +15,7 @@ fallback media owner.
 ```text
 Administrator browser / SSH          NVR (Frigate)
         |                                  |
-  TCP/80 HTTP API, TCP/22 SSH      TCP/18554 RTSP, TCP/18443 HTTPS + ONVIF
+  TCP/443 admin UI (media), TCP/22   TCP/18554 RTSP, TCP/18443 HTTPS + ONVIF
         |                                  |
    platform (repository root)        media daemon jooanipc-open (media/)
    joan-daemon, dropbear,            OpenIMP libimp.so
@@ -261,10 +261,11 @@ runtime then kills GoAhead every second and never reopens it, but cannot
 eliminate that immutable early interval. The external router or VLAN must
 block untrusted peers and Internet access before power is applied.
 
-In a native boot the listeners are TCP/80 (Web UI and API), TCP/22 (SSH,
+In a native boot the listeners are TCP/80 (the platform API; its pages
+redirect to the admin UI), TCP/22 (SSH,
 password login from the start; keys are optional), UDP/5353 (mDNS), the
 platform's two idle loopback listeners for the OEM application, and the media
-daemon's TCP/18443 and TCP/18554. The fallback modes add the OEM application's
+daemon's TCP/443 (the admin UI), TCP/18443 and TCP/18554. The fallback modes add the OEM application's
 loopback-only listeners. [Network security](NETWORK-SECURITY.md#listeners-by-boot-mode)
 lists them per mode. No cloud or P2P path is part of the supported
 architecture.

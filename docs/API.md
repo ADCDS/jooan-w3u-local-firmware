@@ -3,7 +3,11 @@
 ## Contract and qualification status
 
 `joan-daemon` and the bundled Web UI implement the versioned routes below,
-over plain HTTP on TCP/80. Nothing is encrypted in transit: a sign-in sends the
+over plain HTTP on TCP/80. With the media layer installed, the admin UI is the
+media daemon's HTTPS page at `https://<camera>/`: it relays these routes as
+`/api/joan/<path>` to `127.0.0.1:80` (see
+[media/README.md](../media/README.md#admin-ui)), and every non-API page on
+port 80 answers `302` to `https://<host>/`. Nothing is encrypted in transit: a sign-in sends the
 password and every later request carries the session cookie in the clear, so
 use the API only from the trusted network the camera is isolated on.
 

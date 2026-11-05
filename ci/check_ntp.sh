@@ -16,3 +16,4 @@ make -C "$root/src/daemon" -j2 CFLAGS='-Os -Wall -Wextra -Werror' \
     CPPFLAGS="-I. -I$work/mbedtls/include" LDFLAGS="-L$work/mbedtls/library" >/dev/null
 python3 "$root/tools/tests/test_ntp.py"
 python3 "$root/tools/tests/test_host.py"
+python3 "$root/tools/tests/test_media_ui_redirect.py"
