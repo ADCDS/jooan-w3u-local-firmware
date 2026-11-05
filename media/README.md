@@ -18,7 +18,8 @@ substream URL sharing its lens's main feed. Bitrates are 3072/768 kbps with a
 one-second GOP. Physical pan/tilt and persistent named presets work, and
 Frigate records both views. The new graph uses separate ISP scaler slots to
 avoid the shared-stride corruption from the previous asymmetric attempt.
-The original 2304×1296 output still exceeds the current full-frame memory
+The stock application's 2304×1296 stream (apparently upscaled by the ISP from
+the sensors' 1080p input; see [hardware notes](docs/hardware.md)) still exceeds the current full-frame memory
 budget. See the [1080p receipt](docs/camera-1080-test-20261018.json) for artifacts
 and qualification limits. The previous four-encoder mode remains available
 with matching main dimensions through 1280×720 and independent substreams;
@@ -51,12 +52,12 @@ JA-A12 storage budget and required boot dependencies.
 | HTTPS and REST | MbedTLS 3.6.7, Basic authentication over TLS, bounded requests, private atomic configuration |
 | Failed-login throttle | Per peer address across HTTP Basic, ONVIF WS-Security and RTSP Digest: 10 failures within 60 s of the first block that address for the rest of the window (HTTP `429`, RTSP `503` with `Retry-After: 60`); requests without credentials never count |
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
-| Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery |
+| Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery; off by default (`discovery=0`), enable with `discovery=1` |
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
 | Clock | Optional SNTP client for the RTC-less board: random origin cookie, clock steps of one second or more, status under `clock` |
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
-| Audio | Native microphone PCM to 8 kHz PCMA, PCMA speaker input; replay produces labeled simulated silence |
+| Audio | Implemented in the daemon (microphone PCM to 8 kHz PCMA, PCMA speaker input) and in replay (labelled silence), but **not available on the camera**: the shipped OpenIMP build has no audio path, so the IMP backend refuses to start with `audio=1` |
 | Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 

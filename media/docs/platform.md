@@ -120,6 +120,22 @@ errors. A successful native move request means the move was accepted; the
 status can subsequently report a device or timeout error. On replay the
 positions, lights and night mode are explicitly simulated.
 
+## Image and encoder controls
+
+With the IMP backend, `POST /api/v1/control` also accepts:
+
+- `brightness`, `contrast`, `saturation`, `sharpness`: `value` 0–255, `value2`
+  the sensor index (0 movable lens, 1 fixed lens);
+- `hflip`, `vflip` (`value` 0 or 1) and `flip` (bitmask 0–3), per sensor;
+- `isp_night`: the ISP running mode, `value` 0 (day) or 1 (night) on both
+  sensors; there is no automatic mode (`night` drives this and the IR-cut GPIO
+  together);
+- `idr`: request a key frame on stream channel `value`;
+- `volume`: `value` -30–120 on `value2` 0 (microphone) or 1 (speaker); it
+  fails on the camera, where audio is disabled.
+
+Nothing applies these at start; they last until the daemon restarts.
+
 ## Lights and IR-cut
 
 Factory `HardwareParam/LightParam` and `SubLightParam` both identify:
