@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Run an explicitly supplied lightweight build twice and compare artifacts.
 
 The build command must honor BUILD_OUT and must write each --artifact beneath

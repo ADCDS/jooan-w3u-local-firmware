@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Host-side tools for JOOAN IronMan firmware containers."""
 
 from .trailer import (

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Small dependency-free SHA-256/HMAC/PBKDF2 core for uClibc host/device parity. */
 #include "joan_daemon.h"
 #include <string.h>

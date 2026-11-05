@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Host entrypoint: build deterministic install and uninstall OTA packages.
 set -eu
 

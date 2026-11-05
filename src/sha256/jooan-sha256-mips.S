@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * jooan-sha256 (MIPS32 assembly, no libc) — SHA-256 verifier for the
  * JOOAN JA-A12 open-stack installer.

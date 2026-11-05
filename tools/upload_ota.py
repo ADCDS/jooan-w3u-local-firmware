@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Upload a validated IronMan package through the JA-A12 OEM installer.
 
 This transport is intentionally limited to the exact unauthenticated OEM

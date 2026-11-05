@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef JOOAN_AUDIO_MIC_WIRE_H
 #define JOOAN_AUDIO_MIC_WIRE_H
 

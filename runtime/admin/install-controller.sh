@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # The authenticated installer extracts controller.tar.gz into tmpfs and sets
 # JL_CONTROL to that tree before invoking this helper. Persistent bundle files:
 # local.rc and one atomically replaceable controller.tar.gz. OTA signature

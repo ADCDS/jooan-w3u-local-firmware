@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 . "${JL_CONTROL:-/run/jooan-local/controller}/boot/common.sh" || exit 1
 [ "$#" = 1 ] && jl_slot_valid "$1" || exit 2
 jl_lock || exit 1

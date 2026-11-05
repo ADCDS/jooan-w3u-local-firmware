@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Signed, exact-target, resumable installer executed by the IronMan carrier.
 set -eu
 PATH=${JOOAN_PATH:-/bin:/sbin:/usr/bin:/usr/sbin:/mnt/mtd/run}

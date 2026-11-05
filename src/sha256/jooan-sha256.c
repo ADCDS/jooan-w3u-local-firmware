@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Small tmpfs-only SHA-256 utility backed by the exact-gated OEM mbedcrypto. */
 #include <stdio.h>
 #include <stdlib.h>

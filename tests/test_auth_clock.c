@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Host-only monotonic authentication regression. Simulate a wall-clock jump
  * while retaining real monotonic time; never change the host or camera clock.
  * Build: cc -O2 -pthread -Wall -Wextra -Werror -ffunction-sections -fdata-sections

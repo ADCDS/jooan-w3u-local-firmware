@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # wifi-deadman.sh -- record why the camera falls off Wi-Fi, then bring it back.
 #
 # A diagnostic, not part of the firmware: it runs from RAM on the camera and

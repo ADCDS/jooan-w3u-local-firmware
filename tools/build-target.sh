@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Build deployable MIPS32r2/uClibc components. No vendor binary is copied out.
 set -eu
 

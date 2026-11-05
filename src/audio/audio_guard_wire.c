@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #include "audio_guard_wire.h"
 
 #include "audio_wire.h"

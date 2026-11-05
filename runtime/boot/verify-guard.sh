@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Packaging installs this helper in the controller core, outside the runtime.
 . /run/jooan-local/controller/boot/common.sh || exit 127
 jl_verify_archive /run/jooan-local/controller/shared/libjooan_guard.so \

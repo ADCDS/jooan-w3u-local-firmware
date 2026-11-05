@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Validate optional module vectors and run their JSON-lines adapters."""
 
 from __future__ import annotations

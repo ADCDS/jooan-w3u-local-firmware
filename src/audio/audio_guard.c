@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #define _GNU_SOURCE
 #include "audio_guard.h"
 

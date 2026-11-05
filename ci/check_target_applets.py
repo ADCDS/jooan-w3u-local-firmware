@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Refuse shell that the camera's BusyBox cannot run.
 
 The target's BusyBox is a small build, and the applets it leaves out are not

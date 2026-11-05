@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Enforce the exact compressed-controller persistent layout and reserves."""
 
 from __future__ import annotations

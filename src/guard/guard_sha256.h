@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef JOOAN_GUARD_SHA256_H
 #define JOOAN_GUARD_SHA256_H
 

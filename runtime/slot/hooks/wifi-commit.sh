@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 [ "$#" = 1 ] && [ -f "$1" ] || exit 2
 dest=/opt/custom/jooan-local/config/wifi.json

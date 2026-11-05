@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Deterministic host-side SquashFS and IronMan package construction."""
 
 from __future__ import annotations

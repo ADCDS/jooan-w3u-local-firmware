@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef JOOAN_G711_ALAW_H
 #define JOOAN_G711_ALAW_H
 

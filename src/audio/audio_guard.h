@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef JOOAN_AUDIO_GUARD_H
 #define JOOAN_AUDIO_GUARD_H
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Codec and validator for the JOOAN IronMan OTA container.
 
 The container uses MD5 as a vendor-format compatibility check. It is not a

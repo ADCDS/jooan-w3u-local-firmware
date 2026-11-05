@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Clock persistence across boots.
 
 The JA-A12 has no RTC: every boot starts near 2021 until a client sets the

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Platform contract: hooks/wifi-snapshot.sh <backup-dir>,
 # wifi-apply.sh <candidate-file>, wifi-health.sh,
 # wifi-commit.sh <candidate-file>, wifi-rollback.sh <backup-dir>.

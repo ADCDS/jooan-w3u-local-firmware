@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #include "g711_alaw.h"
 
 static unsigned alaw_segment(unsigned value)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Write deterministic release provenance without private filesystem paths."""
 
 from __future__ import annotations

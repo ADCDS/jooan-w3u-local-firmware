@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Build the host daemon against the vendored mbedTLS (fetched by the target
 # build into build/*/deps) and exercise network time against a loopback SNTP server.
 set -eu

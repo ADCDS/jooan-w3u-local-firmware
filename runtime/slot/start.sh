@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 : "${JL_ROOT:=/opt/custom/jooan-local}"
 : "${JL_RUN:=/run/jooan-local}"

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 [ -r /dev/urandom ] || exit 1
 i=0

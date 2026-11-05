@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Locally staged archive only; no downloader, OTA exploit, or shared SSH update.
 # Staging directory: runtime.tar.gz, runtime.md5 (one lowercase MD5 digest).
 # OTA installer establishes SHA/signature authenticity in tmpfs; MD5 checks only

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Verify the signed release manifest with the public key compiled at build. */
 #include <errno.h>
 #include <stdint.h>

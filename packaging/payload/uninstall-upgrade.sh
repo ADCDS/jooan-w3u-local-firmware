@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Signed destructive removal. This is intentionally not a state rollback.
 set -eu
 PATH=/bin:/sbin:/usr/bin:/usr/sbin

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Generate device-consumable contracts from the single target JSON."""
 
 from __future__ import annotations

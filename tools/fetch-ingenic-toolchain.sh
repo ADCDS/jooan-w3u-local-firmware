@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Fetch the public Ingenic GCC 5.4 multilib toolchain used by the target.
 set -eu
 

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Assemble deterministic, signed install/uninstall stages and logical budget.
 set -eu
 

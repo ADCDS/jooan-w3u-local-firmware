@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Strict, shell-safe inspection of a JOOAN IronMan package. */
 #include <stdint.h>
 #include <stdio.h>

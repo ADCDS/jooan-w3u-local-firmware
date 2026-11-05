@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Deterministic release-manifest signing and verification.
 
 Private keys are operator inputs and must never be stored in the repository.

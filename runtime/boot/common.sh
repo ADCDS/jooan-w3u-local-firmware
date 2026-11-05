@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Shared controller helpers. Selection is data, never sourced shell code.
 JL_ROOT=${JL_ROOT:-/opt/custom/jooan-local}
 JL_RUN=${JL_RUN:-/run/jooan-local}

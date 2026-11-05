@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """The Web UI is a platform console: the media daemon serves NVRs."""
 
 from html.parser import HTMLParser
