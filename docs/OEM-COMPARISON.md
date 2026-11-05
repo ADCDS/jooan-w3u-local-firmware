@@ -11,10 +11,12 @@ vendor supports for its cameras[^faq-app]) and the JOOAN cloud behind it.
 
 This firmware has two layers:
 
-- the **platform** (the repository root): the maintenance Web UI and API on
-  port 80, SSH, Wi-Fi, clock, signed updates and the network lockdown;
-- the **media** daemon `jooanipc-open` ([`media/`](../media/)): video over
-  RTSP, ONVIF, pan/tilt, presets, lights and optional local recording.
+- the **platform** (the repository root): the API on port 80, SSH, Wi-Fi,
+  clock, signed updates and the network lockdown;
+- the **media** daemon `jooanipc-open` ([`media/`](../media/)): video and
+  audio over RTSP, ONVIF, pan/tilt, presets, lights, optional local
+  recording, and the one admin UI at `https://<camera>/`, which also covers
+  the platform's settings.
 
 In the default **native boot** the stock application `jooanipc` never starts.
 It stays on flash only as a fallback (see [boot modes](ARCHITECTURE.md#boot-modes)),
@@ -157,11 +159,11 @@ under [Sources](#sources):
 | Feature | Official firmware | This firmware | How it's done here, or what's missing |
 | --- | --- | --- | --- |
 | Phone app | Cam720 for Android and iOS[^off][^faq-app] | **Not planned** | No phone app. Watch and steer through an NVR (Frigate, also inside Home Assistant), a player such as VLC, or any ONVIF client. |
-| Computer | Cam720 PC client for Windows[^faq-app][^dl] | **Partial** | Any RTSP player or ONVIF client on your network. The browser pages are for maintenance only (see below). |
+| Computer | Cam720 PC client for Windows[^faq-app][^dl] | **Partial** | Any RTSP player or ONVIF client on your network, and the admin UI in a browser (see below). |
 | Viewing away from home | Through the cloud with P2P[^ios] | **Not planned** | The camera has no Internet route. Use your own VPN into the camera's network; a VPN client on another private subnet needs its prefix added to the camera's route allowlist (`/api/v1/network/routes`). |
 | Sharing with family | Device sharing by QR code[^pp] | **Not planned** | Use the NVR's user accounts. |
 | Voice assistants | Alexa[^off]; Tmall Genie[^ios]; the app also links to Google Home [phone] | **Missing** | |
-| Web browser | Unverified | **Partial** | The platform's maintenance Web UI on port 80 (no video) and the media daemon's minimal page on port 18443 (pan/tilt buttons, recording start/stop and download). |
+| Web browser | Unverified | **Partial** (media) | One admin UI at `https://<camera>/` (port 443; the certificate is the camera's own, so the browser warns once), for phones and computers: status, pan/tilt and presets, night and white light, picture, microphone and speaker levels, talk from the browser, stream addresses and a Frigate snippet, Wi-Fi, local name, routes, time, SSH keys, password and platform updates. `http://<camera>/` redirects there. No video or stills in the page: watch in the NVR. |
 | RTSP | Not on the product page; the app sets an RTSP "security password" for NVRs [phone] | **Supported** (media) | TCP/18554, Digest authentication, RTP over TCP or UDP, H.264, up to 8 clients in the default configuration. |
 | ONVIF | Supported[^off]. The stock application's ONVIF server also has events, imaging, absolute and relative moves, snapshots and recording search [app] | **Partial** (media) | An ONVIF subset on HTTPS port 18443: device information, profiles, stream addresses, pan/tilt and presets. No events, imaging settings, snapshots (in the shipped profile), recording search or encoder changes. WS-Discovery is implemented but off in the default configuration, so add the camera by address. |
 

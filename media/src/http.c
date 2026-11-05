@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include "jipc.h"
+#include "ui_assets.h"
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -9,6 +10,7 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +39,8 @@ typedef struct connection connection;
 
 typedef struct http_server {
     jipc_app *app;
-    int listener, stopping, secure, wake[2];
+    int listener, ui_listener, stopping, secure, wake[2];
+    unsigned ui_port;
     pthread_mutex_t mutex;
     pthread_cond_t ready;
     pthread_t worker[HTTP_WORKERS];
@@ -56,7 +59,7 @@ typedef struct http_server {
 } http_server;
 struct connection {
     http_server *server;
-    int fd, initialized, keepalive, failed;
+    int fd, initialized, keepalive, failed, challenge;
     unsigned requests;
     uint64_t deadline, idle_until;
 #ifdef JIPC_WITH_MBEDTLS
@@ -67,8 +70,9 @@ struct connection {
 typedef struct { http_server *server; unsigned index; } worker_arg;
 typedef struct {
     char method[12], target[1024], host[256], authorization[512], type[128], origin[384];
+    char cookie[1100], csrf[96], requested_with[32], fetch_site[24];
     char *body;
-    size_t length;
+    size_t length, upload; /* upload: total body size left on the connection */
     int keepalive;
 } request;
 
@@ -172,12 +176,17 @@ static int send_all(connection *c,const void *data,size_t n){
     }
     return 0;
 }
-static const char *reason(int code){switch(code){case 200:return "OK";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 429:return "Too Many Requests";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
-static int header(connection *c,int status,const char *type,uint64_t length){
-    char out[1024];int n=snprintf(out,sizeof(out),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %llu\r\nConnection: %s\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n%s\r\n",status,reason(status),type,(unsigned long long)length,c->keepalive?"keep-alive":"close",status==401?"WWW-Authenticate: Basic realm=\"jooanipc-open\", charset=\"UTF-8\"\r\n":"");
+static const char *reason(int code){switch(code){case 200:return "OK";case 204:return "No Content";case 502:return "Bad Gateway";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 429:return "Too Many Requests";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
+/* The UI is same-origin only: no inline code, no framing, no referrers. */
+#define HTTP_CSP "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+static int header_with(connection *c,int status,const char *type,uint64_t length,const char *extra){
+    /* A Basic challenge only for clients that did not come from the UI, so a
+     * browser never pops its own password dialog over the sign-in page. */
+    char out[2048];int n=snprintf(out,sizeof(out),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %llu\r\nConnection: %s\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: " HTTP_CSP "\r\n%s%s\r\n",status,reason(status),type,(unsigned long long)length,c->keepalive?"keep-alive":"close",status==401&&c->challenge?"WWW-Authenticate: Basic realm=\"jooanipc-open\", charset=\"UTF-8\"\r\n":"",extra?extra:"");
     if(n<0||(size_t)n>=sizeof(out))return -1;
     return send_all(c,out,(size_t)n);
 }
+static int header(connection *c,int status,const char *type,uint64_t length){return header_with(c,status,type,length,NULL);}
 static int response(connection *c,int status,const char *type,const void *data,size_t n){int rc=header(c,status,type,n)<0?-1:send_all(c,data,n);if(rc)c->failed=1;return rc;}
 static void error_response(connection *c,int status,const char *message){
     char escaped[1024],out[1200];if(jipc_json_escape(message,escaped,sizeof(escaped))<0)snprintf(escaped,sizeof(escaped),"\"Request failed\"");
@@ -202,6 +211,9 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
     if(strlen(buffer)>=sizeof(r->method)||strlen(space)>=sizeof(r->target)||*space!='/')return 400;
     for(const char *p=space;*p;++p)if((unsigned char)*p<=32||*p=='\\'||*p=='#'||*p=='%')return 400;
     strcpy(r->method,buffer);strcpy(r->target,space);
+    /* A platform package is relayed in pieces, never buffered here. */
+    int upload=!strcmp(r->method,"POST")&&!strcmp(r->target,"/api/joan/v1/update");
+    size_t limit=upload?JIPC_JOAN_UPLOAD_LIMIT:JIPC_MAX_JSON;
     int length_seen=0,transfer_seen=0;unsigned seen=0;size_t length=0;char *p=line+2;
     while(p<buffer+head-2){
         char *next=strstr(p,"\r\n");if(!next)return 400;*next=0;
@@ -213,7 +225,7 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
         if(!strcasecmp(p,"Content-Length")){
             if(length_seen++||!*colon)return 400;
             length=0;
-            for(char *q=colon;*q;++q){if(!isdigit((unsigned char)*q))return 400;if(length>(JIPC_MAX_JSON-(size_t)(*q-'0'))/10)return 413;length=length*10+(size_t)(*q-'0');}
+            for(char *q=colon;*q;++q){if(!isdigit((unsigned char)*q))return 400;if(length>(limit-(size_t)(*q-'0'))/10)return 413;length=length*10+(size_t)(*q-'0');}
         }else if(!strcasecmp(p,"Transfer-Encoding")){transfer_seen=1;}
         else if(!strcasecmp(p,"Connection")){
             if(seen&16)return 400;
@@ -227,15 +239,21 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
         else if(!strcasecmp(p,"Authorization")){if((seen&2)||copy_header(r->authorization,sizeof(r->authorization),colon)<0)return 400;seen|=2;}
         else if(!strcasecmp(p,"Content-Type")){if((seen&4)||copy_header(r->type,sizeof(r->type),colon)<0)return 400;seen|=4;}
         else if(!strcasecmp(p,"Origin")){if((seen&8)||copy_header(r->origin,sizeof(r->origin),colon)<0)return 400;seen|=8;}
+        else if(!strcasecmp(p,"Cookie")){size_t have=strlen(r->cookie),add=strlen(colon);if(have+add+3>sizeof(r->cookie))return 431;if(have){memcpy(r->cookie+have,"; ",2);have+=2;}memcpy(r->cookie+have,colon,add+1);}
+        else if(!strcasecmp(p,"X-CSRF-Token")){if((seen&32)||copy_header(r->csrf,sizeof(r->csrf),colon)<0)return 400;seen|=32;}
+        else if(!strcasecmp(p,"X-Requested-With")){if((seen&64)||copy_header(r->requested_with,sizeof(r->requested_with),colon)<0)return 400;seen|=64;}
+        else if(!strcasecmp(p,"Sec-Fetch-Site")){if((seen&128)||copy_header(r->fetch_site,sizeof(r->fetch_site),colon)<0)return 400;seen|=128;}
         p=next+2;
     }
     if(transfer_seen||(!r->host[0]&&needs_host))return 400;
     if(!r->host[0])strcpy(r->host,"localhost");
     for(const char *q=r->host;*q;++q)if(!isalnum((unsigned char)*q)&&!strchr(".:-[]",*q))return 400;
-    if(!strcmp(r->method,"POST")&&!length_seen)return 411;
-    if(strcmp(r->method,"POST")&&length)return 400;
-    if(length>JIPC_MAX_JSON||head+length+1>capacity)return 413;
+    int body_method=!strcmp(r->method,"POST")||!strcmp(r->method,"PUT")||!strcmp(r->method,"DELETE");
+    if((!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))&&!length_seen)return 411;
+    if(!body_method&&length)return 400;
     if(got>head+length)return 400; /* Pipelined/extra framing is not accepted. */
+    if(upload){r->body=buffer+head;r->length=got-head;r->upload=length;r->body[r->length]=0;r->keepalive=0;return 0;}
+    if(length>JIPC_MAX_JSON||head+length+1>capacity)return 413;
     while(got<head+length){ssize_t n=receive(c,buffer+got,head+length-got);if(n<=0)return 400;got+=(size_t)n;}
     r->body=buffer+head;r->length=length;r->body[length]=0;
     if(strcmp(r->target,"/api/v1/talk")&&memchr(r->body,0,length))return 400;
@@ -279,12 +297,66 @@ static void recording_download(connection *c,const char *name){
     }
     close(fd);
 }
-static const char page[]="<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>Local camera</title><style>body{font:16px system-ui;max-width:60em;margin:2em auto;padding:0 1em}button{margin:.25em;padding:.6em}pre{white-space:pre-wrap}img{max-width:100%}</style><h1>Local camera</h1><p>Camera video, controls and recordings stay on this device.</p><button onclick='refresh()'>Refresh status</button><button onclick='record(1)'>Start recording</button><button onclick='record(0)'>Stop recording</button><p><button onclick='move(-50,0)'>Left</button><button onclick='move(0,50)'>Up</button><button onclick='move(0,0)'>Stop</button><button onclick='move(0,-50)'>Down</button><button onclick='move(50,0)'>Right</button></p><pre id=status></pre><img src='/api/v1/snapshot?channel=0' alt='Snapshot'><h2>Recordings</h2><div id=files></div><script>async function post(p,d){let r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});if(!r.ok)document.getElementById('status').textContent=await r.text();else await refresh()}function record(n){post('/api/v1/recording',{enabled:n})}function move(x,y){post('/api/v1/control',{operation:x||y?'ptz':'ptz_stop',value:x,value2:y})}async function refresh(){let s=await fetch('/api/v1/status');document.getElementById('status').textContent=await s.text();let r=await fetch('/api/v1/recordings');if(r.ok){let d=await r.json(),f=document.getElementById('files');f.replaceChildren();for(let v of d.recordings){let a=document.createElement('a');a.href='/api/v1/recordings/'+encodeURIComponent(v.name);a.textContent=v.name+' ('+v.size+' bytes)';f.append(a,document.createElement('br'))}}}refresh()</script>";
+/* A browser's own fetch: same site and, when required, a matching Origin. */
+static int same_origin(connection *c,const request *r,int required){
+    if(r->fetch_site[0]&&strcmp(r->fetch_site,"same-origin")&&strcmp(r->fetch_site,"none"))return 0;
+    if(!r->origin[0])return !required;
+    char allowed[512];snprintf(allowed,sizeof(allowed),"%s://%s",c->server->secure?"https":"http",r->host);
+    return !strcmp(allowed,r->origin);
+}
+static void ui_asset_response(connection *c,const char *name){
+    for(const ui_asset *a=ui_assets;a->name;++a)if(!strcmp(a->name,name)){response(c,200,a->type,a->data,a->size);return;}
+    static const char fallback[]="<!doctype html><meta charset=utf-8><title>jooanipc-open</title><p>This build has no admin UI.\n";
+    if(!strcmp(name,"index.html"))response(c,200,"text/html; charset=utf-8",fallback,sizeof(fallback)-1);
+    else error_response(c,404,"Not found");
+}
+/* /api/joan/<rest> -> the platform's /api/<rest> on loopback. The platform
+ * authenticates (its session cookie and CSRF token pass through); this side
+ * checks the Origin it drops, throttles failed sign-ins per address and adds
+ * Secure to its cookie. Two relays at most, so slow platform calls never
+ * starve ONVIF. */
+static atomic_int relays;
+static ssize_t upload_pull(void *context,void *data,size_t capacity){return receive(context,data,capacity);}
+static void joan_relay(connection *c,request *r){
+    const char *rest=r->target+10;int get=!strcmp(r->method,"GET");
+    if(!get&&strcmp(r->method,"POST")&&strcmp(r->method,"PUT")&&strcmp(r->method,"DELETE")){error_response(c,405,"Use GET, POST, PUT or DELETE");return;}
+    if(!*rest||strstr(rest,"..")||strstr(rest,"//")){error_response(c,404,"Endpoint not found");return;}
+    if(!same_origin(c,r,!get)){error_response(c,403,"Cross-origin requests are not accepted");return;}
+    if(r->upload&&strcasecmp(r->type,"application/octet-stream")){error_response(c,415,"Upload the package as application/octet-stream");return;}
+    if(!r->upload&&r->length&&!json_type(r->type)&&strncasecmp(r->type,"text/plain",10)){error_response(c,415,"Use application/json or text/plain");return;}
+    int login=!strcmp(r->method,"POST")&&(!strcmp(rest,"v1/session")||!strcmp(rest,"login"));
+    int logout=(!strcmp(r->method,"DELETE")&&!strcmp(rest,"v1/session"))||!strcmp(rest,"logout");
+    if(login&&jipc_auth_blocked(c->fd)){error_response(c,429,"Too many failed sign-ins from this address; retry in a minute");return;}
+    if(atomic_fetch_add(&relays,1)>=2){atomic_fetch_sub(&relays,1);error_response(c,503,"The camera is busy; retry in a moment");return;}
+    char path[1100],cookies[1100];snprintf(path,sizeof(path),"/api/%s",rest);
+    jipc_joan_cookies(r->cookie,cookies,sizeof(cookies));
+    jipc_joan_reply reply;int rc;
+    if(r->upload){c->deadline=jipc_now_us()+120000000;rc=jipc_joan_stream(r->method,path,r->type,cookies,r->csrf,r->body,r->length,r->upload,upload_pull,c,&reply);}
+    else rc=jipc_joan_request(r->method,path,r->type,cookies,r->csrf,r->body,r->length,&reply);
+    atomic_fetch_sub(&relays,1);
+    c->deadline=jipc_now_us()+10000000;
+    if(rc==-3){c->keepalive=0;error_response(c,400,"The upload stopped before the whole package arrived");return;}
+    if(rc){c->keepalive=0;error_response(c,502,rc==-2?"The system service's reply was too large":"The camera's system service is not answering");return;}
+    if(login&&(reply.status==200||reply.status==401))jipc_auth_result(c->fd,reply.status==200);
+    if(logout)jipc_joan_forget(r->cookie);
+    char extra[1200]="";size_t used=0;
+    for(int i=0;i<reply.cookies;++i){
+        int n=snprintf(extra+used,sizeof(extra)-used,"Set-Cookie: %s%s\r\n",reply.set_cookie[i],strstr(reply.set_cookie[i],"Secure")||!c->server->secure?"":"; Secure");
+        if(n<0||(size_t)n>=sizeof(extra)-used)break;
+        used+=(size_t)n;
+    }
+    if(header_with(c,reply.status,reply.type[0]?reply.type:"application/json",reply.length,extra)<0||send_all(c,reply.body,reply.length))c->failed=1;
+    jipc_joan_reply_free(&reply);
+}
 static void dispatch(connection *c,request *r){
     jipc_app *app=c->server->app;
     int soap=!strcmp(r->target,"/onvif/device_service")||!strcmp(r->target,"/onvif/media_service")||!strcmp(r->target,"/onvif/ptz_service");
     if((!strcmp(r->target,"/health")||!strcmp(r->target,"/healthz"))&&!strcmp(r->method,"GET")){int ready=app->backend_ready&&!app->stop;
         if(ready)response(c,200,"application/json","{\"ok\":true}\n",12);else error_response(c,503,"Not ready");return;}
+    c->challenge=!r->cookie[0]&&!r->requested_with[0];
+    /* The admin UI's files are public (its sign-in page is one of them). */
+    if(!strcmp(r->method,"GET")&&(!strcmp(r->target,"/")||!strncmp(r->target,"/ui/",4))){ui_asset_response(c,r->target[1]?r->target+4:"index.html");return;}
+    if(!strncmp(r->target,"/api/joan/",10)){joan_relay(c,r);return;}
     if(jipc_auth_blocked(c->fd)){error_response(c,429,"Too many failed logins from this address; retry in a minute");return;}
     int authorized=basic_authorized(app,r->authorization),offered=r->authorization[0]!=0;
     if(!authorized&&soap&&!strcmp(r->method,"POST")){
@@ -292,6 +364,16 @@ static void dispatch(connection *c,request *r){
         else{offered|=strstr(r->body,"UsernameToken")!=NULL;authorized=jipc_onvif_authorize(app,r->body);}
     }
     if(offered&&authorized>=0)jipc_auth_result(c->fd,authorized);
+    /* The UI: the platform's session cookie, plus its CSRF token and this
+     * page's Origin on anything that changes state. */
+    if(!authorized&&!soap&&r->cookie[0]){
+        char csrf[96]={0};int session=jipc_joan_session(r->cookie,csrf,sizeof(csrf));
+        if(session<0){error_response(c,503,"The camera's system service is not answering");return;}
+        if(session>0){
+            if(strcmp(r->method,"GET")&&(!same_origin(c,r,1)||!r->csrf[0]||!jipc_equal(r->csrf,csrf))){error_response(c,403,"Request token missing or invalid");return;}
+            authorized=1;
+        }
+    }
     if(!authorized){error_response(c,401,"Authentication required");return;}
     if(r->origin[0]){char allowed[512];snprintf(allowed,sizeof(allowed),"%s://%s",c->server->secure?"https":"http",r->host);if(strcmp(allowed,r->origin)){error_response(c,403,"Cross-origin requests are not accepted");return;}}
     if(strcmp(r->method,"GET")&&strcmp(r->method,"POST")){error_response(c,405,"Use GET or POST");return;}
@@ -303,7 +385,6 @@ static void dispatch(connection *c,request *r){
     }
     if(!strcmp(r->method,"POST")&&!json_type(r->type)&&strcmp(r->target,"/api/v1/talk")){error_response(c,415,"Content-Type application/json is required");return;}
     char out[JIPC_MAX_JSON],error[256]={0};
-    if(!strcmp(r->target,"/")&&!strcmp(r->method,"GET")){response(c,200,"text/html; charset=utf-8",page,sizeof(page)-1);return;}
     if(!strcmp(r->target,"/api/v1/status")&&!strcmp(r->method,"GET")){if(jipc_status_json(app,out,sizeof(out))<0)error_response(c,500,"Status unavailable");else response(c,200,"application/json",out,strlen(out));return;}
     if(!strcmp(r->target,"/api/v1/config")){
         if(!strcmp(r->method,"GET")){if(jipc_config_json(app,out,sizeof(out))<0)error_response(c,500,"Configuration unavailable");else response(c,200,"application/json",out,strlen(out));}
@@ -399,7 +480,8 @@ static void *worker_main(void *arg){
 static void *server_main(void *arg){
     http_server *s=arg;
     for(;;){
-        struct pollfd fds[HTTP_IDLE+2]={{s->listener,POLLIN,0},{s->wake[0],POLLIN,0}};
+        struct pollfd fds[HTTP_IDLE+3]={{s->listener,POLLIN,0},{s->wake[0],POLLIN,0}};
+        fds[HTTP_IDLE+2]=(struct pollfd){s->ui_listener,POLLIN,0};
         int pending[HTTP_IDLE]={0},immediate=0;
         pthread_mutex_lock(&s->mutex);
         if(s->stopping||s->app->stop){pthread_mutex_unlock(&s->mutex);break;}
@@ -411,7 +493,7 @@ static void *server_main(void *arg){
             immediate|=pending[i];
         }
         pthread_mutex_unlock(&s->mutex);
-        int ret=poll(fds,HTTP_IDLE+2,immediate?0:250);
+        int ret=poll(fds,HTTP_IDLE+3,immediate?0:250);
         if(ret<0&&errno==EINTR)continue;
         if(ret<0)break;
         if(fds[1].revents&POLLIN){char bytes[64];while(read(s->wake[0],bytes,sizeof(bytes))>0){}}
@@ -426,8 +508,9 @@ static void *server_main(void *arg){
             }
         }
         pthread_mutex_unlock(&s->mutex);
-        if(!(fds[0].revents&POLLIN))continue;
-        int fd=accept(s->listener,NULL,NULL);if(fd<0)continue;
+        int from=fds[0].revents&POLLIN?s->listener:fds[HTTP_IDLE+2].revents&POLLIN?s->ui_listener:-1;
+        if(from<0)continue;
+        int fd=accept(from,NULL,NULL);if(fd<0)continue;
         int flags=fcntl(fd,F_GETFL,0),yes=1;
         if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0||fcntl(fd,F_SETFD,FD_CLOEXEC)<0){close(fd);continue;}
         setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&yes,sizeof(yes));
@@ -444,8 +527,8 @@ static int is_loopback(const struct sockaddr *addr){
     if(addr->sa_family==AF_INET6)return IN6_IS_ADDR_LOOPBACK(&((const struct sockaddr_in6*)addr)->sin6_addr);
     return 0;
 }
-static int listener(const jipc_config *config,int secure){
-    char port[16];snprintf(port,sizeof(port),"%u",config->http_port);struct addrinfo hints={0},*addresses=NULL;
+static int listener(const jipc_config *config,int secure,unsigned number){
+    char port[16];snprintf(port,sizeof(port),"%u",number);struct addrinfo hints={0},*addresses=NULL;
     hints.ai_family=AF_UNSPEC;hints.ai_socktype=SOCK_STREAM;hints.ai_flags=AI_NUMERICSERV;
     if(getaddrinfo(config->bind,port,&hints,&addresses))return -1;
     int fd=-1;
@@ -471,7 +554,7 @@ int jipc_http_start(jipc_app *app){
     if(app->http_started||app->http_state)return -1;
     jipc_config config;jipc_config_copy(app,&config);
     if(!!config.tls_cert[0]!=!!config.tls_key[0]){jipc_log("error","HTTPS requires both tls_cert and tls_key");return -1;}
-    http_server *s=calloc(1,sizeof(*s));if(!s)return -1;s->app=app;s->listener=-1;s->wake[0]=s->wake[1]=-1;
+    http_server *s=calloc(1,sizeof(*s));if(!s)return -1;s->app=app;s->listener=s->ui_listener=-1;s->wake[0]=s->wake[1]=-1;
     if(pthread_mutex_init(&s->mutex,NULL)){free(s);return -1;}
     if(pthread_cond_init(&s->ready,NULL)){pthread_mutex_destroy(&s->mutex);free(s);return -1;}
 #ifdef JIPC_WITH_MBEDTLS
@@ -481,7 +564,17 @@ int jipc_http_start(jipc_app *app){
     if(config.tls_cert[0]){jipc_log("error","Configured HTTPS requires a build with JIPC_WITH_MBEDTLS");destroy_server(s);return -1;}
 #endif
     if(pipe2(s->wake,O_CLOEXEC|O_NONBLOCK)){destroy_server(s);return -1;}
-    s->listener=listener(&config,s->secure);if(s->listener<0){jipc_log("error","HTTP bind failed; LAN plaintext requires allow_plain_http");destroy_server(s);return -1;}
+    s->listener=listener(&config,s->secure,config.http_port);if(s->listener<0){jipc_log("error","HTTP bind failed; LAN plaintext requires allow_plain_http");destroy_server(s);return -1;}
+    /* The admin UI also answers on the standard HTTPS port, so its address
+     * needs no port (NVRs keep http_port). JIPC_HTTPS_UI_PORT (tests; 0 = off)
+     * is an environment hook, never a camera.ini key. A failed bind is not
+     * fatal: ONVIF on http_port must come up regardless. */
+    const char *ui_env=getenv("JIPC_HTTPS_UI_PORT");long ui_port=ui_env&&*ui_env?strtol(ui_env,NULL,10):443;
+    if(s->secure&&ui_port>0&&ui_port<65536&&(unsigned)ui_port!=config.http_port){
+        s->ui_listener=listener(&config,1,(unsigned)ui_port);
+        if(s->ui_listener<0)jipc_log("error","HTTPS UI bind on port %ld failed; the UI stays on port %u",ui_port,config.http_port);
+        else s->ui_port=(unsigned)ui_port;
+    }
     for(unsigned i=0;i<HTTP_WORKERS;++i)s->active[i]=-1;
     pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,512*1024);
     unsigned workers=config.max_clients<HTTP_WORKERS?config.max_clients:HTTP_WORKERS;if(!workers)workers=1;
@@ -490,13 +583,15 @@ int jipc_http_start(jipc_app *app){
     if(s->started!=workers||pthread_create(&app->http_thread,NULL,server_main,s)){
         pthread_mutex_lock(&s->mutex);s->stopping=1;pthread_cond_broadcast(&s->ready);pthread_mutex_unlock(&s->mutex);
         for(unsigned i=0;i<s->started;++i)pthread_join(s->worker[i],NULL);
-        close(s->listener);destroy_server(s);return -1;
+        close(s->listener);if(s->ui_listener>=0)close(s->ui_listener);destroy_server(s);return -1;
     }
-    app->http_state=s;app->http_started=1;jipc_log("info","%s listening on %s:%u",s->secure?"HTTPS":"HTTP",config.bind,config.http_port);return 0;
+    app->http_state=s;app->http_started=1;jipc_log("info","%s listening on %s:%u",s->secure?"HTTPS":"HTTP",config.bind,config.http_port);
+    if(s->ui_port)jipc_log("info","HTTPS admin UI also on %s:%u",config.bind,s->ui_port);
+    return 0;
 }
 void jipc_http_stop(jipc_app *app){
     http_server *s=app->http_state;if(!s)return;
-    pthread_mutex_lock(&s->mutex);s->stopping=1;shutdown(s->listener,SHUT_RDWR);
+    pthread_mutex_lock(&s->mutex);s->stopping=1;shutdown(s->listener,SHUT_RDWR);if(s->ui_listener>=0)shutdown(s->ui_listener,SHUT_RDWR);
     while(s->count){connection_close(s->queue[s->head]);s->head=(s->head+1)%HTTP_QUEUE;--s->count;}
     for(unsigned i=0;i<HTTP_IDLE;++i){connection_close(s->idle[i]);s->idle[i]=NULL;}
     wake_server(s);
@@ -504,5 +599,5 @@ void jipc_http_stop(jipc_app *app){
     pthread_cond_broadcast(&s->ready);pthread_mutex_unlock(&s->mutex);
     if(app->http_started)pthread_join(app->http_thread,NULL);
     for(unsigned i=0;i<s->started;++i)pthread_join(s->worker[i],NULL);
-    close(s->listener);app->http_state=NULL;app->http_started=0;destroy_server(s);
+    close(s->listener);if(s->ui_listener>=0)close(s->ui_listener);app->http_state=NULL;app->http_started=0;destroy_server(s);
 }

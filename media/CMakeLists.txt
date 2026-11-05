@@ -32,8 +32,18 @@ add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
 add_library(jipc_core STATIC src/util.c src/authlimit.c src/audio.c src/speaker.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
-  src/platform.c src/rtsp.c src/http.c src/onvif.c src/discovery.c src/ntp.c src/record.c)
+  src/platform.c src/rtsp.c src/http.c src/joan.c src/onvif.c src/discovery.c src/ntp.c src/record.c
+  ${CMAKE_CURRENT_BINARY_DIR}/ui_assets.h)
 target_include_directories(jipc_core PUBLIC include)
+target_include_directories(jipc_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+# The admin UI (media/ui) is compiled into the daemon and served from memory.
+file(GLOB JIPC_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*.html
+  ${CMAKE_CURRENT_SOURCE_DIR}/ui/*.css ${CMAKE_CURRENT_SOURCE_DIR}/ui/*.js ${CMAKE_CURRENT_SOURCE_DIR}/ui/*.svg)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ui_assets.h
+  COMMAND ${CMAKE_COMMAND} -DUI_DIR=${CMAKE_CURRENT_SOURCE_DIR}/ui -DOUT=${CMAKE_CURRENT_BINARY_DIR}/ui_assets.h
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-ui.cmake
+  DEPENDS ${JIPC_UI_FILES} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-ui.cmake
+  COMMENT "Embedding the admin UI" VERBATIM)
 target_compile_definitions(jipc_core PUBLIC JIPC_WITH_MBEDTLS _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE _LARGEFILE64_SOURCE)
 target_compile_options(jipc_core PRIVATE -Wall -Wextra -Werror -ffunction-sections -fdata-sections)
 target_link_libraries(jipc_core PUBLIC jipc_json mbedtls mbedx509 mbedcrypto Threads::Threads ${CMAKE_DL_LIBS} m rt)

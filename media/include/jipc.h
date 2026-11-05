@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <sys/types.h>
 #include <stdint.h>
 #define JIPC_VERSION "0.1.0"
 #define JIPC_VIDEO_STREAMS 4
@@ -199,6 +200,29 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity);
 
 int jipc_rtsp_start(jipc_app *app);
 void jipc_rtsp_stop(jipc_app *app);
+/* Platform daemon (joan-daemon) on loopback, for the HTTPS UI's single
+ * sign-in and its /api/joan/ relay. */
+#define JIPC_JOAN_REPLY_LIMIT 65536
+typedef struct {
+    char *raw, *body;
+    size_t length;
+    int status, cookies;
+    char type[128], set_cookie[2][512];
+} jipc_joan_reply;
+size_t jipc_joan_cookies(const char *header, char *out, size_t capacity);
+int jipc_joan_request(const char *method, const char *path, const char *type,
+                      const char *cookies, const char *csrf, const char *body,
+                      size_t length, jipc_joan_reply *reply);
+/* Upload: send `length` bytes of `body`, then pull the rest up to `total`. */
+typedef ssize_t (*jipc_joan_pull)(void *context, void *data, size_t capacity);
+int jipc_joan_stream(const char *method, const char *path, const char *type,
+                     const char *cookies, const char *csrf, const char *body,
+                     size_t length, size_t total, jipc_joan_pull pull, void *context,
+                     jipc_joan_reply *reply);
+#define JIPC_JOAN_UPLOAD_LIMIT 2097344u /* the platform's own update body limit */
+void jipc_joan_reply_free(jipc_joan_reply *reply);
+int jipc_joan_session(const char *cookie_header, char *csrf, size_t capacity);
+void jipc_joan_forget(const char *cookie_header);
 int jipc_http_start(jipc_app *app);
 void jipc_http_stop(jipc_app *app);
 int jipc_discovery_start(jipc_app *app);

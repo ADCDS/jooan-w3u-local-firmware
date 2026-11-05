@@ -118,7 +118,8 @@ as `replay`; camera controls are simulations and audio is PCMA silence
 (`JIPC_REPLAY_TONE=1` sends a 500 Hz tone instead). Set `JIPC_SPEAKER_CAPTURE`
 to a file path to record what talkers send.
 
-The authenticated maintenance page is `http://127.0.0.1:8080/`. Video URLs are
+The admin UI is `http://127.0.0.1:8080/` (it signs in through the platform; see
+[Admin UI](#admin-ui)). Video URLs are
 `rtsp://admin:<password>@127.0.0.1:8554/live/ch0` through `ch3`; `/stream0..3` and
 `/live/0..3` are aliases. Main/sub profiles for sensor 0 are 0/1, sensor 1 are 2/3.
 With `main_only=1`, channels 0/1 both carry sensor 0's main feed and 2/3 both
@@ -224,6 +225,8 @@ Authenticated REST endpoints:
 
 | Method and path | Behavior |
 | --- | --- |
+| `GET /` and `GET /ui/<file>` | The admin UI, without credentials |
+| `/api/joan/<path>` | Relayed to the platform's `/api/<path>` on loopback (GET, POST, PUT, DELETE) |
 | `GET /api/v1/status` | Backend readiness, streams, platform state and recording errors |
 | `GET /api/v1/config` | Configuration with password redacted |
 | `POST /api/v1/config` | Validated public settings; filesystem/listener/library settings remain local-only |
@@ -239,6 +242,32 @@ login, but like every other request it is refused while its address is
 throttled; all other SOAP operations require Basic or fresh WSSE
 authentication. Supported motor, preset, light and speaker controls are described
 in [platform controls](docs/platform.md). Unknown actions fail explicitly.
+
+## Admin UI
+
+The daemon serves the admin UI at `/` from files compiled into the binary
+(`ui/`, embedded by `cmake/embed-ui.cmake`; see [ui/README.md](ui/README.md)).
+There is one sign-in, with the platform's admin account:
+
+- `/api/joan/<path>` is relayed to `http://127.0.0.1/api/<path>`, the
+  platform daemon on the same camera. The platform authenticates: its
+  `joan_session` cookie and `X-CSRF-Token` pass through (no other cookie
+  does), and on HTTPS its cookie gains `Secure`. Requests that change state
+  need this page's `Origin`, which the relay checks and does not forward.
+  Failed sign-ins count toward the per-address throttle. Two relays run at a
+  time, so slow platform calls never hold up ONVIF; a relay waits at most
+  15 s and returns `502` if the platform does not answer.
+- The media API also accepts that platform session, checked against the
+  platform and cached for 3 s. Changes need the same `X-CSRF-Token` and the
+  page's `Origin`. Basic, Digest and WS-Security for NVRs are unchanged.
+- Requests that carry a cookie or `X-Requested-With` get no
+  `WWW-Authenticate` challenge on `401`, so the browser does not open its own
+  password dialog over the sign-in page.
+- Every response sends a strict `Content-Security-Policy` (same origin only,
+  no inline code), `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
+
+`JIPC_JOAN_PORT` in the daemon's environment points the relay at another
+loopback port (tests only).
 
 ## Audio and talk
 

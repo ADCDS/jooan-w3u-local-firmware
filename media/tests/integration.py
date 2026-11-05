@@ -23,6 +23,7 @@ import tempfile
 import threading
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import time
 
 
@@ -235,6 +236,172 @@ def onvif_profile_order(connection, secret):
         assert "AudioSourceConfiguration" in names and "AudioEncoderConfiguration" in names, names
 
 
+def fake_platform():
+    """A stand-in for joan-daemon on loopback: one admin session (token tok1,
+    csrf c1), a session check, sign-out, and a CSRF-protected PUT that echoes.
+    Records what the relay sends so the checks can see what crossed it."""
+    seen, state = [], {"live": False}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def reply(self, status, body=b"", extra=()):
+            self.send_response(status)
+            if body:
+                self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            for name, value in extra:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def handle_any(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else b""
+            seen.append({"method": self.command, "path": self.path, "host": self.headers.get("Host"),
+                         "origin": self.headers.get("Origin"), "cookie": self.headers.get("Cookie"),
+                         "csrf": self.headers.get("X-CSRF-Token"), "type": self.headers.get("Content-Type"),
+                         "body": body})
+            live = state["live"] and "joan_session=tok1" in (self.headers.get("Cookie") or "")
+            if self.path == "/api/v1/session" and self.command == "POST":
+                if json.loads(body or b"{}") == {"username": "admin", "password": "right"}:
+                    state["live"] = True
+                    return self.reply(200, b'{"ok":true,"csrf":"c1","default_password_warning":false}',
+                                      [("Set-Cookie", "joan_session=tok1; Path=/; HttpOnly; SameSite=Strict")])
+                return self.reply(401, b'{"error":{"code":"invalid_credentials"}}')
+            if not live:
+                return self.reply(401, b'{"error":{"code":"authentication_required"}}')
+            if self.path == "/api/v1/session" and self.command == "GET":
+                return self.reply(200, b'{"authenticated":true,"csrf":"c1"}')
+            if self.headers.get("X-CSRF-Token") != "c1":
+                return self.reply(403, b'{"error":{"code":"csrf_rejected"}}')
+            if self.path == "/api/v1/session" and self.command == "DELETE":
+                state["live"] = False
+                return self.reply(204, extra=[("Set-Cookie", "joan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")])
+            if self.path == "/api/v1/network/mdns" and self.command == "PUT":
+                return self.reply(200, body)
+            if self.path == "/api/v1/update" and self.command == "POST":
+                import hashlib
+                return self.reply(200, json.dumps({"id": "pkg", "bytes": len(body),
+                                                   "sha256": hashlib.sha256(body).hexdigest()}).encode())
+            return self.reply(404, b'{"error":{"code":"route_not_found"}}')
+
+        do_GET = do_POST = do_PUT = do_DELETE = handle_any
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
+    """The admin UI: public files with a strict CSP, single sign-in through
+    the platform relay, the session cookie on the media API with CSRF and
+    Origin checks, and no browser password dialog for the UI's requests."""
+    origin = f"{scheme}://127.0.0.1:{http_port}"
+
+    def call(method, path, body=None, headers=None):
+        client = connection()
+        try:
+            client.request(method, path, body=body, headers=headers or {})
+            reply = client.getresponse()
+            return reply.status, reply.getheaders(), reply.read()
+        finally:
+            client.close()
+
+    def header(headers, name):
+        return [value for key, value in headers if key.lower() == name.lower()]
+
+    status, headers, body = call("GET", "/")
+    assert status == 200 and header(headers, "Content-Type")[0].startswith("text/html"), (status, body[:200])
+    csp = header(headers, "Content-Security-Policy")[0]
+    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp, csp
+    ui = Path(__file__).resolve().parent.parent / "ui"
+    for name in sorted(p.name for p in ui.glob("*") if p.suffix in (".css", ".js", ".svg")):
+        status, _, served = call("GET", f"/ui/{name}")
+        assert status == 200 and served == (ui / name).read_bytes(), name
+    assert call("GET", "/ui/missing.js")[0] == 404
+    json_headers = {"Content-Type": "application/json", "Origin": origin}
+    # Sign-in: wrong password, then right; the platform cookie gains Secure on HTTPS.
+    status, _, _ = call("POST", "/api/joan/v1/session", json.dumps({"username": "admin", "password": "wrong"}), json_headers)
+    assert status == 401
+    status, headers, body = call("POST", "/api/joan/v1/session", json.dumps({"username": "admin", "password": "right"}),
+                                 json_headers)
+    assert status == 200 and json.loads(body)["csrf"] == "c1", body
+    cookie = header(headers, "Set-Cookie")
+    assert cookie and cookie[0].startswith("joan_session=tok1") and (("Secure" in cookie[0]) == (scheme == "https")), cookie
+    login = seen[-1]
+    assert login["host"] == "127.0.0.1" and login["origin"] is None, login
+    # A state change needs this page's Origin; another site's is refused.
+    assert call("POST", "/api/joan/v1/session", "{}", {"Content-Type": "application/json"})[0] == 403
+    assert call("POST", "/api/joan/v1/session", "{}", {"Content-Type": "application/json",
+                                                       "Origin": "https://evil.example"})[0] == 403
+    assert call("GET", "/api/joan/v1/session", headers={"Cookie": "joan_session=tok1",
+                                                        "Sec-Fetch-Site": "cross-site"})[0] == 403
+    # The media API accepts the platform session; only the session cookie crosses.
+    ui_get = {"Cookie": "other=1; joan_session=tok1", "X-Requested-With": "jipc-ui"}
+    status, _, body = call("GET", "/api/v1/status", headers=ui_get)
+    assert status == 200 and json.loads(body)["ready"], body
+    assert seen[-1]["cookie"] == "joan_session=tok1" and seen[-1]["path"] == "/api/v1/session", seen[-1]
+    control = json.dumps({"operation": "idr", "value": 0, "value2": 0})
+    ui_post = ui_get | {"Content-Type": "application/json", "Origin": origin}
+    assert call("POST", "/api/v1/control", control, ui_post)[0] == 403              # no CSRF token
+    assert call("POST", "/api/v1/control", control, ui_post | {"X-CSRF-Token": "c2"})[0] == 403
+    assert call("POST", "/api/v1/control", control, {k: v for k, v in ui_post.items() if k != "Origin"} |
+                {"X-CSRF-Token": "c1"})[0] == 403                                     # no Origin
+    status, _, body = call("POST", "/api/v1/control", control, ui_post | {"X-CSRF-Token": "c1"})
+    assert status == 200, body
+    # Relay with a body: method, body, token and cookie pass; Origin does not.
+    status, _, body = call("PUT", "/api/joan/v1/network/mdns", '{"name":"camera1"}', ui_post | {"X-CSRF-Token": "c1"})
+    assert status == 200 and body == b'{"name":"camera1"}', (status, body)
+    put = seen[-1]
+    assert put["method"] == "PUT" and put["csrf"] == "c1" and put["origin"] is None and put["cookie"] == "joan_session=tok1"
+    assert call("PUT", "/api/joan/v1/network/mdns", '{}', ui_post | {"X-CSRF-Token": "c1",
+                "Content-Type": "application/octet-stream"})[0] == 415
+    assert call("GET", "/api/joan/../v1/status", headers=ui_get)[0] in (400, 404)
+    # No Basic challenge for the UI's own requests; other clients still get one.
+    status, headers, _ = call("GET", "/api/v1/status", headers={"X-Requested-With": "jipc-ui"})
+    assert status == 401 and not header(headers, "WWW-Authenticate")
+    status, headers, _ = call("GET", "/api/v1/status")
+    assert status == 401 and header(headers, "WWW-Authenticate")
+    # A platform package streams through (never buffered whole in the daemon).
+    import hashlib
+    package = secrets.token_bytes(1536 * 1024)
+    upload = ui_post | {"X-CSRF-Token": "c1", "Content-Type": "application/octet-stream"}
+    status, _, body = call("POST", "/api/joan/v1/update", package, upload)
+    staged = json.loads(body) if status == 200 else body
+    assert status == 200 and staged["bytes"] == len(package) and \
+        staged["sha256"] == hashlib.sha256(package).hexdigest(), (status, staged)
+    assert call("POST", "/api/joan/v1/update", b"x" * 1024, upload | {"Content-Type": "text/plain"})[0] == 415
+    client = connection()
+    try:  # over the platform's own limit: refused before any byte is relayed
+        client.putrequest("POST", "/api/joan/v1/update")
+        for name, value in upload.items():
+            client.putheader(name, value)
+        client.putheader("Content-Length", str(2097345))
+        client.endheaders()
+        assert client.getresponse().status == 413
+    finally:
+        client.close()
+    # The admin UI's own HTTPS port serves the same pages and API.
+    if ui_connection:
+        client = ui_connection()
+        try:
+            client.request("GET", "/")
+            reply = client.getresponse()
+            assert reply.status == 200 and b"<" in reply.read()
+            client.request("GET", "/api/v1/status", headers=ui_get)
+            reply = client.getresponse()
+            assert reply.status == 200 and json.loads(reply.read())["ready"]
+        finally:
+            client.close()
+    # Sign-out reaches the media API at once (the session cache is dropped).
+    status, headers, _ = call("DELETE", "/api/joan/v1/session", None, ui_post | {"X-CSRF-Token": "c1"})
+    assert status == 204 and header(headers, "Set-Cookie")[0].startswith("joan_session=;"), status
+    assert call("GET", "/api/v1/status", headers=ui_get)[0] == 401
+    return {"relayed_requests": len(seen)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -295,8 +462,12 @@ def main():
         capture = root / "speaker.alaw"
         # No boot gate on a workstation; capture what the speaker would play;
         # an audible replay tone so the half-duplex mute is observable.
+        platform_server, platform_seen = fake_platform()
+        ui_port = port()
         environment = os.environ | {"JIPC_SPEAKER_GATE": "", "JIPC_SPEAKER_CAPTURE": str(capture),
-                                    "JIPC_REPLAY_TONE": "1"}
+                                    "JIPC_REPLAY_TONE": "1",
+                                    "JIPC_JOAN_PORT": str(platform_server.server_address[1]),
+                                    "JIPC_HTTPS_UI_PORT": str(ui_port)}
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=root, env=environment)
 
         def request(method, path, data=None, password=None):
@@ -374,6 +545,13 @@ def main():
             result["checks"].append("FFprobe reads the microphone track with exact 20 ms packet spacing")
             onvif_profile_order(connection, secret)
             result["checks"].append("ONVIF profile children in schema order with audio enabled")
+            ui_connection = (lambda: http.client.HTTPSConnection("127.0.0.1", ui_port, context=context, timeout=5)) \
+                if args.tls else None
+            result["ui"] = ui_checks(connection, "https" if args.tls else "http", http_port, secret, platform_seen,
+                                     ui_connection)
+            result["checks"].append("admin UI: public files with CSP, platform sign-in relay, session cookie "
+                                    "with CSRF and Origin on the media API, no Basic dialog for the UI, "
+                                    "streamed platform package upload, the UI's own HTTPS port")
             if os.environ.get("GO2RTC_BIN") and not args.tls:
                 go2rtc_interop(os.environ["GO2RTC_BIN"], root, rtsp_port, secret, request)
                 result["checks"].append("go2rtc talk stream offers a sendonly PCMA track and plays a pushed file")

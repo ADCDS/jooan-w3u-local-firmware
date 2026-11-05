@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Camera</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/ui/app.css">
+<script src="/ui/app.js" defer></script>
+</head>
+<body>
+<svg hidden>
+<path id="i-cam" d="M3 6h18v12H3zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z"/>
+<path id="i-overview" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>
+<path id="i-pantilt" d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>
+<path id="i-image" d="M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10zM12 2v2M12 20v2M2 12h2M20 12h2"/>
+<path id="i-audio" d="M4 9h4l5-4v14l-5-4H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>
+<path id="i-streams" d="M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4zM8 8a5.6 5.6 0 0 0 0 8M16 8a5.6 5.6 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/>
+<path id="i-network" d="M2.5 9a15 15 0 0 1 19 0M6 12.8a10 10 0 0 1 12 0M9.5 16.5a5 5 0 0 1 5 0M12 19.8v.4"/>
+<path id="i-system" d="M7 7h10v10H7zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/>
+<path id="i-settings" d="M4 7h16M4 17h16M9 4.5v5M15 14.5v5"/>
+<path id="i-ok" d="M5 12.5l4.5 4.5L19 7.5"/>
+<path id="i-warn" d="M12 4 2.8 20h18.4zM12 10v4M12 17v.5"/>
+<path id="i-crit" d="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 7.5v5.5M12 16.5v.5"/>
+<path id="i-off" d="M6 12h12"/>
+<path id="i-chev" d="M9 6l6 6-6 6"/>
+<path id="i-stop" d="M7.5 7.5h9v9h-9z"/>
+<path id="i-copy" d="M9 9h11v11H9zM5 15H4V4h11v1"/>
+<path id="i-eye" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0"/>
+<path id="i-lock" d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/>
+<path id="i-mic" d="M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>
+<path id="i-out" d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10"/>
+<path id="i-plus" d="M12 5v14M5 12h14"/>
+<path id="i-more" d="M5 11.5v1M12 11.5v1M19 11.5v1" stroke-width="3.2"/>
+</svg>
+
+<div id="signin" class="signin" hidden>
+<div class="brand big"><span class="logo"><svg viewBox="0 0 24 24"><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small>JOOAN W3-U · <span class="mono host"></span></small></span></div>
+<form id="si-form" class="card" novalidate>
+<div><h1 tabindex="-1" id="si-h">Sign in</h1><p class="muted">Use the admin account, the same one SSH uses.</p><small id="si-first" hidden></small></div>
+<p id="si-note" role="status" hidden></p>
+<div class="f"><label for="si-user">User name</label><input id="si-user" class="raw" autocomplete="username" value="admin"></div>
+<div class="f"><label for="si-pass">Password</label><div class="pw"><input id="si-pass" type="password" autocomplete="current-password"><button type="button" class="reveal"><svg viewBox="0 0 24 24"><use href="#i-eye"/></svg></button></div></div>
+<button class="btn pri" id="si-go">Sign in</button>
+</form>
+<p class="ic muted"><svg viewBox="0 0 24 24"><use href="#i-lock"/></svg><span>Encrypted connection. The camera makes its own certificate, so the first visit may warn; check the address is <span class="mono ink host"></span>.</span></p>
+</div>
+
+<div id="app" hidden>
+<nav id="side" aria-label="Camera sections">
+<div class="brand"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small class="mono cam-addr"></small></span></div>
+<span class="state"></span>
+<div class="grp"><span class="cap">Camera</span>
+<a href="#overview">Overview</a>
+<a href="#pantilt">Pan/tilt</a>
+<a href="#image">Image &amp; night</a>
+<a href="#audio">Audio</a></div>
+<div class="grp"><span class="cap">Settings</span>
+<a href="#streams">Streams &amp; integrations</a>
+<a href="#network">Network</a>
+<a href="#system">System</a></div>
+<div class="foot"><span class="muted">Signed in as <b class="ink user">admin</b></span>
+<button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div>
+</nav>
+
+<header id="top"><a class="back" href="#settings"><svg class="lt"><use href="#i-chev"/></svg>Settings</a><span class="brand"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><span class="state bare"></span></span></span></header>
+
+<main>
+<div id="banner" class="banner crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b><span class="cam-name">Camera</span> isn’t answering</b><p>It may be restarting (about 90 s) or off the network. You are still signed in. Retrying in <b class="mono" id="bn-s">10 s</b>.</p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
+
+<section class="page ov" id="p-overview" hidden>
+<header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Live video plays in your NVR (Frigate).</p></div></header>
+<div class="cols"><div class="stack w2">
+<div class="card o1"><div class="still"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><p>No stills in this video profile.<br>Live video is in your NVR (Frigate).</p></div>
+<div class="bar"><div><h2>Pan/tilt lens</h2><small class="mono" id="ov-s0"></small></div></div>
+<div><h2>Fixed lens</h2><small class="mono" id="ov-s1"></small></div></div>
+<div class="card o4"><div class="bar"><h2>Status</h2><span id="ov-sum"></span></div><ul class="health" id="ov-stats"></ul></div>
+</div><div class="stack">
+<div class="card o3"><h2>Quick actions</h2>
+<div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="0">Day</button><button value="1">Night</button></div><small>Automatic switching is not available in this firmware yet.</small></div>
+<div class="row"><span><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
+<div class="talk-box"></div></div>
+</div></div>
+</section>
+
+<section class="page" id="p-pantilt" hidden>
+<header class="ph"><div><h1 tabindex="-1">Pan/tilt</h1><p>Presets are shared with your NVR over ONVIF.</p></div><span class="mono" role="status" id="pt-pos"></span></header>
+<div class="cols">
+<div class="card" id="pt-move"><h2>Move</h2>
+<div class="pad" id="pt-pad"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg>Stop</button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
+<small class="c">Hold an arrow to move, release to stop. Arrow keys work here too.</small></div>
+<div class="card w2"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
+<ul class="presets" id="pt-list"></ul>
+<div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div></div>
+</section>
+
+<section class="page" id="p-image" hidden>
+<header class="ph"><div><h1 tabindex="-1">Image &amp; night</h1><p>Changes apply at once; except orientation, they last until a restart.</p></div></header>
+<div class="cols">
+<div class="card w2">
+<div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
+<div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
+<div class="stack s" id="im-sl"></div><small>The camera does not report these values, so sliders start at 128.</small></div>
+<div class="stack">
+<div class="card"><div><h2 id="im-hn">Day and night</h2><small>Both lenses share the infrared filter and lights.</small></div>
+<div class="f"><div class="seg night" aria-labelledby="im-hn"><button value="0">Day</button><button value="1">Night</button></div><small>Automatic switching is not available in this firmware yet.</small></div></div>
+<div class="card"><div class="row first"><span><b id="im-hl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="im-hl"></button></div><small>A light schedule is not available in this firmware yet.</small></div>
+</div></div>
+<div class="card"><div><h2>Orientation</h2><small>Kept after a restart. A change restarts video briefly.</small></div>
+<div class="orient" id="im-or"><span></span><span class="lbl sm">Pan/tilt lens</span><span class="lbl sm l1">Fixed lens</span>
+<span>Upside down</span><span><button class="sw" data-k="r" data-s="0" aria-label="Upside down, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="r" data-s="1" aria-label="Upside down, fixed lens"></button></span></div></div>
+</section>
+
+<section class="page" id="p-audio" hidden>
+<header class="ph"><div><h1 tabindex="-1">Audio</h1><p>The camera’s microphone and speaker.</p></div></header>
+<p class="banner" id="au-off" hidden><svg><use href="#i-warn"/></svg><span>Audio is off on the camera (audio=0), so there is no microphone or talk.</span></p>
+<div class="cols" id="au-body">
+<div class="card"><div class="bar"><div><h2>Microphone</h2><small>Sent with both main video streams as 8 kHz G.711 (A-law).</small></div><span id="au-mst"></span></div><div class="stack s" id="au-msl"></div></div>
+<div class="card"><div class="bar"><div><h2>Speaker</h2><small>Used for talk and the test tone.</small></div><span id="au-sst"></span></div><div class="stack s" id="au-ssl"></div><div class="f"><button class="btn start" id="au-tone"><svg><use href="#i-audio"/></svg>Play test tone</button></div></div>
+<small>Levels last until a restart. Volume 60 is unity; a step is about 0.5 dB.</small>
+<div class="card"><div><h2>Talk through the camera</h2><small>Uses this browser’s microphone.</small></div><div class="talk-box"></div></div>
+</div>
+</section>
+
+<section class="page" id="p-streams" hidden>
+<header class="ph"><div><h1 tabindex="-1">Streams &amp; integrations</h1><p>Copied addresses never contain passwords.</p></div><div class="f"><span class="lbl" id="st-hl">Write addresses with</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div></header>
+<div class="card"><div><h2>Video</h2><small id="st-vs"></small></div><div class="cols" id="st-lenses"></div>
+<div class="f"><span class="lbl">ONVIF device address</span><div id="st-onvif"></div><small id="st-on"></small></div></div>
+<div class="cols">
+<div class="card"><div><h2>Stream account</h2><small>What your NVR signs in with; separate from the admin password.</small></div>
+<div class="f"><span class="lbl">User name</span><div id="st-user"></div></div><div class="f"><span class="lbl">Password</span><span class="muted" id="st-pw"></span></div></div>
+<div class="card w2"><div><h2>Frigate</h2><small>Paste into Frigate’s config.yml and replace &lt;password&gt; with the stream password.</small></div>
+<div class="code"><div class="bar"><small class="mono">config.yml</small><button class="btn" id="st-copy" aria-label="Copy Frigate configuration"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><pre id="st-yaml" tabindex="0"></pre></div></div>
+</div>
+</section>
+
+<section class="page" id="p-network" hidden>
+<header class="ph"><div><h1 tabindex="-1">Network</h1><p>The camera uses Wi-Fi and never gets internet access.</p></div></header>
+<div class="cols">
+<div class="card w2"><h2 id="nw-hw" tabindex="-1">Wi-Fi</h2><div class="now" id="nw-now"></div>
+<form id="nw-join" class="stack s" novalidate><h3>Join another network</h3>
+<div class="f"><label for="nw-ssid">Network name</label><input id="nw-ssid" class="raw" maxlength="32"></div>
+<div class="f"><label for="nw-psk">Password</label><div class="pw"><input id="nw-psk" type="password" autocomplete="new-password" maxlength="64"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
+<small id="nw-help"></small><div class="acts"><button class="btn pri">Join and test</button></div>
+<small>A list of nearby networks is not available in this firmware yet.</small></form>
+<div id="nw-count" class="count" hidden><h3 tabindex="-1" id="wc-h"></h3>
+<div class="ring" role="timer" id="wc-t"><svg viewBox="0 0 164 164"><circle cx="82" cy="82" r="72"/><circle cx="82" cy="82" r="72" id="wc-arc"/></svg><span><b class="mono" id="wc-n"></b><small>left to decide</small></span></div>
+<p class="muted" id="wc-p"></p><div class="acts col"><button class="btn pri" id="wc-keep"></button><button class="btn" id="wc-back"></button></div>
+<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span>If the address changes, update your NVR after keeping the new network.</span></p></div></div>
+<div class="stack">
+<div class="card"><h2>Local name</h2>
+<form id="nw-name" class="stack s" novalidate><div class="f"><label for="nw-host">Name on this network</label><div class="suffix"><input id="nw-host" class="raw" maxlength="63" aria-describedby="nw-hh"><span class="mono">.local</span></div><small id="nw-hh">Letters, digits and hyphens. Applies after the next restart.</small></div>
+<div class="acts"><button class="btn">Save name</button></div><small id="nw-res" role="status"></small></form></div>
+<div class="card"><div><h2>Networks allowed to reach the camera</h2><small>Private networks behind your router, such as the main LAN or a VPN.</small></div>
+<ul class="list" id="nw-routes"></ul>
+<form id="nw-add" class="f" novalidate><label for="nw-cidr">Add a network</label><div class="inl"><input id="nw-cidr" class="mono raw" placeholder="192.168.1.0/24"><button class="btn">Add</button></div></form></div>
+</div></div>
+</section>
+
+<section class="page" id="p-system" hidden>
+<header class="ph"><div><h1 tabindex="-1">System</h1><p>Clock, updates and sign-in.</p></div></header>
+<div class="banner" id="sy-sync" hidden><svg><use href="#i-warn"/></svg><div><span>SSH does not accept the admin password yet; changing it once fixes that.</span><div class="acts"><button class="btn" id="sy-syncb">Change admin password</button></div></div></div>
+<div class="cols">
+<div class="card w2"><h2>Time</h2>
+<dl class="kv"><div><dt>Camera clock</dt><dd class="mono" id="sy-cam">—</dd></div><div><dt>This device</dt><dd><span class="mono" id="sy-dev"></span><span id="sy-match"></span></dd></div></dl>
+<div class="g2"><div class="f"><label for="sy-tz">Time zone</label><select id="sy-tz" aria-describedby="sy-tzh"></select><small id="sy-tzh">Only the vendor app’s overlay uses this offset.</small></div>
+<div class="f"><label for="sy-ntp">Network time server</label><input id="sy-ntp" class="mono raw" aria-describedby="sy-nh"><small id="sy-nh"></small></div></div>
+<div class="acts"><button class="btn pri" id="sy-save">Save</button><button class="btn" id="sy-now">Set clock from this device</button></div>
+<details><summary>Set a specific time</summary><div class="f"><label for="sy-man">Date and time, in this device’s time zone</label><input id="sy-man" type="datetime-local" step="1"></div><div class="acts"><button class="btn" id="sy-set">Set this time</button></div></details></div>
+<div class="card"><div><h2>Updates</h2><small>The camera checks the signature and refuses older releases. Installing restarts it.</small></div>
+<div class="cols"><form id="sy-up" class="stack s" novalidate><div><h3>Platform</h3><small class="mono" id="sy-pv"></small></div>
+<div class="f"><label for="sy-file">Platform package (JOOAN_FW_PKG)</label><input id="sy-file" type="file"></div>
+<div class="f" id="sy-prog" hidden><div class="bar"><span id="sy-pt"></span><small class="mono" id="sy-pn"></small></div><progress id="sy-pb" max="100" value="0" aria-label="Upload progress"></progress></div>
+<small id="sy-ust" role="status"></small>
+<div class="acts"><button class="btn" id="sy-stage">Upload and check</button><button type="button" class="btn pri" id="sy-apply" disabled>Install (upload first)</button></div></form>
+<div class="f"><h3>Media</h3><small class="mono" id="sy-mv"></small><small>Media updates from the browser are not available in this firmware yet.</small></div></div></div>
+</div>
+<div class="cols">
+<div class="card"><h2>Admin password</h2>
+<div class="row first"><span><b>User admin</b><small id="sy-pws">This page and SSH.</small></span><button class="btn" id="sy-pwa">Change…</button></div></div>
+<div class="card w2"><div class="bar"><h2>SSH key</h2><code id="sy-cmd"></code></div><ul class="list" id="sy-keys"></ul>
+<form id="sy-add" class="f" novalidate><label for="sy-key">Add a public key</label><textarea id="sy-key" class="mono raw" rows="3" placeholder="ssh-ed25519 AAAA… name@computer"></textarea>
+<div class="bar"><small>Ed25519 only; adding replaces the current key.</small><button class="btn">Add key</button></div></form></div>
+</div>
+<div class="card"><div class="row first"><span><b id="sy-th">Theme</b><small>On this device</small></span><div class="seg theme" aria-labelledby="sy-th"><button value="auto">Auto</button><button value="light">Light</button><button value="dark">Dark</button></div></div></div>
+</section>
+
+<section class="page" id="p-settings" hidden>
+<header class="ph"><h1 tabindex="-1">Settings</h1></header>
+<nav class="card menu" aria-label="Settings sections">
+<a href="#streams"><span><b>Streams &amp; integrations</b><small>RTSP, ONVIF, Frigate</small></span></a>
+<a href="#network"><span><b>Network</b><small>Wi-Fi, local name, allowed networks</small></span></a>
+<a href="#system"><span><b>System</b><small>Time, updates, password, SSH, theme</small></span></a></nav>
+<div class="card"><h2>Account</h2><div class="bar"><span>Signed in as <b class="user">admin</b></span><button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div></div>
+</section>
+</main>
+
+<nav id="tabs" aria-label="Sections">
+<a href="#overview">Overview</a>
+<a href="#pantilt">Pan/tilt</a>
+<a href="#image">Image</a>
+<a href="#audio">Audio</a>
+<a href="#settings">Settings</a>
+</nav>
+</div>
+<dialog id="sheet" aria-labelledby="sh-h"></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

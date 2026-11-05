@@ -22,7 +22,8 @@ architecture. In a native boot, as observed on the verified unit:
 
 | Listener | Process | Purpose and policy |
 |---|---|---|
-| `0.0.0.0:80/tcp` | `joan-daemon` | Web UI and `/api/v1/`; authenticated session, unencrypted (see [Plain HTTP](#plain-http)), [Host check](#host-and-origin-checks) |
+| `0.0.0.0:80/tcp` | `joan-daemon` | `/api/v1/`; authenticated session, unencrypted (see [Plain HTTP](#plain-http)), [Host check](#host-and-origin-checks). With the media layer installed its pages redirect to `https://<host>/`; without it, the platform's own Web UI |
+| `<camera IP>:443/tcp` | `jooanipc-open` | The admin UI: public page files, the platform session relayed to `127.0.0.1:80` (cookie, CSRF token and same-origin checks), and the media API |
 | `0.0.0.0:22/tcp`, `[::]:22/tcp` | `dropbear` | SSH; `admin` password from the start, optional Ed25519 keys |
 | `0.0.0.0:5353/udp` | `joan-daemon` | mDNS/DNS-SD; answers only peers on a directly attached IPv4 subnet |
 | `127.0.0.2:1883/tcp` | `joan-daemon` | Loopback TLS MQTT sink for the OEM application; idle in native mode |
