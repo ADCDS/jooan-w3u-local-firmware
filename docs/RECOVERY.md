@@ -20,7 +20,10 @@ a camera that cannot boot or accept an update.
 
 Keep these offline and label them for one physical camera:
 
-- two byte-identical full 8 MiB flash reads and their SHA-256 hashes;
+- two byte-identical full 8 MiB flash reads and their SHA-256 hashes, taken
+  over SSH once the platform runs
+  ([Installation, step 7](INSTALL.md#7-back-up-the-camera-over-ssh)) or with
+  an SPI programmer;
 - photographs of PCB `JA-6621 V1.0`, flash orientation, clip orientation, and
   wiring;
 - programmer model, voltage setting, flash-part selection, and a known-good

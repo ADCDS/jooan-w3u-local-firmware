@@ -77,7 +77,8 @@ Anything else gets `403 host_rejected` before any handler runs. This blocks DNS
 rebinding: a page on an attacker's domain cannot address the camera by a name
 that resolves to it, and none of the accepted suffixes resolves in public DNS.
 A router name works only when its first label is the camera's mDNS label, so
-keep the DHCP reservation name and the mDNS label the same. A renamed mDNS label
+keep the DHCP reservation name and the mDNS label the same (set the label
+under Network → Local name). A renamed mDNS label
 takes effect for this check after the next `joan-daemon`
 restart, together with the responder. On the authenticated API routes, a
 request that carries an `Origin` header must also match `http://<Host>`, or it

@@ -19,9 +19,11 @@ physical promotion gates pass.
 | Radio | USB SeekWave SKW6316 / `SV6160LITE` |
 | OEM kernel family | Linux `3.10.14__isvp_pike_1.0__` |
 
-The target manifest enforces the `JA-A12`/`A12` model identity, but software
-model checks cannot detect every component substitution. Open the camera and
-verify the PCB and fitted parts before installation.
+The target manifest enforces the `JA-A12`/`A12` model identity, and the
+installer refuses a camera whose pinned OEM files differ, before it writes
+anything. Software checks cannot detect every component substitution, though:
+only opening the camera shows the PCB marking and the fitted parts. That is
+the complete check, and it is recommended before installation.
 
 The platform installer also pins the exact retained components it depends
 on: the OEM `jooanipc` executable, `startapp` and GoAhead, the sensor and radio
@@ -87,6 +89,9 @@ this unit's USB firmware/driver pair.
 ## Evidence to record
 
 Before installation, record photographs of the PCB and flash marking, the
-output of the supplied compatibility check, current firmware/kernel versions,
-the MTD map, and hashes of two identical full-flash reads. Store this evidence
-offline; do not open a public issue with an unsanitized dump.
+current firmware/kernel versions and the camera's model as the vendor app
+reports it. After the platform is installed, record the MTD map
+(`cat /proc/mtd`) and hashes of two identical full-flash reads, taken over SSH
+([Installation, step 7](INSTALL.md#7-back-up-the-camera-over-ssh)) or with a
+programmer. Store this evidence offline; do not open a public issue with an
+unsanitized dump.

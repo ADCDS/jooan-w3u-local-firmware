@@ -195,7 +195,7 @@ reboots the camera. The OEM updater (GoAhead) is used only for the very first
 install; afterwards GoAhead is killed every second. An uninstall artifact is
 separately signed and declares destructive-removal semantics; it is not a
 state rollback. This API updates the platform only; the media layer is updated
-by its own installer (see [Installation](INSTALL.md#media-layer)).
+by its own installer (see [Building and releasing](BUILDING.md#media-layer)).
 
 ## Errors and secrets
 
