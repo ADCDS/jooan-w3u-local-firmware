@@ -25,8 +25,13 @@ bounded execution, captured logs, and the established cold-recovery procedure.
   must not embed the build path, hostname, current time, uid/gid, directory
   enumeration order, or random archive metadata.
 
-`ci/check.sh` runs the light gates. A release CI job supplies
-`PERSISTENT_ROOT`, `REPRO_BUILD_CMD`, and `REPRO_ARTIFACT` after its build.
+`ci/check.sh` runs every gate of both layers, including the media daemon's
+`make -C media test integration integration-tls` (the RTSP, ONVIF and HTTPS
+authentication integration tests); it needs `TOOLCHAIN_ROOT`, `OEM_ROOTFS` and
+the release signing key. `ci/check-hosted.sh` runs the subset that needs no
+private inputs, and GitHub Actions (`.github/workflows/ci.yml`) runs it on
+every push. A release CI job supplies `PERSISTENT_ROOT`, `REPRO_BUILD_CMD`, and
+`REPRO_ARTIFACT` after its build.
 
 ## API contract
 
@@ -52,7 +57,9 @@ Required cases:
 6. Authentication failures are rate-limited without letting an unauthenticated
    client exhaust memory, file descriptors, or worker slots.
 7. Binding is limited to the intended management interfaces. WAN/cloud egress
-   is not needed for API operation.
+   is not needed for API operation. Every request whose `Host` is not a
+   private/loopback IP literal or the configured `<label>.local` gets
+   `403 host_rejected`, sign-in and static files included.
 8. Restart and power-loss tests prove atomic persistence: the old or new valid
    configuration returns, never a half-written credential or network state.
 
@@ -78,8 +85,10 @@ Exercise every allowed transition and every forbidden edge. In particular:
 - the public initial `admin` / `admin` remains valid until changed, with
   neither forced setup nor a warning banner;
 - the reported state survives restart and flips only after password rotation;
-- Web, SSH, and OEM loopback RTSP password records remain synchronized, with
-  a documented early-`0.1` migration state when SSH cannot yet be derived;
+- Web and SSH password records remain synchronized, with a documented
+  early-`0.1` migration state when SSH cannot yet be derived;
+- the OEM loopback RTSP secret is random, never the admin password, and is
+  regenerated at every daemon start and password change;
 - password/token rotation revokes old sessions;
 - logout, expiry, reboot, and clock rollback cannot resurrect a session;
 - failed-attempt counters survive service restart when intended but cannot be
@@ -159,12 +168,13 @@ No host pass alone authorizes camera execution. A hardware trial additionally
 requires exact board identity, known-rooted-OEM pre-baseline, physical power
 control, verified watchdog custody where needed, volatile payloads, no unknown
 media holders, explicit time/byte limits, reverse-order cleanup, captured kernel
-logs, and a cold post-test recovery proving both OEM streams and management
-access. Persistent installation requires its separate rollback and pre-boot
+logs, and a cold post-test recovery proving both sensor streams and
+management access. Persistent installation requires its separate rollback and pre-boot
 recovery gates.
 
-Promotion also requires loopback-only OEM RTSP and ONVIF, network time,
-DNS-SD, signed update/replay rejection, early-GoAhead
+Promotion also requires the native-boot listener set, loopback-only OEM RTSP
+and ONVIF in the fallback modes, network time, DNS-SD without RTSP, signed
+update/replay rejection, early-GoAhead
 capture, no-default-route enforcement, the steady 196 KiB/64 KiB contract, the
 single-runtime 196 KiB/56 KiB maintenance contract with SSH recovery, and
 destructive uninstall

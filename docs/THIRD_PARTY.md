@@ -1,10 +1,39 @@
 # Third-party components and redistribution boundary
 
-## Repository license
+## Repository licenses
 
-Original source and documentation in this repository are licensed under
-GPL-2.0-only. Individual files may carry additional notices where required.
-Build and packaging tools do not change the license of their inputs.
+The repository holds two separately licensed layers:
+
+- **The platform** (the repository root: everything outside `media/`) is
+  licensed under GPL-2.0-only ([LICENSE](../LICENSE)). Every platform source
+  file carries an `SPDX-License-Identifier: GPL-2.0-only` header.
+- **The media daemon** (`media/`) is licensed under MIT
+  ([media/LICENSE](../media/LICENSE)); its files carry
+  `SPDX-License-Identifier: MIT`. Its own dependencies are listed in
+  [media/docs/third-party.md](../media/docs/third-party.md).
+
+Each file keeps its own license. The MIT `media/scripts/oem-boot-handoff.sh`
+sources the platform's GPL `runtime/boot/common.sh` on the camera at run time;
+that does not change either file's license, and MIT code may be distributed as
+part of a GPL-2.0 work. Individual files may carry additional notices where
+required. Build and packaging tools do not change the license of their inputs.
+
+### Mbed TLS linking exception
+
+`joan-daemon` and the platform's release verifiers (`jooan-sha256`,
+`jooan-auth-verify`, `jooan-ironman-inspect`) are compiled against the Mbed TLS
+2.25.0 headers (Apache-2.0) and dynamically link the Mbed TLS libraries that
+are preinstalled in the camera's OEM rootfs. The project ships no Mbed TLS code
+or binaries. Apache-2.0 and GPL-2.0-only are generally considered
+incompatible, so the copyright holder of the platform code (ADCDS, its sole
+author) grants this additional permission:
+
+> As a special exception, the copyright holder of the platform code gives
+> permission to link it with the Mbed TLS library (or a modified version of
+> it) distributed under the Apache License 2.0, and to distribute the result.
+> You must obey the GNU General Public License in all respects for all code
+> other than Mbed TLS. If you modify this code, you may extend this exception
+> to your version, but you are not obliged to.
 
 ## Retained OEM components
 
@@ -26,7 +55,9 @@ Generic build/release artifacts must not contain OEM binaries, flash dumps,
 factory secrets, Wi-Fi credentials, TLS private keys, SSH private keys, device
 tokens, or calibration copied from a contributor's camera. Required retained
 components are used in place on the recipient's own compatible device or are
-supplied privately by that device's owner under whatever rights apply.
+supplied privately by that device's owner under whatever rights apply. A
+media-layer bundle's appfs image is rebuilt from the owner's own camera and
+contains OEM files; it is a private artifact, not a generic release.
 
 ## External open-source projects
 
@@ -36,14 +67,18 @@ The release build uses:
   release site with SHA-256 `e098034a…e14c76d`. The release contains a reduced
   server with synchronized `admin` password authentication and optional
   Ed25519 keys; forwarding, PAM, X11, and SFTP are disabled.
-- Mbed TLS 2.25.0 headers at commit `1c54b541…a67`; Apache-2.0. The daemon links
-  to the ABI-compatible Mbed TLS libraries already present on the camera and
-  does not redistribute those OEM-built library files.
+- Mbed TLS 2.25.0 headers at commit `1c54b541…a67`; Apache-2.0, used under
+  the [linking exception](#mbed-tls-linking-exception) above. The platform
+  links to the ABI-compatible Mbed TLS libraries already present on the camera
+  and does not redistribute those OEM-built library files.
 - The Ingenic GCC 5.4 multilib/uClibc toolchain as a build-time-only SDK input.
   `tools/fetch-ingenic-toolchain.sh` records the public mirror and hashes; the
   toolchain is not committed or included in releases, and its SDK terms apply.
 
 Host tools also use the Python standard library and normal system utilities.
+The media daemon's dependencies (cJSON, Mbed TLS 3.6.7 built into the
+program, and the external OpenIMP `libimp.so` with its `libatomic.so.1`) are
+covered in [media/docs/third-party.md](../media/docs/third-party.md).
 
 Do not describe a component as open source merely because source was found on a
 public mirror. Verify provenance and license terms first.
