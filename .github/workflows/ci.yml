@@ -20,5 +20,7 @@ jobs:
           node-version: "20"
       - name: Install build and test tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ffmpeg
+      - name: Install Python test dependency (release signing tests)
+        run: python -m pip install cryptography==43.0.0
       - name: Hosted checks
         run: ci/check-hosted.sh
