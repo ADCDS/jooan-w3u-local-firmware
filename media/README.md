@@ -1,5 +1,10 @@
 # Jooanipc Open
 
+> This directory was the standalone `jooanipc-open` repository until
+> 2026-11-05. It now lives in `media/` next to the
+> [platform](../README.md) it runs on. Build, tests and license (MIT) are
+> unchanged; run the commands below from `media/`.
+
 A buildable local camera daemon for the JOOAN W3-U JA-A12. It implements local
 streaming, administration, camera controls and recording, with a workstation
 replay backend and an external-IMP hardware backend for the retained OEM Linux
@@ -24,7 +29,7 @@ homing. This is a local-services replacement, with the
 feature boundaries below; full OEM feature parity is not claimed.
 The guarded boot helper supports versioned releases in internal application
 flash as well as SD storage. `scripts/install-camera.py` installs a release
-bundle covering this daemon and the retained local controller; see
+bundle covering this daemon and the retained [local controller](../README.md); see
 [camera release bundles](docs/hardware.md#camera-release-bundles). Internal releases run without an SD card; private
 configuration and presets stay in the writable flash partition. See
 [internal-flash packaging](docs/hardware.md#internal-flash-packaging) for the
@@ -101,7 +106,7 @@ to match your fixture. Empty input1/2/3 reuse input0. Replay reports its backend
 as `replay`; camera controls are simulations and audio is PCMA silence.
 
 The authenticated maintenance page is `http://127.0.0.1:8080/`. Video URLs are
-`rtsp://admin:PASSWORD@127.0.0.1:8554/live/ch0` through `ch3`; `/stream0..3` and
+`rtsp://admin:<password>@127.0.0.1:8554/live/ch0` through `ch3`; `/stream0..3` and
 `/live/0..3` are aliases. Main/sub profiles for sensor 0 are 0/1, sensor 1 are 2/3.
 With `main_only=1`, channels 0/1 both carry sensor 0's main feed and 2/3 both
 carry sensor 1's main feed. Dimensions and bitrates describe the actual feed;

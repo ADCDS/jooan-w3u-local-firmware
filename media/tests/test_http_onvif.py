@@ -174,7 +174,7 @@ class HTTPTests(unittest.TestCase):
         token = self.wsse()
         self.assertEqual(self.soap("GetProfiles", auth=False, header=token)[0], 200)
         self.assertEqual(self.soap("GetProfiles", auth=False, header=token)[0], 401)
-        self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(password="incorrect"))[0], 401)
+        self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(password="incorrect"))[0], 401)  # hygiene: allow-test-vector
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=-601))[0], 401)
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=601))[0], 401)
 

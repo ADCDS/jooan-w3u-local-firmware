@@ -37,8 +37,8 @@ SSH with optional keys, the Web UI on TCP/80, embedded DNS-SD, and an
 exact-hash `jooanipc` containment DSO. The guard keeps the retained OEM RTSP
 service on loopback TCP/8554 and the OEM ONVIF service, which accepts any
 credentials, on loopback TCP/8899. This firmware serves no video or PTZ
-itself: the separate media daemon,
-[jooanipc-open](https://github.com/ADCDS/jooanipc-open), replaces `jooanipc`
+itself: the media daemon,
+[jooanipc-open](../media/), replaces `jooanipc`
 after boot (see [API](API.md#media)). Without it, nothing exposes video or PTZ.
 
 ## Early-boot OEM exposure

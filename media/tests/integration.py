@@ -199,7 +199,7 @@ def main():
             protocol = run(discovery_args, timeout=20)
             result["discovery_protocol"] = protocol.stderr.strip()
             def decode(transport, channel):
-                url = f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch{channel}"
+                url = f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch{channel}"  # hygiene: allow-test-vector
                 run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-xerror", "-threads", "1",
                      "-rtsp_transport", transport, "-i", url, "-t", "1", "-map", "0:v:0", "-threads:v", "1", "-f", "null", "-"], timeout=25)
                 return f"FFmpeg decoded channel{channel} via {transport}"

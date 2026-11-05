@@ -7,7 +7,7 @@ configuration. `replay` simulates all of these controls in memory and writes
 only its own preset file. Replay status explicitly identifies the backend.
 
 The hardware profile is specifically the JOOAN W3-U / JA-A12 represented by
-`../jooan-w3u/dumps/p25q64ha-20250916-mtd/etc/config.org`. It is not a generic
+`../../jooan-w3u/dumps/p25q64ha-20250916-mtd/etc/config.org`. It is not a generic
 Ingenic GPIO map. Other board revisions require a reviewed profile change.
 
 ## Motor ABI and movement
@@ -27,7 +27,7 @@ numbers synthesized for the host architecture.
 | 8 | two signed int32: delta X, delta Y | OEM nonblocking move; not used because its Y path corrupts swapped-axis bookkeeping |
 
 Independent evidence is the historical export
-`../jooan-w3u/ghidra/jooanipc-decompiled.c`: `0x48ce10` issues request 3
+`../../jooan-w3u/ghidra/jooanipc-decompiled.c`: `0x48ce10` issues request 3
 (line 43600), `0x48d268` issues request 8 (43760), `0x48d550` request 5
 (43813), `0x48d8b8` request 4 (43958), and reset routine `0x48d9d0`
 request 2 (44038). Module `motor_get_message` establishes the four returned

@@ -5,8 +5,8 @@ physical JA-A12 promotion gates pass. Installation writes only `/opt`; it does
 not replace the bootloader, kernel, rootfs, appfs, calibration, or identity.
 
 This firmware is the platform only. Video, ONVIF, pan/tilt and presets come
-from the separate media daemon,
-[jooanipc-open](https://github.com/ADCDS/jooanipc-open), installed and
+from the media daemon,
+[jooanipc-open](../media/), installed and
 configured per its own documentation; without it the camera exposes no video.
 
 ## Before installation

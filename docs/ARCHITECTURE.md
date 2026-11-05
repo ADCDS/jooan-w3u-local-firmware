@@ -21,7 +21,7 @@ authenticated control   route/process policy
                                       |
                           cv2005 + cv2005s1 sensors
 
-NVR -> media daemon (jooanipc-open, separate; replaces jooanipc after boot)
+NVR -> media daemon (jooanipc-open in media/; replaces jooanipc after boot)
 
 Bootloader -> OEM Linux 3.10 -> vendor modules -> retrofit supervisor
 ```
@@ -76,8 +76,8 @@ in 0.2.14. The camera no longer remuxes video for browsers or routes audio,
 which also retired the per-viewer fMP4 buffers and the audio router process: on
 a 38 MB board that memory was part of what the OOM killer fought over.
 
-Since 0.2.22 `joan-daemon` is the platform only. A separate media daemon,
-[jooanipc-open](https://github.com/ADCDS/jooanipc-open), replaces `jooanipc`
+Since 0.2.22 `joan-daemon` is the platform only. The media daemon,
+[jooanipc-open](../media/), replaces `jooanipc`
 after boot and owns RTSP, ONVIF, pan/tilt, presets and the NVR integration on
 its own ports and credentials. The Digest RTSP proxy on TCP/554, the ONVIF
 subset on port 80 and the optional OEM audio pause were removed; the guard's

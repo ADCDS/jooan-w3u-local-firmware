@@ -40,8 +40,9 @@ MISSING_FLAGS = [
 # an opening paren/brace, a backtick or $( ... ).
 COMMAND_POSITION = r"(?:^|[|;&(){}`]|\$\(|\|\||&&)\s*"
 
-# Directories whose shell actually runs on the camera.
-SHIPPED = ("runtime/", "packaging/payload/")
+# Directories whose shell actually runs on the camera. media/scripts/ holds
+# the media daemon's boot, handoff and appfs-upgrade scripts.
+SHIPPED = ("runtime/", "packaging/payload/", "media/scripts/")
 
 
 def shipped_scripts(root: Path):

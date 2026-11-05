@@ -60,8 +60,8 @@ Clients must ignore unknown response fields.
 ## Media
 
 `joan-daemon` is the platform and serves no media. Video, ONVIF, pan/tilt,
-presets and the NVR (Frigate) integration belong to the separate media daemon
-[jooanipc-open](https://github.com/ADCDS/jooanipc-open), which replaces the
+presets and the NVR (Frigate) integration belong to the media daemon
+[jooanipc-open](../media/), which replaces the
 OEM `jooanipc` after boot and documents its own ports, credentials and API.
 A native boot never starts the OEM `jooanipc`; the guarded handoff fallback
 still uses it to bring up Wi-Fi and home the motor (see

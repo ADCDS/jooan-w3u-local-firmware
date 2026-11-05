@@ -17,10 +17,25 @@ the OEM Linux 3.10 kernel, vendor kernel modules, and `jooanipc`, which still
 starts at every boot to bring up Wi-Fi and home the motor. The open layer
 confines that legacy process, exposes authenticated local services, and blocks
 unwanted network access. It is the platform only: video, ONVIF, pan/tilt,
-presets and the NVR integration belong to a separate media daemon,
-[jooanipc-open](https://github.com/ADCDS/jooanipc-open), which replaces
+presets and the NVR integration belong to the media daemon,
+[jooanipc-open](media/), which lives in `media/` and replaces
 `jooanipc` after boot on its own ports and credentials. See
 [Architecture](docs/ARCHITECTURE.md) for the trust boundary.
+
+## Repository layout
+
+| Path | Layer | License |
+| --- | --- | --- |
+| `/` | Platform: boot supervisor, `joan-daemon` admin UI/API, SSH, Wi-Fi, clock, signed updates | GPL-2.0-only |
+| [`media/`](media/) | Media daemon `jooanipc-open`: RTSP, ONVIF, pan/tilt, presets, and the camera release-bundle installer | MIT |
+
+The `libimp.so` that the media daemon loads is built from the OpenIMP fork,
+branch [`jooan/oem-t23-abi`](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi),
+which stays a separate repository.
+
+`media/` was the standalone `jooanipc-open` repository until 2026-11-05. Its
+full history, with the original commit IDs, is part of this repository.
+`ci/check.sh` runs the tests of both layers.
 
 ## Exact hardware scope
 
@@ -225,5 +240,6 @@ See [Third-party components](docs/THIRD_PARTY.md) for licensing boundaries and
 ## License
 
 Original code and documentation in this repository are licensed under
-[GPL-2.0-only](LICENSE). No license is granted here for OEM or third-party
+[GPL-2.0-only](LICENSE), except `media/`, which is MIT-licensed
+([media/LICENSE](media/LICENSE)). No license is granted here for OEM or third-party
 artifacts that are not included in the repository.
