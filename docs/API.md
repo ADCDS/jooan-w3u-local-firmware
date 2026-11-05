@@ -15,10 +15,11 @@ physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
 a private or loopback IPv4 literal (10/8, 172.16/12, 192.168/16, 127/8), a
-loopback or ULA IPv6 literal, or the configured `<label>.local`; anything else
-gets `403 host_rejected` (see
-[Network security](NETWORK-SECURITY.md#host-and-origin-checks)). Address the
-camera by IP or by its `.local` name, not by a router-assigned DNS name.
+loopback or ULA IPv6 literal, or the configured mDNS label, bare or followed by
+`.local`, `.lan`, `.home.arpa` or `.internal`; anything else gets
+`403 host_rejected` (see
+[Network security](NETWORK-SECURITY.md#host-and-origin-checks)). A
+router-assigned DNS name works only when it is the camera's own label.
 
 All routes except setup status and session creation require an authenticated
 administrator session (`401 authentication_required`). State-changing HTTP
@@ -195,7 +196,7 @@ reboots the camera. The OEM updater (GoAhead) is used only for the very first
 install; afterwards GoAhead is killed every second. An uninstall artifact is
 separately signed and declares destructive-removal semantics; it is not a
 state rollback. This API updates the platform only; the media layer is updated
-by its own installer (see [Installation](INSTALL.md#media-layer)).
+by its own installer (see [Building and releasing](BUILDING.md#media-layer)).
 
 ## Errors and secrets
 

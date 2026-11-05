@@ -45,8 +45,9 @@ the two open daemons and SSH:
 - **`joan-daemon`** (platform): the Web UI and `/api/v1/` over plain HTTP on
   TCP/80, the mDNS responder on UDP/5353, and two loopback listeners that serve
   only the OEM application in the fallback modes. Every HTTP request must name
-  the camera in its `Host` header (private or loopback IP literal, or
-  `<label>.local`), which blocks DNS rebinding.
+  the camera in its `Host` header (private or loopback IP literal, or the
+  camera's mDNS label, bare or with `.local`, `.lan`, `.home.arpa` or
+  `.internal`), which blocks DNS rebinding.
 - **`jooanipc-open`** (media): LAN-facing TLS, HTTP and ONVIF SOAP parsers on
   TCP/18443 and an RTSP parser on TCP/18554, with their own credentials. Failed
   logins over HTTP Basic, ONVIF WS-Security and RTSP Digest share a per-address

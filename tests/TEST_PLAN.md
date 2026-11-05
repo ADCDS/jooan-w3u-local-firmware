@@ -58,8 +58,9 @@ Required cases:
    client exhaust memory, file descriptors, or worker slots.
 7. Binding is limited to the intended management interfaces. WAN/cloud egress
    is not needed for API operation. Every request whose `Host` is not a
-   private/loopback IP literal or the configured `<label>.local` gets
-   `403 host_rejected`, sign-in and static files included.
+   private/loopback IP literal or the configured mDNS label (bare or with
+   `.local`, `.lan`, `.home.arpa` or `.internal`) gets `403 host_rejected`,
+   sign-in and static files included.
 8. Restart and power-loss tests prove atomic persistence: the old or new valid
    configuration returns, never a half-written credential or network state.
 

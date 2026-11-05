@@ -183,6 +183,72 @@ IPv6 default routes and filters public resolvers; explicitly configured
 RFC1918/ULA and connected routes remain. DHCP, SSH and the open daemons are
 separate processes, while the router/VLAN remains the hard device-wide boundary.
 
+## Feature coverage
+
+The user-facing comparison with the vendor firmware is in
+[OEM comparison](OEM-COMPARISON.md). This table is the engineering view.
+
+The OEM app drives this hardware through `jooanipc`'s local command surface (the
+P2P/MQTT/CGI "DP" handlers). The table lists the capabilities that surface exposes
+on the verified `JA-A12` unit — leaving out the cloud/P2P transport and account
+plumbing — and whether the retrofit reimplements each one over its local,
+authenticated interfaces. The retrofit deliberately prioritizes live control and
+security; several OEM conveniences are intentionally not (yet) reimplemented.
+
+Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
+→ provided by the media daemon (`media/`), not the platform.
+
+| Capability (OEM app · `jooanipc`) | Retrofit |
+|---|---|
+| **Video** | |
+| Live view, dual sensor (OEM: main 2304×1296 + sub 640×360) | → RTSP for an NVR such as Frigate; the qualified profile is 1920×1080 + 640×360. The platform Web UI is a maintenance console and plays no video |
+| Direct RTSP for NVR / VLC clients | → TCP/18554, Digest authentication |
+| JPEG snapshot | → ~ `GET /api/v1/snapshot` on TCP/18443, unavailable in the qualified `main_only=1` profile; the platform has no snapshot route |
+| Video flip / mirror | → `flip`, `hflip`, `vflip` controls |
+| Digital zoom | ✗ |
+| OSD timestamp / logo overlay | ~ only from the OEM application (fallback modes); the media daemon draws no overlay |
+| **Pan / tilt** | |
+| Jog (up / down / left / right) | → over ONVIF and the REST API |
+| Presets — save / recall / delete | → 16 named presets |
+| Control from an NVR (Frigate) | → over ONVIF on TCP/18443 |
+| Home / calibration | → homes on every boot (the media daemon in a native boot, the OEM application before a handoff) |
+| Cruise / patrol schedule | ✗ |
+| Auto-tracking | ✗ |
+| Privacy / PTZ-hide schedule | ✗ |
+| **Audio** | |
+| Listen (camera microphone) | ✗ (the qualified media profile runs with audio disabled) |
+| Two-way talk | ✗ (the qualified media profile runs with audio disabled) |
+| Speaker volume | ✗ |
+| Custom voice / alert clips | ✗ |
+| **Light & night vision** | |
+| Day / Night / IR-cut mode | → manual `night`/`ircut` only; automatic day/night is not implemented |
+| Floodlight / white light (+ schedule) | → manual `white_light` on/off; no schedule |
+| **Detection & alarms** | |
+| Motion detection (+ sensitivity, zones) | ✗ |
+| Human / person detection (+ area) | ✗ |
+| **Storage (microSD)** | |
+| Scheduled / continuous recording | → ~ rotating local files; off in the qualified profile, which runs without an SD card |
+| Playback | → ~ authenticated download of local recordings |
+| Card format / capacity | ✗ |
+| **Time** | |
+| Set clock (from phone / UTC) | ✓ manually, or by optional SNTP from a local server |
+| Time zone | ~ stored in the OEM configuration; only the OEM application's OSD uses it, on its next start |
+| **Network** | |
+| Wi-Fi credentials | ✓ transactional stage / commit / roll back; prefers 5 GHz, falls back to 2.4 GHz when 5 GHz is weak/absent |
+| Wi-Fi scan (nearby APs) | ✗ |
+| Signal / RSSI readout | ✓ `/api/v1/network/quality` (signal, rate, counters) |
+| **System** | |
+| Firmware update | ✓ signed, sequence-gated (platform); the media layer is updated by its installer |
+| Change password | ✓ (synchronized to SSH) |
+| Reboot | ✗ (only implicitly, when a signed update is applied) |
+| Device info / UID | ~ version and state in `/api/v1/status` |
+
+Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
+(password-synchronized, optional Ed25519 keys), **mDNS** `.local` naming,
+**local-only egress** (continuous default-route pruning), a **native boot**
+that never starts the OEM application, exact-binary `jooanipc` **cloud/P2P
+containment** for the fallback modes, and optional **network time** (SNTP).
+
 ## Boot and network sequencing
 
 The OEM boot sequence can launch GoAhead before `/opt/etc/local.rc` runs. That

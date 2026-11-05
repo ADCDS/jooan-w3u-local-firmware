@@ -67,14 +67,17 @@ Every request to TCP/80, sign-in and static files included, must carry a
 - an IPv4 literal in 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 127.0.0.0/8,
   with or without a port;
 - a bracketed IPv6 loopback or ULA (`fc00::/7`) literal;
-- `<label>.local`, the configured mDNS name.
+- the camera's configured mDNS label (default `jooan-w3u`), bare or followed
+  by `.local`, `.lan`, `.home.arpa` or `.internal`: for example `jooan-w3u`,
+  `jooan-w3u.local` or `camera1.lan` for a camera labelled `camera1`.
 
 Anything else gets `403 host_rejected` before any handler runs. This blocks DNS
 rebinding: a page on an attacker's domain cannot address the camera by a name
-that resolves to it. It also means the UI is refused under any other DNS name,
-such as a router-assigned `name.lan`; use the address or the `.local` name. A
-renamed mDNS label takes effect for this check after the next `joan-daemon`
-restart, together with the responder. On the authenticated API routes, a
+that resolves to it. A router-assigned name such as `name.lan` works only when
+`name` is the camera's own label; set the label under Network → Local name to
+match the router's name, or use the address. A renamed mDNS label takes effect
+for this check after the next `joan-daemon` restart, together with the
+responder. On the authenticated API routes, a
 request that carries an `Origin` header must also match `http://<Host>`, or it
 gets `403 origin_rejected`.
 

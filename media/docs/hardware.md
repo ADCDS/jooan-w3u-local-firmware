@@ -382,8 +382,9 @@ reboots the camera; the installer waits for the media daemon to qualify again
 are staged first, so a bundle with one layer needs one reboot. Every touched
 file is copied to `BUNDLE/backups/` beforehand and restored if a step fails
 before the first reboot. Without `--yes` only the host and camera preflight
-runs. Give `--camera` the camera's IP address or `.local` name: the platform
-API answers `403 host_rejected` to any other host name.
+runs. Give `--camera` the camera's private IP address or its own name (its
+mDNS label, bare or with `.local`, `.lan`, `.home.arpa` or `.internal`): the
+platform API answers `403 host_rejected` to any other host name.
 
 Preflight refuses a camera that is not the qualified flash layout, has less
 than 64 KiB free on `/opt`, has a handoff `boot-trial` latched, has
