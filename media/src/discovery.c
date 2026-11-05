@@ -551,7 +551,7 @@ void jipc_discovery_stop(jipc_app *app)
 {
     discovery_state *state = app->discovery_state; if (!state) return;
     atomic_store(&state->quitting, 1);
-    unsigned char byte = 1; (void)write(state->wake[1], &byte, 1);
+    unsigned char byte = 1; ssize_t ignored = write(state->wake[1], &byte, 1); (void)ignored;
     if (app->discovery_started) pthread_join(app->discovery_thread, NULL);
     app->discovery_state = NULL; app->discovery_started = 0;
     discovery_release(state);

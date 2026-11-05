@@ -197,7 +197,7 @@ void jipc_ntp_stop(jipc_app *app)
 {
     ntp_state *s = app->ntp_state; if (!s) return;
     atomic_store(&s->quitting, 1);
-    unsigned char byte = 1; (void)write(s->wake[1], &byte, 1);
+    unsigned char byte = 1; ssize_t ignored = write(s->wake[1], &byte, 1); (void)ignored;
     if (app->ntp_started) pthread_join(app->ntp_thread, NULL);
     app->ntp_state = NULL; app->ntp_started = 0;
     ntp_release(s);
