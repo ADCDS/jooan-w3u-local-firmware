@@ -15,36 +15,73 @@ Allow administration only from named management hosts. Allow the media
 daemon's video and ONVIF ports only from the NVR/viewers that need them. Keep
 this policy active during installation, every reboot, and recovery.
 
-## Target listener policy
+## Listeners by boot mode
 
-| Port | Protocol | Purpose | Policy |
-|---:|---|---|---|
-| 80/tcp | HTTP | UI and `/api/v1/` | Authenticated session; unencrypted, see [Plain HTTP](#plain-http) |
-| 5353/udp | mDNS/DNS-SD | Host and HTTP/SSH/RTSP/camera discovery | Link-local multicast only |
-| 22/tcp | SSH | Administrative shell | Synchronized `admin` password; optional keys |
+The [boot modes](ARCHITECTURE.md#boot-modes) are described in the
+architecture. In a native boot, as observed on the verified unit:
 
-The separate media daemon adds its own listeners and credentials; it is not
-part of this table.
+| Listener | Process | Purpose and policy |
+|---|---|---|
+| `0.0.0.0:80/tcp` | `joan-daemon` | Web UI and `/api/v1/`; authenticated session, unencrypted (see [Plain HTTP](#plain-http)), [Host check](#host-and-origin-checks) |
+| `0.0.0.0:22/tcp`, `[::]:22/tcp` | `dropbear` | SSH; `admin` password from the start, optional Ed25519 keys |
+| `0.0.0.0:5353/udp` | `joan-daemon` | mDNS/DNS-SD; answers only peers on a directly attached IPv4 subnet |
+| `127.0.0.2:1883/tcp` | `joan-daemon` | Loopback TLS MQTT sink for the OEM application; idle in native mode |
+| `127.0.0.4:9443/tcp` | `joan-daemon` | Loopback stub that accepts and closes the OEM application's port-443 connections; idle in native mode |
+| `<camera IP>:18443/tcp` | `jooanipc-open` | HTTPS REST and ONVIF/PTZ; HTTP Basic or WS-Security |
+| `<camera IP>:18554/tcp` | `jooanipc-open` | RTSP; Digest authentication |
 
-The runtime removes IPv4/IPv6 default routes, filters public resolvers, kills
-public GoAhead/telnet after the boot hook runs, and confines the exact
-`jooanipc` binary. It does not add a kernel-wide firewall. Connected local
-routes and explicitly configured RFC1918/ULA routes remain. The VLAN/router is
-the device-wide inbound and outbound boundary.
+The media daemon binds the address set by `bind` in its `camera.ini` (the
+deployed unit uses the camera's IP; the example configuration uses `0.0.0.0`).
+RTSP clients that choose RTP over UDP get per-session UDP ports. Nothing
+listens on TCP/554, 8554, 8899 or 443 in a native boot.
 
-The runtime supplies continuous `telnetd` suppression, password-synchronized
-SSH with optional keys, the Web UI on TCP/80, embedded DNS-SD, and an
-exact-hash `jooanipc` containment DSO. The guard keeps the retained OEM RTSP
-service on loopback TCP/8554 and the OEM ONVIF service, which accepts any
-credentials, on loopback TCP/8899. This firmware serves no video or PTZ
-itself: the media daemon,
-[jooanipc-open](../media/), replaces `jooanipc`
-after boot (see [API](API.md#media)). Without it, nothing exposes video or PTZ.
+The fallback modes change this table:
+
+- **Handoff:** until the handoff stops it, the OEM application adds
+  loopback-only listeners, among them its RTSP (which it asks for on TCP/554;
+  the guard moves it to `127.0.0.1:8554`) and its ONVIF on `127.0.0.1:8899`.
+  After the handoff the table is the native one.
+- **OEM rescue and platform-only:** the OEM application's loopback-only
+  listeners stay for the whole uptime, and the media daemon's two listeners are
+  absent.
+
+The guard rewrites every IPv4/IPv6 bind of the OEM application to loopback,
+so none of its services is reachable from the network. The OEM RTSP is
+authenticated with a random secret (`config/rtsp.password`) that the platform
+regenerates at every `joan-daemon` start and every password change and pushes
+to the OEM application over the MQTT bridge; the guard also refuses
+non-loopback RTSP connections while that secret is not confirmed. The OEM
+ONVIF service accepts any credentials, which is why it must stay on loopback.
+
+The runtime removes IPv4/IPv6 default routes, filters public resolvers and
+kills `telnetd` and GoAhead every second, in every boot mode. It does not add a
+kernel-wide firewall. Connected local routes and explicitly configured
+RFC1918/ULA routes remain. The VLAN/router is the device-wide inbound and
+outbound boundary.
+
+## Host and origin checks
+
+Every request to TCP/80, sign-in and static files included, must carry a
+`Host` header that is one of:
+
+- an IPv4 literal in 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 127.0.0.0/8,
+  with or without a port;
+- a bracketed IPv6 loopback or ULA (`fc00::/7`) literal;
+- `<label>.local`, the configured mDNS name.
+
+Anything else gets `403 host_rejected` before any handler runs. This blocks DNS
+rebinding: a page on an attacker's domain cannot address the camera by a name
+that resolves to it. It also means the UI is refused under any other DNS name,
+such as a router-assigned `name.lan`; use the address or the `.local` name. A
+renamed mDNS label takes effect for this check after the next `joan-daemon`
+restart, together with the responder. On the authenticated API routes, a
+request that carries an `Origin` header must also match `http://<Host>`, or it
+gets `403 origin_rejected`.
 
 ## Early-boot OEM exposure
 
 The retained OEM startup exposes GoAhead before `/opt/etc/local.rc` runs.
-The runtime kills it and optionally reopens it on loopback for snapshots.
+The runtime kills it every second from then on and never reopens it.
 Treat the period from
 power-on until a qualified release's health status reports hardened policy as
 hostile. Do not depend on the camera's own firewall to protect this interval.
@@ -56,11 +93,13 @@ the port as a workaround.
 
 ## First-run credentials
 
-Fresh generic installations begin with `admin` / `admin`, a publicly known
-value. It remains valid, setup is not forced, and the Web UI does not warn
-about it; the System zone reports whether it is still in use. Rotate it. The
-same password is synchronized to SSH; optional Ed25519 keys supplement SSH
-password authentication. Never place a fresh unit on a shared LAN.
+Fresh generic installations begin with `admin` / `admin`. It remains valid
+and setup is not forced; nothing is locked until it is changed. The Web UI
+shows no banner: the System page shows the password state ("initial value" or
+"changed"), and `/api/v1/setup/status`, sign-in and `/api/v1/status` report
+`default_password_warning`. The same password is synchronized to SSH;
+optional Ed25519 keys supplement SSH password authentication. Never place a
+fresh unit on a shared LAN.
 
 ## Plain HTTP
 
@@ -80,16 +119,18 @@ What crosses the network in the clear:
 
 So sign in only from a management host on the camera's trusted segment, or
 through a VPN that encrypts the path, never across a network you do not
-control. The per-device key the camera still generates only serves TLS on the
-loopback MQTT sink that `jooanipc` connects to. Never ship or clone it across
-cameras.
+control. The per-device key the platform still generates only serves TLS on
+the loopback MQTT sink that the OEM application connects to in the fallback
+modes. Never ship or clone it across cameras. The media daemon's HTTPS on
+TCP/18443 uses its own certificate and key in `/opt/jooanipc-open/`.
 
 A camera upgraded from an HTTPS release discards an enrolled certificate and
 its key at the first start. Browsers that opened the HTTPS page by name
 (`<hostname>.local` or an enrolled public name) remember that for up to a year
 (HSTS) and keep asking for `https://`, which no longer answers. Use the address
 instead, which HSTS never applies to, or clear the name's HSTS entry in that
-browser.
+browser. A public name is refused by the [Host check](#host-and-origin-checks)
+in any case.
 
 ## Network time
 
@@ -102,35 +143,45 @@ UDP/123 from the camera to that server only.
 
 ## Wi-Fi
 
-The generic package contains no SSID or passphrase. It preserves the compatible
-camera's existing OEM Wi-Fi configuration. Configure any replacement network
-manually over a trusted wired or otherwise isolated management path. Confirm
-that the new network has the same router isolation before removing the old
-path.
+The generic package contains no SSID or passphrase. Configure the camera's
+network manually over a trusted wired or otherwise isolated management path,
+as a transactional stage and commit (`/api/v1/network/wifi`). The committed
+network lives in the platform's state
+(`/opt/custom/jooan-local/config/wifi.json`), not the OEM's. Confirm that the
+new network has the same router isolation before removing the old path.
 
-The committed network lives in the retrofit's state, not the OEM's: the
-supervisor adds it to jooanipc's wpa_supplicant once the control socket answers.
-jooanipc can restart wpa_supplicant from its own stored network (about two
-minutes into boot, and when it decides the link has failed), so the supervisor
-applies the committed network again to every new wpa_supplicant process. Each
-apply also disables every other network there, including jooanipc's stored one
-(on the verified unit an open, hidden-SSID bench network), so the camera neither
-probes for it by name nor joins an open network that takes that name. The
-SKW6316 does not look for any other network by itself; without that re-apply it
-hunts for the OEM network until a power cycle.
+In a native boot the OEM's stored Wi-Fi configuration is not used at all:
+`local.rc` starts `wpa_supplicant` with an empty network list, and the
+supervisor adds the committed network once the control socket answers. A
+native boot without a committed network cannot reach its gateway, fails after
+300 s and latches `native-failed`; the handoff needs the committed network as
+well, so the camera then stays in OEM rescue mode. The OEM configuration stays
+on flash, untouched, for the fallback modes.
+
+When the OEM application runs, it owns `wpa_supplicant` and can restart it
+from its own stored network (about two minutes into boot, and when it decides
+the link has failed), so the supervisor applies the committed network again to
+every new `wpa_supplicant` process. Each apply also disables every other
+network there, including the OEM's stored one (on the verified unit an open,
+hidden-SSID bench network), so the camera neither probes for it by name nor
+joins an open network that takes that name. The SKW6316 does not look for any
+other network by itself; without that re-apply it hunts for the OEM network
+until a power cycle.
+
+After each apply a persistent `udhcpc -b` keeps renewing the DHCP lease.
 
 The SKW6316's own firmware can also crash (the driver logs an assert ending in
 `DUMPDONE`, then refuses every transmit), which leaves the camera associated but
 silent, and nothing on the board resets the chip. The supervisor therefore
 reboots the camera when the gateway stops answering ARP for 5 minutes, or for
 30 seconds once the chip has logged a crash. It records the reason and the
-kernel log under `jooan-local/netdog-*.log` on the microSD card first. A network
-that never worked in the current boot is given 15 minutes of uptime first, and
-each watchdog reboot doubles that wait (up to 4 hours) until the network has
-stayed up for 30 minutes, so an absent network cannot make the camera reboot in
-a loop. It never acts during maintenance or a Wi-Fi trial.
-`tools/wifi-deadman.sh` records the Wi-Fi state in detail when this needs
-diagnosing again.
+kernel log under `jooan-local/netdog-*.log` on the microSD card first, when
+one is mounted. A network that never worked in the current boot is given 15
+minutes of uptime first, and each watchdog reboot doubles that wait (up to 4
+hours) until the network has stayed up for 30 minutes, so an absent network
+cannot make the camera reboot in a loop. It never acts during maintenance or a
+Wi-Fi trial. `tools/wifi-deadman.sh` records the Wi-Fi state in detail when
+this needs diagnosing again.
 
 Avoid recovery designs that depend only on Wi-Fi. Keep a verified flash backup
 and external programmer path.
@@ -141,12 +192,13 @@ After installation and after each update:
 
 1. reboot while packet capture runs on the isolated router segment;
 2. record the duration and reachability of any early OEM listener;
-3. verify only the intended steady-state TCP ports are reachable;
-4. verify nothing answers on TCP/443;
-5. verify login throttling and session expiry;
+3. verify only the listeners in [the table above](#listeners-by-boot-mode)
+   for the current boot mode are present and reachable;
+4. verify nothing answers on TCP/443, 554, 8554 or 8899 from the network;
+5. verify login throttling, session expiry and that a request with a foreign
+   `Host` gets `403 host_rejected`;
 6. verify SSH `admin` accepts the synchronized password and optional keys;
-7. verify DNS-SD records, and that OEM RTSP (TCP/8554) and ONVIF (TCP/8899)
-   answer only on loopback;
+7. verify the DNS-SD records (HTTP, SSH and `_jooan-camera._tcp`, no RTSP);
 8. verify no IPv4/IPv6 default route or public resolver remains;
 9. verify attempted vendor cloud/P2P connections cannot leave the VLAN;
 10. test IPv4 and IPv6 separately.

@@ -2,7 +2,7 @@
 
 ## Supported hardware
 
-The version 1 target is restricted to one observed bill of materials. This
+The target is restricted to one observed bill of materials. This
 scope statement is not a release-support claim; no tag is supported until the
 physical promotion gates pass.
 
@@ -23,11 +23,11 @@ The target manifest enforces the `JA-A12`/`A12` model identity, but software
 model checks cannot detect every component substitution. Open the camera and
 verify the PCB and fitted parts before installation.
 
-The installer also pins the exact retained components this firmware depends
-on: the OEM `jooanipc` executable and `startapp`, the sensor and radio kernel
-modules, and the userspace libraries it links. It does not pin the application
-partition as a whole, so an appfs rebuilt to carry a media daemon (with those
-files unchanged) still accepts platform updates.
+The platform installer also pins the exact retained components it depends
+on: the OEM `jooanipc` executable, `startapp` and GoAhead, the sensor and radio
+kernel modules, and the userspace libraries it links. It does not pin the
+application partition as a whole, so an appfs rebuilt to carry the media
+daemon (with those files unchanged) still accepts platform updates.
 
 ## Explicitly unsupported
 
@@ -46,10 +46,22 @@ the ability to boot.
 
 ## What is preserved
 
-The retrofit intentionally preserves the compatible unit's OEM kernel,
-`jooanipc`, vendor media modules, sensor tuning, radio support, factory data,
-and existing Wi-Fi configuration. A generic release is not a whole-flash image
-and must not replace those per-device areas.
+The retrofit intentionally preserves the compatible unit's bootloader, OEM
+kernel, `jooanipc`, vendor media modules, sensor tuning, radio support and
+factory data. Neither layer is a whole-flash image:
+
+- the platform package writes only `/opt`;
+- the media layer's installer rewrites the application partition
+  (`/dev/mtd4`) with an image rebuilt from this camera's own appfs. The OEM
+  files above stay byte-identical (the containment guard and the platform's
+  pins check them); the image adds one jooanipc-open release, and the
+  qualified image drops files this board does not use, such as voice prompts
+  and other sensors' drivers.
+
+The OEM's stored Wi-Fi configuration is left untouched on flash. A native
+boot does not use it: it joins only the network committed through the
+platform. The OEM application keeps using its own configuration in the
+fallback modes.
 
 Preservation is not portability. A backup from one camera must never be
 restored onto another camera because it can contain unique calibration,

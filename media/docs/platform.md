@@ -6,8 +6,8 @@ it does not invoke `jooanipc`, CGI, MQTT, ONVIF, a shell, module loading, or boo
 configuration. `replay` simulates all of these controls in memory and writes
 only its own preset file. Replay status explicitly identifies the backend.
 
-The hardware profile is specifically the JOOAN W3-U / JA-A12 represented by
-`../../jooan-w3u/dumps/p25q64ha-20250916-mtd/etc/config.org`. It is not a generic
+The hardware profile is specifically the JOOAN W3-U / JA-A12 described by the
+verified unit's factory configuration (`/etc/config.org`). It is not a generic
 Ingenic GPIO map. Other board revisions require a reviewed profile change.
 
 ## Motor ABI and movement
@@ -26,12 +26,11 @@ numbers synthesized for the host architecture.
 | 6 | none | Return/back operation; not used |
 | 8 | two signed int32: delta X, delta Y | OEM nonblocking move; not used because its Y path corrupts swapped-axis bookkeeping |
 
-Independent evidence is the historical export
-`../../jooan-w3u/ghidra/jooanipc-decompiled.c`: `0x48ce10` issues request 3
-(line 43600), `0x48d268` issues request 8 (43760), `0x48d550` request 5
-(43813), `0x48d8b8` request 4 (43958), and reset routine `0x48d9d0`
-request 2 (44038). Module `motor_get_message` establishes the four returned
-int32 fields; `motor_ops_move_not_stop` establishes request 8's behavior.
+Independent evidence comes from static analysis of the OEM application:
+`0x48ce10` issues request 3, `0x48d268` issues request 8, `0x48d550` request 5,
+`0x48d8b8` request 4, and the reset routine `0x48d9d0` request 2. Module
+`motor_get_message` establishes the four returned int32 fields;
+`motor_ops_move_not_stop` establishes request 8's behavior.
 
 The verified OEM startup script `jzstart.sh:297–309` loads the driver with
 maximum X=8600, maximum Y=2000, and the shared motor-coil switch GPIO17.
@@ -87,8 +86,10 @@ with request 4 for up to 60 s. Limits are then reread and the head returns to
 the last position, which the daemon saves in `state_dir/position` once the head
 has rested at a new place for five seconds. PTZ and presets are refused while
 homing; status reports `homing` and `homed`. `/tmp/jooanipc-open.homed` marks
-the boot so restarts and reloads do not repeat it. The guarded OEM handoff
-creates that marker after the OEM's own homing, so the setting may stay on.
+the boot so restarts and reloads do not repeat it. A native boot requires
+`motor_home=1`: there the OEM application never runs, so this is the only
+homing. The guarded OEM handoff creates that marker after the OEM's own
+homing, so the setting may stay on.
 
 ## Presets and status
 
@@ -131,11 +132,11 @@ Factory `HardwareParam/LightParam` and `SubLightParam` both identify:
 | IR-cut coil A/B | 49 / 50 | Model 1, 150 ms pulse, then both low |
 | Speaker amplifier enable | 63 | Active high; media waits 200 ms before playback |
 
-The historical `set_IRCUT_Mode` at `0x4861e4` (lines 41211–41267)
-establishes model-1 polarity: night pulses GPIO49 high with GPIO50 low; day
-pulses GPIO50 high with GPIO49 low. Both sensor descriptions share the pair,
-so the replacement pulses it once. `set_IRLED_Mode` at `0x486028`
-(41145–41184) establishes active-level handling. Manual `night=0/1` combines
+In the OEM application, `set_IRCUT_Mode` at `0x4861e4` establishes model-1
+polarity: night pulses GPIO49 high with GPIO50 low; day pulses GPIO50 high
+with GPIO49 low. Both sensor descriptions share the pair, so the replacement
+pulses it once. `set_IRLED_Mode` at `0x486028` establishes active-level
+handling. Manual `night=0/1` combines
 the filter pulse and IR illuminator; the media backend also applies the ISP
 day/night mode to both sensors. `ircut` is an alias for the same manual GPIO
 operation. `white_light` and `pilot_led` accept 0 or 1.
@@ -145,9 +146,15 @@ operation. `white_light` and `pilot_led` accept 0 or 1.
 from `0x4808fc`. The OEM audio module leaves its own `spk_gpio` unset, so
 userspace owns the amplifier control. The media backend enables it before
 talkback and waits 200 ms. Shutdown drives GPIO63 low if this application used
-it. Replay records the simulated state without GPIO access. A retained OEM
-boot hook may hold GPIO63 low for approximately 66 seconds; target deployment
-must account for that existing hook without racing it.
+it. Replay records the simulated state without GPIO access.
+
+The platform's `local.rc` also drives GPIO63 at every boot: it writes `1`
+every 20 ms for roughly the first minute (in a native boot, where no
+containment guard takes the pin over, for the whole window) and leaves it at
+`1`. The platform treats the pin as active-low, `1` being its mute level, from
+the board's `SpeakLevelEx=0`; that disagrees with the active-high polarity
+above. Settle the polarity on hardware before relying on `speaker_enable`, and
+do not race that early-boot hook.
 
 GPIO57 is not exposed as a blue LED: factory `IndicatorParam/type` is zero,
 and `HardwareParam/OneTouchCallGpio` identifies GPIO57 as a button input.

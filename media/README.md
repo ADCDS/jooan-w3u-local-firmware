@@ -23,14 +23,21 @@ budget. See the [1080p receipt](docs/camera-1080-test-20261018.json) for artifac
 and qualification limits. The previous four-encoder mode remains available
 with matching main dimensions through 1280×720 and independent substreams;
 its [earlier receipt](docs/camera-quality-test-20261017.json) is retained.
-The deployment preserves the network controller's working association instead
-of forcing an AP switch. OEM bootstrap remains for network setup and motor
-homing. This is a local-services replacement, with the
-feature boundaries below; full OEM feature parity is not claimed.
-The guarded boot helper supports versioned releases in internal application
+The deployment preserves the platform's working Wi-Fi association instead
+of forcing an AP switch. In the default native boot the OEM application never
+starts: the [platform](../README.md)'s `local.rc` brings up the watchdog,
+Wi-Fi and DHCP, and this daemon homes pan/tilt itself (`motor_home=1`) and
+owns the hardware watchdog (`watchdog=1`). The guarded OEM handoff, in which
+the OEM application brings up Wi-Fi and homes the motor before this daemon
+takes over, remains the fallback; see [native boot](docs/hardware.md#native-boot)
+and [boot modes](../docs/ARCHITECTURE.md#boot-modes). This is a local-services
+replacement, with the feature boundaries below; full OEM feature parity is not
+claimed.
+The boot scripts support versioned releases in internal application
 flash as well as SD storage. `scripts/install-camera.py` installs a release
-bundle covering this daemon and the retained [local controller](../README.md); see
-[camera release bundles](docs/hardware.md#camera-release-bundles). Internal releases run without an SD card; private
+bundle covering this daemon and the [platform](../README.md); see
+[camera release bundles](docs/hardware.md#camera-release-bundles). Its appfs
+installer reflashes the application partition. Internal releases run without an SD card; private
 configuration and presets stay in the writable flash partition. See
 [internal-flash packaging](docs/hardware.md#internal-flash-packaging) for the
 JA-A12 storage budget and required boot dependencies.
@@ -42,6 +49,7 @@ JA-A12 storage budget and required boot dependencies.
 | Video | Four H.264 URLs; two main encoders with shared aliases or four independent encoders; bounded rings, SPS/PPS cache, IDR recovery |
 | RTSP | Digest authentication, TCP interleaving, UDP unicast, H.264 FU-A, PCMA, RTCP sender reports and BYE |
 | HTTPS and REST | MbedTLS 3.6.7, Basic authentication over TLS, bounded requests, private atomic configuration |
+| Failed-login throttle | Per peer address across HTTP Basic, ONVIF WS-Security and RTSP Digest: 10 failures within 60 s of the first block that address for the rest of the window (HTTP `429`, RTSP `503` with `Retry-After: 60`); requests without credentials never count |
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery |
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
@@ -141,10 +149,14 @@ Read [hardware integration](docs/hardware.md) before trying the IMP backend.
 Use the [target configuration template](config/ja-a12.example.ini), choose a new
 private password, provide TLS files and a compatible external library, and
 retain the known OEM modules, sensor IQ data, reserved-memory setup and motor
-calibration. The daemon refuses a running OEM media owner; it does not kill
-`jooanipc`, load modules, rewrite boot scripts or flash the camera. An optional
-[reviewed boot handoff script](scripts/oem-boot-handoff.sh) can be installed
-separately by the operator; its arrangement is documented in hardware integration.
+calibration. The daemon refuses a running OEM media owner; it does not itself
+kill `jooanipc`, load modules, rewrite boot scripts or flash the camera. Those
+steps belong to the scripts: [native-boot.sh](scripts/native-boot.sh) and the
+[handoff](scripts/oem-boot-handoff.sh) (installed as
+`/opt/jooanipc-open/native-boot.sh` and `/opt/jooanipc-open/boot-handoff.sh`,
+which the platform's `local.rc` runs), and
+[upgrade-appfs.sh](scripts/upgrade-appfs.sh), which reflashes the appfs. Their
+arrangement is documented in hardware integration.
 
 ## Test the actual MIPS build under QEMU
 
@@ -216,8 +228,10 @@ Authenticated REST endpoints:
 | `GET /api/v1/snapshot?channel=0` | Native JPEG when the backend can produce one |
 | `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono |
 
-`/health` and `/healthz` report readiness without credentials. ONVIF's public
-time query is read-only; all other SOAP operations require Basic or fresh WSSE
+`/health` and `/healthz` report readiness without credentials and are never
+throttled. ONVIF's public time query is read-only and never counts as a failed
+login, but like every other request it is refused while its address is
+throttled; all other SOAP operations require Basic or fresh WSSE
 authentication. Supported motor, preset, light and speaker controls are described
 in [platform controls](docs/platform.md). Unknown actions fail explicitly.
 

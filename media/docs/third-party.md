@@ -1,6 +1,8 @@
 # Third party components
 
-Original application code is licensed under MIT. All protocol implementations
+Original application code in `media/` is licensed under MIT; the platform at
+the repository root is GPL-2.0-only (see
+[the platform's third-party notes](../../docs/THIRD_PARTY.md)). All protocol implementations
 were written for this project; ABI declarations describe observed interfaces
 and do not contain the vendor's implementation.
 

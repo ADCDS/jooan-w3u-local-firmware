@@ -31,18 +31,20 @@ driver close or a kernel reset before reserved memory can be reused.
 The exact target is JOOAN JA-A12, Ingenic T23N, two CV2005/CV2005S1 sensors,
 OEM Linux 3.10.14, reserved media memory, the OEM sensor/ISP/frame-channel/VPU
 modules and existing per-device IQ/calibration files. Network interfaces must
-already be configured by the retained operating system. This daemon does not
+already be configured: by the platform's `local.rc` and supervisor in a native
+boot, or by the OEM application before a handoff. This daemon does not
 replace the kernel, Wi-Fi firmware or boot environment.
 
-Put public executable/library files on SD and private files on JFFS2: the
+Put public executable/library files in a release directory in the internal
+appfs (the deployed layout) or on SD, and private files on JFFS2: the
 qualified deployment uses `/opt/jooanipc-open` (0700) for the 0600 configuration,
-TLS key and preset file. Its state directory is 0700. The SD card is VFAT with
+TLS key and preset file. Its state directory is 0700. An SD card is VFAT with
 public mount permissions; `chmod` there cannot make credentials private. The
 small `/opt` partition must retain at least 64 KiB free; OEM startup can delete
 most writable directories when it falls below 50 KiB. Store bulk backups and
 logs off-camera. The daemon does not change mount options. Volatile state
 would lose presets and discovery identity on reboot. Discovery remains off in
-the tested deployment to coexist with the retained local controller.
+the tested deployment, which runs it next to the platform.
 
 The retained boot environment must initialize the kernel CSPRNG before this
 daemon generates credentials or serves TLS. MbedTLS uses `/dev/urandom` as the
@@ -196,29 +198,24 @@ The IMP backend refuses a concurrent OEM media owner. Begin physical tests from
 volatile storage using the established recovery procedure; keep firmware and
 factory artifacts outside this repository.
 
-## Optional guarded boot handoff
+## Guarded boot handoff (fallback)
 
-`scripts/oem-boot-handoff.sh` is an opt-in JA-A12 deployment helper. It is not
-installed or activated by the normal build. Keep the existing guarded
-`/opt/etc/local.rc`, network/SSH controller, kernel/modules and factory data.
-The OEM application still performs Wi-Fi setup, optional SD mounting and motor homing;
-the helper replaces media ownership after that bootstrap, rather than replacing
-the entire boot environment.
-
-Install the reviewed script at `/opt/jooanipc-open/boot-handoff.sh` (0700) and
-append this additive hook to the existing local.rc, keeping an exact backup:
-
-```sh
-if [ -f /opt/jooanipc-open/enabled ] && [ -r /opt/jooanipc-open/boot-handoff.sh ]; then
-    /bin/sh /opt/jooanipc-open/boot-handoff.sh </dev/null >/tmp/jipc-handoff.log 2>&1 &
-fi
-```
+`scripts/oem-boot-handoff.sh`, installed as `/opt/jooanipc-open/boot-handoff.sh`
+(0700), is the fallback boot path. It is not installed or activated by the
+normal build. Since platform 0.2.23 the platform's `/opt/etc/local.rc` owns the
+hook: with `/opt/jooanipc-open/enabled` present it runs the
+[native boot](#native-boot) when `native` is set, and this script instead when
+`native` is absent or `native-failed` is latched. Do not add a hook to `local.rc` by hand; a platform update replaces
+that file. In this path the guarded OEM application still performs Wi-Fi
+setup, optional SD mounting and motor homing; the helper replaces media
+ownership after that bootstrap, rather than replacing the entire boot
+environment.
 
 The root-owned 0600 `deployment.env` specifies `JIPC_RELEASE` (one versioned
 directory under `/mnt/sd_card/jooanipc-open/releases/` or
 `/mnt/mtd/jooanipc-open/releases/`), `JIPC_LIBIMP_SHA256`, and `JIPC_APP_MD5`, `JIPC_IMP_MD5`,
 `JIPC_ATOMIC_MD5` for the three release files. Optional `JIPC_WIFI_BSSID` plus `JIPC_WIFI_FREQ` (its proven frequency in MHz)
-select a proven AP for this camera: after the retained controller applies its
+select a proven AP for this camera: after the platform applies its
 committed network, the helper pins that existing network and waits for a stable
 association to that BSSID. Frequency is applied before selection so an existing
 5GHz network block cannot prevent a chosen 2.4GHz AP from being reached. An
@@ -237,8 +234,10 @@ Create the 0600 `enabled` file only after checking configuration and shell synta
 The helper requires a boot-specific syslog marker followed by the complete
 successful `motor_step_reset` sequence: stages 418, 427, 449 (idle), 459 and
 555 (idle), with no reset error or return timeout. It also requires a committed,
-stable retained controller, live SSH, the release's mounted filesystem and adequate
-JFFS2 space. Internal releases require the canonical path on the read-only
+stable platform runtime that has applied the committed Wi-Fi network, live
+SSH, a stable association with a gateway on `wlan0`, the release's mounted
+filesystem and adequate JFFS2 space. Internal
+releases require the canonical path on the read-only
 `/dev/mtdblock4` SquashFS mounted at `/mnt/mtd`; path aliases and shadowing mounts
 are rejected. An internal release does not require an SD card.
 It then persists `boot-trial`, stops identity-checked OEM watchdog
@@ -246,29 +245,30 @@ and media processes, and checks every task's descriptors, IVDC address zero
 and absence of Linux TAINT_DIE. It launches the replacement with the explicit
 OEM80/native/no-fallback flags. The new process owns `/dev/watchdog`, sets its
 OEM 180-second timeout and feeds it only while all four streams remain fresh.
-After stopping OEM media, a bounded45-second network recheck catches late
-bootstrap network changes before native ownership. After185 seconds of
-process/watchdog health, final controller/network readiness
-is retried for up to60 attempts while native health remains mandatory; then the
+After stopping OEM media, a bounded 45-second network recheck catches late
+bootstrap network changes before native ownership. After 185 seconds of
+process/watchdog health, final platform/network readiness
+is retried for up to 60 attempts while native health remains mandatory; then the
 helper clears `boot-trial`. A single lost ARP response does not end the trial.
 
-The installed OEM wrapper also redirects its bootstrap stdout to the private
-`/tmp/jooan-oem-bootstrap.log` for diagnosis. Preserve the guarded preload and
-existing library search path when adding that redirection.
-
-A failure before transfer leaves OEM running if it is still alive. A failure after transfer retains
-the trial latch and the armed watchdog provides reset recovery. The next boot
-keeps guarded OEM rescue instead of repeatedly attempting native startup.
+A failure before transfer leaves OEM running if it is still alive (OEM rescue
+for that boot). A failure after transfer retains
+the trial latch and the armed watchdog provides reset recovery. Later handoff
+boots then keep guarded OEM rescue instead of repeatedly attempting the
+handoff; the latch does not stop a native boot when `native` is set and
+`native-failed` is not.
 Inspect `/tmp/jipc-handoff.log`, `/tmp/jooanipc-open.log`, kernel health and all
 thread FDs before removing a failed trial latch. Removing `enabled` disables
-future handoff; do not revive another media owner on uncertain DMA state.
+the media layer altogether (platform-only mode: the guarded OEM application
+runs for the whole uptime); do not revive another media owner on uncertain
+DMA state.
 
 ### Internal-flash packaging
 
 The JA-A12 has 8 MiB SPI NOR, with a 3136 KiB application partition and a
 384 KiB writable configuration partition. Install executable releases in a
 rebuilt application image; `/opt` is reserved for configuration, keys, presets
-and controller state. Preserve at least 64 KiB free there. OEM `startapp`
+and platform state. Preserve at least 64 KiB free there. OEM `startapp`
 deletes most of `/opt` if free space falls below 50 KiB at boot.
 
 The retained OEM executable must remain byte-identical because its containment
@@ -290,7 +290,7 @@ initializes its directory even when recording is disabled. Update both the
 private configuration's `libimp` path and `deployment.env` when moving a release;
 do not write video into the small NOR configuration partition.
 
-The board has no RTC. Preserve the retained controller's `last-time` mechanism.
+The board has no RTC. Preserve the platform's `last-time` mechanism.
 For Frigate set `onvif.ignore_time_mismatch: true`; its client reads the camera's
 public UTC and offsets WSSE timestamps while retaining PasswordDigest. Use
 `tls_insecure: false` on this Frigate version: its option also changes token
@@ -304,12 +304,14 @@ after a camera reboot every WSSE timestamp falls outside the 300-second window:
 PTZ and presets fail with `'NoneType' object has no attribute 'getroottree'`
 until Frigate restarts. Keep the camera on real UTC with SNTP from a server on
 its own network, normally the gateway; that needs inbound UDP 123 on the
-gateway from the camera's network and nothing else. The retained local
-controller owns the clock from its release 0.2.22: set its network time to
+gateway from the camera's network and nothing else. The platform owns the
+clock from its release 0.2.22: set its network time to
 `gateway` and leave `ntp_server` empty here, so one process steps the clock.
 Its steps also persist `last-time`, so the next boot starts close to real time.
+The platform never steps the clock while the OEM application runs, so in a
+handoff boot its first step comes after the handoff.
 
-`ntp_server` is for deployments without that controller. The client retries
+`ntp_server` is for deployments without the platform. The client retries
 every 30 seconds until it synchronizes, then polls hourly, and steps the clock
 when the offset reaches one second. Replies must echo a random origin cookie;
 it is otherwise unauthenticated SNTP. `GET /api/v1/status` reports `clock`.
@@ -328,7 +330,7 @@ An earlier test improved an initially weak connection by selecting a stronger
 AP. Subsequent reboot tests exposed a different problem: forcing the working
 5 GHz association onto that 2.4 GHz AP was followed by lost IP access. The
 current deployment leaves `JIPC_WIFI_BSSID` and `JIPC_WIFI_FREQ` empty, preserving
-the retained network controller's association. Recovery and native qualification
+the platform's association. Recovery and native qualification
 succeeded on 5 GHz. Do not reinstate the old AP pin without testing its boot
 behavior; a healthy running association does not establish safe cross-band
 reassociation during bootstrap.
@@ -340,39 +342,69 @@ so its sizing recommendation did not indicate an exhausted frame store.
 
 ## Native boot
 
-With the local controller 0.2.23 or later, `/opt/jooanipc-open/native` selects
-a boot in which the OEM application never starts. The controller's `local.rc`
-turns `startapp`'s `jooanipc` and `my_watch_dog` into no-ops, feeds the hardware
-watchdog with the rootfs `watchdog`, starts `wpa_supplicant` and `udhcpc` with
-the OEM's arguments, and runs `scripts/native-boot.sh` installed as
-`/opt/jooanipc-open/native-boot.sh`. That script verifies the release as the
-handoff does, waits for the gateway, stops the feeder, launches the daemon
-(which requires `motor_home=1`, homes pan/tilt and arms its own watchdog) and
-qualifies for one watchdog period with homing complete. Its stages are kept in
+Native boot is the default and the deployed mode. With platform 0.2.23 or
+later, `/opt/jooanipc-open/native` (next to `enabled`) selects a boot in which
+the OEM application never starts. The platform's `local.rc` turns
+`startapp`'s `jooanipc` and `my_watch_dog` into no-ops, feeds the hardware
+watchdog with the rootfs `watchdog`, starts `wpa_supplicant` with an empty
+network list and a persistent `udhcpc`, and runs `scripts/native-boot.sh`
+installed as `/opt/jooanipc-open/native-boot.sh`. The platform supervisor then
+applies the committed Wi-Fi network (`/opt/custom/jooan-local/config/wifi.json`);
+the OEM's stored network is not used, so native boot requires a committed one.
+
+`native-boot.sh` verifies the release as the handoff does, waits up to 300 s
+for a gateway on `wlan0`, stops the feeder, launches the daemon (which
+requires `motor_home=1`, homes pan/tilt and arms its own watchdog) and
+qualifies once the daemon has stayed healthy for 185 s, one watchdog period,
+with homing complete and the network still up. Its stages are kept in
 `/opt/jooanipc-open/native-trial` until qualification. A boot that finds that
-file renames it `native-failed` and boots the guarded handoff instead, as does
-any boot without `native`; delete `native-failed` to retry. If nothing takes
-over the feeder within ten minutes it is killed without the magic close, so a
-hung native boot resets into that fallback.
+file renames it `native-failed` (keeping the stage) and boots the guarded
+handoff instead, as does any boot without `native`. Nothing clears
+`native-failed` automatically; delete it to retry. If nothing takes over the
+feeder within ten minutes it is killed without the magic close, so a hung
+native boot resets into that fallback. If the boot lock is already held by
+another boot script, `native-boot.sh` records `failed: boot lock held by
+another boot script` in `native-trial` and exits, so that reset latches
+`native-failed` instead of repeating the same boot.
+
+`/tmp/jipc-native.log` records the boot; it ends with "native boot qualified;
+OEM application never started" on success. The containment guard is
+installed but unused in this mode.
 
 ## Camera release bundles
 
 `scripts/install-camera.py` installs both layers of a JA-A12 deployment from
-one bundle directory: a signed local-controller package, applied through its
+one bundle directory: a signed platform package, applied through its
 authenticated update API, and a rebuilt appfs image carrying one jooanipc-open
 release, flashed on the camera by `scripts/upgrade-appfs.sh`. Each layer
-reboots the camera; the installer waits for the boot handoff to qualify before
-continuing. File-level configuration changes are staged first, so a bundle
-with one layer needs one reboot. Every touched file is copied to
-`BUNDLE/backups/` beforehand and restored if a step fails before the first
-reboot. Without `--yes` only the host and camera preflight runs.
+reboots the camera; the installer waits for the media daemon to qualify again
+(native or handoff boot) before continuing. File-level configuration changes
+are staged first, so a bundle with one layer needs one reboot. Every touched
+file is copied to `BUNDLE/backups/` beforehand and restored if a step fails
+before the first reboot. Without `--yes` only the host and camera preflight
+runs. Give `--camera` the camera's IP address or `.local` name: the platform
+API answers `403 host_rejected` to any other host name.
+
+Preflight refuses a camera that is not the qualified flash layout, has less
+than 64 KiB free on `/opt`, has a handoff `boot-trial` latched, has
+`native-failed` latched (it shows the recorded stage), did not qualify the
+media daemon on the current boot, already runs the bundle's platform sequence
+or newer, or has an appfs other than the one the bundle expects. It also
+refuses a bundle whose result would be a native boot without a committed Wi-Fi
+network, since that boot fails after 300 s and latches `native-failed`.
+
+The installer reads the media daemon's own certificate
+(`/opt/jooanipc-open/cert.pem`) over SSH, which authenticates the camera by its
+host key, and pins it for the HTTPS status checks on 18443 instead of
+disabling verification. The host name is not checked: the certificate is
+self-signed and the camera is addressed by IP.
 
 `bundle.json` (schema 1) names the artifacts and their hashes:
 
 ```json
 {
   "schema": 1, "name": "camera-YYYYMMDD-N", "board": "JA-A12",
-  "jooan_local": {"release_version": "0.2.22", "release_sequence": 56,
+  "jooan_local": {"release_version": "0.2.24", "release_sequence": 58,
                   "package": "JOOAN_FW_PKG", "package_sha256": "…"},
   "jooanipc_open": {"release": "<app sha256 prefix>-<libimp sha256 prefix>",
                     "image": "appfs.img", "image_md5": "…",
@@ -389,9 +421,18 @@ Either layer may be omitted. `files` maps camera paths to new contents, to
 `{"from": "<file in the bundle>", "mode": "700"}`, or to `null` for deletion.
 With a media layer, `camera_ini` changes go into the staged configuration the
 appfs installer commits, so new keys meet the binary that accepts them. Bundles contain vendor-derived appfs images and backups
-holding the camera password, so keep them private. The appfs installer stops
-the native media owner, hands the armed watchdog to a rootfs feeder, keeps a
-RAM copy of the current partition, and verifies the flash by full readback;
-any failure before the flash reboots into the unchanged partition. Stop the
-NVR during a platform update (`--nvr-stop`/`--nvr-start`): memory pressure
-from both streams has stalled the board during that transaction.
+holding the camera password, so keep them private.
+
+The appfs installer upgrades only a native boot: it refuses to run while the
+OEM application or its watchdog is running. It takes the platform maintenance
+lock (`/run/jooan-local/state.lock`), which pauses the supervisor's runtime
+restarts and network-watchdog reboot, stops the native media owner, hands the
+armed watchdog to a rootfs feeder, keeps a RAM copy of the current partition,
+and verifies the flash by full readback. Any failure before the flash commit
+point reboots into the unchanged partition. After it, a failed flash is rolled
+back from the RAM copy, retried up to three times; if the rollback still
+fails, the camera stays up for manual recovery with both images in `/tmp`
+(see [appfs reflash recovery](../../docs/RECOVERY.md#appfs-reflash-recovery)).
+Power loss during the flash leaves no `startapp` and needs an SPI programmer.
+Stop the NVR during a platform update (`--nvr-stop`/`--nvr-start`): memory
+pressure from both streams has stalled the board during that transaction.
