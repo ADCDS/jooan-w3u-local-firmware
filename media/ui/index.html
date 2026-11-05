@@ -35,15 +35,15 @@
 </svg>
 
 <div id="signin" class="signin" hidden>
-<div class="brand big"><span class="logo"><svg viewBox="0 0 24 24"><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small>JOOAN W3-U · <span class="mono host"></span></small></span></div>
+<div class="brand big"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small>JOOAN W3-U · <span class="mono host"></span></small></span></div>
 <form id="si-form" class="card" novalidate>
 <div><h1 tabindex="-1" id="si-h">Sign in</h1><p class="muted">Use the admin account, the same one SSH uses.</p><small id="si-first" hidden></small></div>
 <p id="si-note" role="status" hidden></p>
 <div class="f"><label for="si-user">User name</label><input id="si-user" class="raw" autocomplete="username" value="admin"></div>
-<div class="f"><label for="si-pass">Password</label><div class="pw"><input id="si-pass" type="password" autocomplete="current-password"><button type="button" class="reveal"><svg viewBox="0 0 24 24"><use href="#i-eye"/></svg></button></div></div>
+<div class="f"><label for="si-pass">Password</label><div class="pw"><input id="si-pass" type="password" autocomplete="current-password"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
 <button class="btn pri" id="si-go">Sign in</button>
 </form>
-<p class="ic muted"><svg viewBox="0 0 24 24"><use href="#i-lock"/></svg><span>Encrypted connection. The camera makes its own certificate, so the first visit may warn; check the address is <span class="mono ink host"></span>.</span></p>
+<p class="ic muted"><svg><use href="#i-lock"/></svg><span>Encrypted connection. The camera makes its own certificate, so the first visit may warn; check the address is <span class="mono ink host"></span>.</span></p>
 </div>
 
 <div id="app" hidden>
@@ -85,7 +85,7 @@
 
 <section class="page" id="p-pantilt" hidden>
 <header class="ph"><div><h1 tabindex="-1">Pan/tilt</h1><p>Presets are shared with your NVR over ONVIF.</p></div><span class="mono" role="status" id="pt-pos"></span></header>
-<div class="cols">
+<div class="cols rv">
 <div class="card" id="pt-move"><h2>Move</h2>
 <div class="pad" id="pt-pad"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg>Stop</button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
 <small class="c">Hold an arrow to move, release to stop. Arrow keys work here too.</small></div>
@@ -96,16 +96,16 @@
 
 <section class="page" id="p-image" hidden>
 <header class="ph"><div><h1 tabindex="-1">Image &amp; night</h1><p>Changes apply at once; except orientation, they last until a restart.</p></div></header>
-<div class="cols">
-<div class="card w2">
-<div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
-<div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
-<div class="stack s" id="im-sl"></div><small>The camera does not report these values, so sliders start at 128.</small></div>
+<div class="cols rv">
 <div class="stack">
 <div class="card"><div><h2 id="im-hn">Day and night</h2><small>Both lenses share the infrared filter and lights.</small></div>
 <div class="f"><div class="seg night" aria-labelledby="im-hn"><button value="0">Day</button><button value="1">Night</button></div><small>Automatic switching is not available in this firmware yet.</small></div></div>
 <div class="card"><div class="row first"><span><b id="im-hl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="im-hl"></button></div><small>A light schedule is not available in this firmware yet.</small></div>
-</div></div>
+</div>
+<div class="card">
+<div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
+<div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
+<div class="stack s" id="im-sl"></div><small>The camera does not report these values, so sliders start at 128.</small></div></div>
 <div class="card"><div><h2>Orientation</h2><small>Kept after a restart. A change restarts video briefly.</small></div>
 <div class="orient" id="im-or"><span></span><span class="lbl sm">Pan/tilt lens</span><span class="lbl sm l1">Fixed lens</span>
 <span>Upside down</span><span><button class="sw" data-k="r" data-s="0" aria-label="Upside down, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="r" data-s="1" aria-label="Upside down, fixed lens"></button></span></div></div>
@@ -123,14 +123,15 @@
 </section>
 
 <section class="page" id="p-streams" hidden>
-<header class="ph"><div><h1 tabindex="-1">Streams &amp; integrations</h1><p>Copied addresses never contain passwords.</p></div><div class="f"><span class="lbl" id="st-hl">Write addresses with</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div></header>
+<header class="ph"><div><h1 tabindex="-1">Streams &amp; integrations</h1><p>Copied addresses never contain passwords.</p></div></header>
+<div class="f"><span class="lbl" id="st-hl">Write addresses with</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div>
 <div class="card"><div><h2>Video</h2><small id="st-vs"></small></div><div class="cols" id="st-lenses"></div>
 <div class="f"><span class="lbl">ONVIF device address</span><div id="st-onvif"></div><small id="st-on"></small></div></div>
 <div class="cols">
 <div class="card"><div><h2>Stream account</h2><small>What your NVR signs in with; separate from the admin password.</small></div>
 <div class="f"><span class="lbl">User name</span><div id="st-user"></div></div><div class="f"><span class="lbl">Password</span><span class="muted" id="st-pw"></span></div></div>
 <div class="card w2"><div><h2>Frigate</h2><small>Paste into Frigate’s config.yml and replace &lt;password&gt; with the stream password.</small></div>
-<div class="code"><div class="bar"><small class="mono">config.yml</small><button class="btn" id="st-copy" aria-label="Copy Frigate configuration"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><pre id="st-yaml" tabindex="0"></pre></div></div>
+<div class="code"><div class="bar"><small class="mono">config.yml</small><button class="btn q" id="st-copy" aria-label="Copy Frigate configuration"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><pre id="st-yaml" tabindex="0"></pre></div></div>
 </div>
 </section>
 
@@ -191,7 +192,7 @@
 <a href="#streams"><span><b>Streams &amp; integrations</b><small>RTSP, ONVIF, Frigate</small></span></a>
 <a href="#network"><span><b>Network</b><small>Wi-Fi, local name, allowed networks</small></span></a>
 <a href="#system"><span><b>System</b><small>Time, updates, password, SSH, theme</small></span></a></nav>
-<div class="card"><h2>Account</h2><div class="bar"><span>Signed in as <b class="user">admin</b></span><button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div></div>
+<div class="card"><div class="bar"><span>Signed in as <b class="user">admin</b></span><button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div></div>
 </section>
 </main>
 
