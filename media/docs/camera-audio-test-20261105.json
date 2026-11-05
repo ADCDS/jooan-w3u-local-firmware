@@ -1,0 +1,57 @@
+{
+ "schema_version": 1,
+ "test_date": "2026-11-05",
+ "status": "Passed: microphone on RTSP, talk through the speaker over the RTSP backchannel (go2rtc/Frigate live view) and HTTP, boot gate, deadman and disconnect mute, stock audio levels; confirmed by ear by the owner. A 24-72 h soak with audio on is still running.",
+ "board": "JA-A12 / T23N / CV2005 + CV2005S1",
+ "runtime_release": "/mnt/mtd/jooanipc-open/releases/9552a2db-904d60a6",
+ "runtime_sha256": {
+  "jooanipc-open": "9552a2db2f5a738bcb084573e9754da57cd0fa8b5208b574e276eae3a5de90d7",
+  "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+  "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb"
+ },
+ "configuration": {
+  "audio": 1,
+  "main_only": 1,
+  "sensors": 2,
+  "fps": 15,
+  "boot_mode": "native"
+ },
+ "microphone": {
+  "capture": "IMP_AI 16 kHz mono, 40 ms periods, 12-byte T23 channel parameter; 8 kHz PCMA on /live/ch0 and /live/ch2",
+  "levels": {"analog_gain": 22, "volume": 80, "source": "stock firmware AudioParam (AiGain, AiVolume)"},
+  "quiet_room_before_levels": {"peak_dbfs": -34.4, "rms_dbfs": -56.1, "note": "driver gain, volume 60: too quiet to hear in the NVR"},
+  "quiet_room_with_levels": {"peak_dbfs": -11.8, "rms_dbfs": -31.8},
+  "rtp_timestamps": "750 packets in 30 s from the camera, every step 40 ms",
+  "frames_observed": 35594,
+  "silence_fill": 0,
+  "dropped": 0,
+  "restarts": 0,
+  "nvr_recording": "AAC 8 kHz mono beside H.264 in 10 s segments (preset-record-generic-audio-aac); audio starts 55 ms after video",
+  "nvr_audio_detection": "running on the main view"
+ },
+ "speaker": {
+  "levels": {"analog_gain": 25, "volume": 60, "source": "stock firmware AudioParam (AoGain, AoTalkVolume)"},
+  "http_talk": "1 s 660 Hz tone, HTTP 200, amplifier (GPIO63, active low) on during playback and muted after; no faults",
+  "rtsp_backchannel": "go2rtc 1.9.14 set up the sendonly PCMA/8000 track on a separate talk stream and played a pushed 2 s file; the first ~340 ms of the file's initial burst were trimmed by the 600 ms run-ahead cap",
+  "disconnect_mute": "talker dropped mid-sentence over RTSP: speaker idle and muted 0.30 s later, nothing dropped while streaming in real time",
+  "browser_talk": "owner talked from the NVR's live view over HTTPS and heard the camera; confirmed both directions",
+  "boot_gate": "talk and speaker_enable refused until /run/jooan-local/speaker-hook-released exists; gate released in every boot observed",
+  "gpio63_idle": 1
+ },
+ "protocol": {
+  "test_rtsp_py_on_camera": "11 tests passed with --audio --backchannel",
+  "onvif_with_audio": "NVR keeps pan/tilt and presets with audio in the profile (schema child order)"
+ },
+ "resources": {
+  "daemon_rss_kib": {"audio_off": 2648, "audio_on": 3164, "audio_on_with_ui": 3472},
+  "daemon_threads": {"audio_off": 19, "audio_on": 24},
+  "daemon_cpu_percent": {"audio_off": 15.8, "audio_on": 17.4, "audio_on_with_ui_24_min_after_boot": 23.8},
+  "memfree_kib_min_observed": 2892
+ },
+ "qualification_limits": [
+  "One unit, one room; levels judged in a quiet room and by the owner's ear, not against a calibrated source.",
+  "Talk tested from one browser and over HTTP; the second-talker refusal and half-duplex mute are covered by host tests, not repeated on the camera.",
+  "Volume and gain changes last until the daemon restarts.",
+  "The soak with audio on (24-72 h) had not finished when this was written."
+ ]
+}

@@ -220,8 +220,8 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Auto-tracking | ✗ |
 | Privacy / PTZ-hide schedule | ✗ |
 | **Audio** | |
-| Listen (camera microphone) | → PCMA on the main RTSP URLs with `audio=1` (being qualified) |
-| Two-way talk | → ONVIF RTSP backchannel and `POST /api/v1/talk` with `audio=1` (being qualified) |
+| Listen (camera microphone) | → PCMA on the main RTSP URLs with `audio=1` |
+| Two-way talk | → ONVIF RTSP backchannel, the admin UI and `POST /api/v1/talk` with `audio=1` |
 | Speaker volume | → `volume` control with `audio=1` |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |

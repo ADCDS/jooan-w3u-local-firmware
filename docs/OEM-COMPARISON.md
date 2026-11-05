@@ -48,8 +48,8 @@ miss:
    do detection and notifications.
 3. **No automatic night vision.** Infrared and the white light switch only
    when something calls the API, and the setting is not remembered.
-4. **Audio is new and off by default.** The microphone and two-way talk
-   (from Frigate's live view) work with `audio=1` and are being qualified on
+4. **Audio is off by default.** With `audio=1` the microphone and two-way
+   talk (from Frigate's live view or the admin UI) work; they were checked on
    the test camera. There is no siren yet.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
    2304×1296); the fixed lens streams only 640×360. No JPEG snapshots.
@@ -126,8 +126,8 @@ under [Sources](#sources):
 
 | Feature | Official firmware | This firmware | How it's done here, or what's missing |
 | --- | --- | --- | --- |
-| Listen through the microphone | Built-in microphone[^off] | **Partial** (media) | With `audio=1` both main RTSP URLs carry the microphone as 8 kHz PCMA, which Frigate can record as AAC. Off by default; being qualified on the test camera. |
-| Two-way talk | Yes[^off] | **Partial** (media) | ONVIF RTSP backchannel, which go2rtc and Frigate's live-view microphone use (the page must be opened over HTTPS), and `POST /api/v1/talk`. One talker at a time, half-duplex. Being qualified on the test camera. |
+| Listen through the microphone | Built-in microphone[^off] | **Supported** (media) | With `audio=1` both main RTSP URLs carry the microphone as 8 kHz PCMA at the stock firmware's levels, which Frigate can record as AAC. Off by default. |
+| Two-way talk | Yes[^off] | **Supported** (media) | ONVIF RTSP backchannel, which go2rtc and Frigate's live-view microphone use (the page must be opened over HTTPS), the admin UI's hold-to-talk, and `POST /api/v1/talk`. One talker at a time, half-duplex. |
 | Siren and alarm sounds | A loud alarm on motion[^amz-us]; custom alarm sounds[^off]; alarm schedule (`SoundAlarmSchedule`) and self-recorded sounds (`the_user_records_alarm_information` = 1) [cfg] | **Missing** | The platform mutes the speaker amplifier during boot; afterwards the media daemon switches it on only for a talk session. |
 | Volume | Microphone and speaker volume (`support_volume_setting`, `support_speaker_volume_setting`) [cfg] | **Partial** (media) | The `volume` control sets either one with `audio=1`; it is not remembered after a restart. |
 | Voice prompts | Spoken setup and status prompts [app] | **Missing** | The media installer's rebuilt app partition leaves the prompt files out, so they are gone in the fallback modes too. |

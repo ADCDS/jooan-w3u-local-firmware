@@ -127,7 +127,7 @@ install(FILES docs/hardware.md docs/platform.md docs/third-party.md
   docs/camera-ivdc-test-20261017.json
   docs/camera-native-test-20261017.json docs/camera-quality-test-20261017.json
   docs/camera-1080-test-20261018.json
-  docs/camera-internal-flash-test-20261020.json
+  docs/camera-internal-flash-test-20261020.json docs/camera-audio-test-20261105.json
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 install(FILES config/replay.example.ini config/ja-a12.example.ini
   DESTINATION ${CMAKE_INSTALL_DOCDIR}/config)

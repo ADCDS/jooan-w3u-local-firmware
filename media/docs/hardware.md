@@ -174,8 +174,10 @@ records exact target layouts.
 
 Both real sensor views through all four H.264 URLs, physical PTZ/presets, clean
 native shutdown/restart and Frigate recording/ONVIF interoperability have been
-exercised. Audio passes host and QEMU tests and is being qualified on the
-camera. Native JPEG, light/IR-cut
+exercised. Audio (microphone, talk over the RTSP backchannel and HTTP, the
+boot gate and the mutes) passed on the camera on 2026-11-05
+([receipt](camera-audio-test-20261105.json)); the long soak with audio on is
+still running. Native JPEG, light/IR-cut
 behavior, arbitrary resolutions, long-duration soak and cold power-cycle
 recovery are not qualified by this run. The broad `hardware_validated` status
 field remains false because that complete hardware feature matrix is pending;

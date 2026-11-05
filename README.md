@@ -72,8 +72,8 @@ With 0.2.24 and its media layer:
   for phones and computers (`http://<camera>/` redirects there); SSH; Wi-Fi with
   stage, commit and rollback; optional network time from a local server;
   mDNS; signed updates.
-- **New, off by default:** audio (microphone on RTSP, talk through the
-  speaker from Frigate or the API), being qualified on the test camera.
+- **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
+  through the speaker from Frigate, the admin UI or the API).
 - **Missing:** a siren; motion and person detection; automatic day/night; digital zoom; on-screen timestamp;
   snapshots in the qualified profile; patrol, auto-tracking and privacy
   schedules; on-camera recording (off in the qualified profile: record with
