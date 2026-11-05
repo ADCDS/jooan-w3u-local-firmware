@@ -294,12 +294,18 @@ The speaker rules:
   boot.
 - Three failed speaker writes close the output, mute, and refuse talk for
   5 s, doubling to 60 s on repeated faults. The output closes after 10 s idle.
-- Speaker volume: `POST /api/v1/control`
-  `{"operation":"volume","value":60,"value2":1}`, -30 to 120, 60 is unity
-  gain (about 0.5 dB per step). `value2` 0 sets the microphone.
+- Levels start at the stock firmware's values: microphone analog gain 22
+  and volume 80, speaker analog gain 25 and volume 60. Change them with
+  `POST /api/v1/control`: `{"operation":"volume","value":60,"value2":1}`
+  (-30 to 120, 60 is unity, about 0.5 dB per step) or
+  `{"operation":"gain","value":22,"value2":0}` (the codec's analog stage,
+  0 to 31). `value2` is 0 for the microphone and 1 for the speaker. A
+  microphone change applies within about 100 ms; a speaker gain change at
+  the next talk after 10 s of quiet. Changes last until the daemon restarts.
 
 `GET /api/v1/status` reports both directions under `audio`: microphone state,
-frame, silence-fill, dropped and restart counts; speaker state, sessions,
+volume and gain (and the speaker's gain), frame, silence-fill, dropped and
+restart counts; speaker state, sessions,
 played and dropped milliseconds, refusals and faults.
 
 ## Source and license

@@ -13,6 +13,10 @@ static int release_count, release_result, send_count, send_result, free_audio_sl
 static int stream_overwrite, audio_overwrite;
 static atomic_int audio_mode; /* 1: the fake microphone delivers frames */
 static int16_t last_audio[320];
+static atomic_int ai_gain_set = -1, ai_volume_set = -1, ao_gain_set = -1;
+static int fake_ai_gain(int d, int c, int v) { CHECK(d == 1 && !c); atomic_store(&ai_gain_set, v); return 0; }
+static int fake_ai_volume(int d, int c, int v) { CHECK(d == 1 && !c); atomic_store(&ai_volume_set, v); return 0; }
+static int fake_ao_gain(int d, int c, int v) { CHECK(!d && !c); atomic_store(&ao_gain_set, v); return 0; }
 static jipc_imp_stream fake_stream;
 static jipc_imp_audio_frame fake_audio;
 static int audio_available;
@@ -220,12 +224,17 @@ static void test_speaker(void)
     state->ao_set_attr = audio_attributes; state->ao_enable = state->ao_disable = audio_device;
     state->ao_enable_channel = state->ao_disable_channel = audio_channel;
     state->ao_send = audio_send; state->ao_query = audio_queue;
+    state->ao_gain = fake_ao_gain; atomic_store(&state->speaker_gain, 25);
     unsigned char pcma[JIPC_SPEAKER_FRAME]; memset(pcma, 0xd5, sizeof pcma);
     char error[256] = {0};
     send_count = send_result = 0;
     CHECK(jipc_imp_ao_write(state, pcma) == -1 && !send_count); /* not open */
     CHECK(!jipc_imp_ao_open(state, 60, error, sizeof error));
     CHECK(state->ao_enabled && state->ao_channel);
+    CHECK(atomic_load(&ao_gain_set) == 25); /* the stock AoGain, set once open */
+    /* A gain change waits for the next open: the speaker thread owns the fd. */
+    CHECK(!jipc_imp_control(state, "gain", 12, 1, error, sizeof error) && atomic_load(&ao_gain_set) == 25);
+    CHECK(jipc_imp_control(state, "gain", 32, 1, error, sizeof error) == -1);
     CHECK(!jipc_imp_ao_write(state, pcma) && send_count == 1);
     for (unsigned i = 0; i < 320; ++i) CHECK(last_audio[i] == 8);
     send_result = -1;
@@ -234,6 +243,8 @@ static void test_speaker(void)
     CHECK(jipc_imp_ao_volume(state, 200) == -1 && !jipc_imp_ao_volume(state, 60));
     jipc_imp_ao_close(state);
     CHECK(!state->ao_enabled && !state->ao_channel && !sdk_poisoned);
+    CHECK(!jipc_imp_ao_open(state, 60, error, sizeof error) && atomic_load(&ao_gain_set) == 12);
+    jipc_imp_ao_close(state);
     state->audio = 0;
     CHECK(jipc_imp_ao_open(state, 60, error, sizeof error) == -1);
     CHECK(!munmap(state, sizeof *state));
@@ -299,12 +310,23 @@ static void test_microphone(void)
     s->ai_set_attr = mic_attributes; s->ai_enable = s->ai_disable = mic_device;
     s->ai_set_channel = mic_parameters; s->ai_enable_channel = s->ai_disable_channel = mic_channel;
     s->ai_get = audio_get; s->ai_release = audio_release; s->ai_poll = mic_poll;
+    s->ai_gain = fake_ai_gain; s->ai_volume = fake_ai_volume;
+    atomic_store(&s->mic_gain, 22); atomic_store(&s->mic_volume, 80);
     mic_stall_us = 300000; mic_retry_unit_us = 1000;
     release_count = 0;
     atomic_store(&audio_mode, 1);
     mic_start(s);
     CHECK(wait_for(&s->mic_frames, 3, 2000));
     CHECK(atomic_load(&s->mic_state) == MIC_RUNNING);
+    /* Opened at the stock levels (AiGain 22, AiVolume 80); a change is applied
+     * by the microphone thread itself, never by the caller. */
+    CHECK(atomic_load(&ai_gain_set) == 22 && atomic_load(&ai_volume_set) == 80);
+    char control_error[160];
+    CHECK(!jipc_imp_control(s, "gain", 26, 0, control_error, sizeof control_error));
+    CHECK(!jipc_imp_control(s, "volume", 70, 0, control_error, sizeof control_error));
+    for (unsigned waited = 0; waited < 2000 && atomic_load(&ai_volume_set) != 70; waited += 5) jipc_sleep_ms(5);
+    CHECK(atomic_load(&ai_gain_set) == 26 && atomic_load(&ai_volume_set) == 70);
+    CHECK(jipc_imp_control(s, "gain", -1, 0, control_error, sizeof control_error) == -1);
     jipc_frame first = {0}, second = {0};
     uint64_t cursor = app->streams[JIPC_AUDIO_STREAM].sequence - 2;
     CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &first, 0) == 1);

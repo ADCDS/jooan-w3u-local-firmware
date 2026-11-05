@@ -132,8 +132,12 @@ With the IMP backend, `POST /api/v1/control` also accepts:
   together);
 - `idr`: request a key frame on stream channel `value`;
 - `volume`: `value` -30–120 (60 is unity gain, about 0.5 dB per step) on
-  `value2` 0 (microphone) or 1 (speaker); it needs `audio=1`. The speaker
-  volume also applies to the next talk session.
+  `value2` 0 (microphone, default 80) or 1 (speaker, default 60); it needs
+  `audio=1`. The speaker volume also applies to the next talk session.
+- `gain`: the codec's analog gain, `value` 0–31, on `value2` 0 (microphone,
+  default 22) or 1 (speaker, default 25), the stock firmware's
+  `AudioParam` values. Only the thread that owns the device applies it: the
+  microphone within about 100 ms, the speaker when it next opens.
 
 Nothing applies these at start; they last until the daemon restarts.
 

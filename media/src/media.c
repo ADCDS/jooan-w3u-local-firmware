@@ -587,7 +587,8 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
         }
     } else if (state->imp && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation") || !strcmp(operation, "sharpness") ||
-               !strcmp(operation, "isp_night") || !strcmp(operation, "volume"))) {
+               !strcmp(operation, "isp_night") || !strcmp(operation, "volume") ||
+               !strcmp(operation, "gain"))) {
         rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
     } else rc = jipc_platform_control(app, operation, value, value2, error, capacity);
     pthread_mutex_unlock(&app->control_mutex);

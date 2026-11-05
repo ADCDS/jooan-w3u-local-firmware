@@ -76,6 +76,11 @@ typedef struct {
     int (*ao_send)(int, int, jipc_imp_audio_frame *, int);
     int (*ao_query)(int, int, int32_t *);
     int (*ai_volume)(int, int, int), (*ao_volume)(int, int, int);
+    int (*ai_gain)(int, int, int), (*ao_gain)(int, int, int);
+    /* Levels applied whenever capture or playback opens; the stock firmware's
+     * AudioParam values (AiVolume 80, AiGain 22, AoGain 25). Gain is the
+     * codec's analog stage (0-31); volume is OpenIMP's 0.5 dB software step. */
+    atomic_int mic_volume, mic_gain, speaker_gain, mic_levels_changed;
 } imp_state;
 
 static const int fs_channels[4] = {0, 1, 3, 4};
@@ -233,6 +238,7 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
     OPTIONAL(ai_get, "IMP_AI_GetFrame"); OPTIONAL(ai_release, "IMP_AI_ReleaseFrame");
     OPTIONAL(ai_poll, "IMP_AI_PollingFrame");
     OPTIONAL(ai_volume, "IMP_AI_SetVol"); OPTIONAL(ao_volume, "IMP_AO_SetVol");
+    OPTIONAL(ai_gain, "IMP_AI_SetGain"); OPTIONAL(ao_gain, "IMP_AO_SetGain");
     OPTIONAL(ao_set_attr, "IMP_AO_SetPubAttr"); OPTIONAL(ao_enable, "IMP_AO_Enable");
     OPTIONAL(ao_disable, "IMP_AO_Disable"); OPTIONAL(ao_enable_channel, "IMP_AO_EnableChn");
     OPTIONAL(ao_disable_channel, "IMP_AO_DisableChn"); OPTIONAL(ao_send, "IMP_AO_SendFrame");
@@ -421,6 +427,17 @@ static void mic_close(imp_state *s)
     if (s->ai_enabled) { audio_cleanup("AI_Disable", s->ai_disable(1)); s->ai_enabled = 0; }
 }
 
+/* Microphone thread only: the gain is a driver ioctl on the capture fd. */
+static void mic_levels(imp_state *s)
+{
+    atomic_store(&s->mic_levels_changed, 0);
+    int gain = atomic_load(&s->mic_gain), volume = atomic_load(&s->mic_volume);
+    if (s->ai_gain && s->ai_gain(1, 0, gain))
+        jipc_log("error", "IMP_AI_SetGain(%d) refused; the microphone stays at the driver's gain", gain);
+    if (s->ai_volume && s->ai_volume(1, 0, volume))
+        jipc_log("error", "IMP_AI_SetVol(%d) refused", volume);
+}
+
 static int mic_open(imp_state *s, char *error, size_t capacity)
 {
     if (!s->ai_set_attr || !s->ai_enable || !s->ai_disable || !s->ai_set_channel ||
@@ -437,6 +454,7 @@ static int mic_open(imp_state *s, char *error, size_t capacity)
         return -1;
     }
     s->ai_channel = 1;
+    mic_levels(s); /* the library keeps gain only while the device is open */
     return 0;
 }
 
@@ -467,6 +485,7 @@ static void *mic_main(void *opaque)
             last_frame = jipc_now_us();
             published_until = 0;
         }
+        if (atomic_load(&s->mic_levels_changed)) mic_levels(s);
         int ready = 1;
         if (s->ai_poll) ready = !s->ai_poll(1, 0, 100);
         else jipc_sleep_ms(10);
@@ -574,8 +593,10 @@ int jipc_imp_audio_json(void *state, char *out, size_t capacity)
     if (s->mic_mutex_ready) pthread_mutex_lock(&s->mic_mutex);
     jipc_json_escape(s->mic_error, escaped, sizeof escaped);
     if (s->mic_mutex_ready) pthread_mutex_unlock(&s->mic_mutex);
-    int n = snprintf(out, capacity, "{\"state\":\"%s\",\"frames\":%u,\"silence_fill\":%u,\"dropped\":%u,\"restarts\":%u,\"error\":%s}",
-                     names[mic >= 0 && mic <= MIC_FAILED ? mic : 0], atomic_load(&s->mic_frames),
+    int n = snprintf(out, capacity, "{\"state\":\"%s\",\"volume\":%d,\"gain\":%d,\"speaker_gain\":%d,"
+                     "\"frames\":%u,\"silence_fill\":%u,\"dropped\":%u,\"restarts\":%u,\"error\":%s}",
+                     names[mic >= 0 && mic <= MIC_FAILED ? mic : 0], atomic_load(&s->mic_volume),
+                     atomic_load(&s->mic_gain), atomic_load(&s->speaker_gain), atomic_load(&s->mic_frames),
                      atomic_load(&s->mic_fill), atomic_load(&s->mic_dropped), atomic_load(&s->mic_restarts), escaped);
     return n < 0 || (size_t)n >= capacity ? -1 : 0;
 }
@@ -608,6 +629,7 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     for (unsigned i = 0; i < 2; ++i) { s->width[i] = jipc_video_width(&config, i*2); s->height[i] = jipc_video_height(&config, i*2); }
     s->sub_width = config.sub_width; s->sub_height = config.sub_height;
     s->fps = config.fps; s->audio = config.audio;
+    atomic_init(&s->mic_volume, 80); atomic_init(&s->mic_gain, 22); atomic_init(&s->speaker_gain, 25);
     s->gop = config.gop_frames ? config.gop_frames : config.fps * 2;
     for (unsigned i = 0; i < 4; ++i) s->bitrate[i] = jipc_video_bitrate(&config, i);
     s->frame = malloc(JIPC_MAX_FRAME);
@@ -770,6 +792,9 @@ int jipc_imp_ao_open(void *state, int volume, char *error, size_t capacity)
         }
         s->ao_channel = 1;
     }
+    int gain = atomic_load(&s->speaker_gain);
+    if (s->ao_gain && s->ao_gain(0, 0, gain))
+        jipc_log("error", "IMP_AO_SetGain(%d) refused; playing at the driver's gain", gain);
     if (s->ao_volume && s->ao_volume(0, 0, volume))
         jipc_log("error", "IMP_AO_SetVol(%d) refused; playing at the library default", volume);
     return 0;
@@ -872,9 +897,22 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
         if (value < -30 || value > 120 || (sensor != 0 && sensor != 1))
             return failure(error, capacity, "volume requires -30..120 and target 0 (microphone) or 1 (speaker)");
         if (sensor) return failure(error, capacity, "speaker volume belongs to the speaker service");
-        if (s->ai_volume && s->ai_channel)
-            return sdk_result(s->ai_volume(1, 0, value), "IMP_AI_SetVol", error, capacity);
-        return failure(error, capacity, "the microphone is not running or libimp lacks its volume control");
+        if (!s->audio || !s->ai_volume) return failure(error, capacity, "audio is off or libimp lacks the microphone volume control");
+        atomic_store(&s->mic_volume, value); /* also used when capture restarts */
+        atomic_store(&s->mic_levels_changed, 1);
+        return 0;
+    }
+    if (!strcmp(operation, "gain")) {
+        if (value < 0 || value > 31 || (sensor != 0 && sensor != 1))
+            return failure(error, capacity, "gain requires 0..31 and target 0 (microphone) or 1 (speaker)");
+        if (!s->audio || !(sensor ? s->ao_gain : s->ai_gain))
+            return failure(error, capacity, "audio is off or libimp lacks the gain control");
+        /* Only the device's own thread touches its fd: the microphone thread
+         * applies a change within ~100 ms; the speaker at its next open (it
+         * closes after 10 s without talk). */
+        atomic_store(sensor ? &s->speaker_gain : &s->mic_gain, value);
+        if (!sensor) atomic_store(&s->mic_levels_changed, 1);
+        return 0;
     }
     if (sensor < 0 || (unsigned)sensor >= s->sensors) return failure(error, capacity, "invalid sensor index");
     imp_byte setter = NULL;
