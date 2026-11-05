@@ -79,7 +79,11 @@ installation route (see [The media layer](#the-media-layer)).
 
 Follow the app's normal setup and connect the camera to the Wi-Fi network it
 will stay on. Changing the camera's network later is harder (see
-[step 8](#8-use-the-camera)).
+[step 8](#8-use-the-camera)). The app pairs the camera through JOOAN's cloud,
+so do this while the camera can still reach the Internet; step 3 blocks it
+afterwards. (The vendor firmware also has a setup hotspot and an Ethernet
+DHCP path, which might avoid the app; neither has been tested with this
+guide.)
 
 If the app offers a camera firmware update, decline it. A newer vendor
 firmware changes the files the installer checks, and the installer then
@@ -89,8 +93,8 @@ refuses the camera.
 
 ### 2. Find the camera's IP address
 
-Look in your router's list of connected devices. The vendor firmware usually
-names itself `JAIPC`. The camera's MAC address is in the app's device
+Look in your router's list of connected devices. The vendor firmware asks the
+router for an address under the name `JAIPC`. The camera's MAC address is in the app's device
 information. It helps to reserve the address for the camera in the router's
 DHCP settings so it does not change.
 
