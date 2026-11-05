@@ -67,13 +67,18 @@ Every request to TCP/80, sign-in and static files included, must carry a
 - an IPv4 literal in 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or 127.0.0.0/8,
   with or without a port;
 - a bracketed IPv6 loopback or ULA (`fc00::/7`) literal;
-- `<label>.local`, the configured mDNS name.
+- the configured mDNS label, bare or under one of the private-use suffixes
+  `.local` (mDNS), `.lan` (the usual router DHCP domain), `.home.arpa`
+  (RFC 8375) or `.internal`, with or without a port or a trailing dot. For the
+  label `camera1` that is `camera1`, `camera1.local`, `camera1.lan`,
+  `camera1.home.arpa` and `camera1.internal`.
 
 Anything else gets `403 host_rejected` before any handler runs. This blocks DNS
 rebinding: a page on an attacker's domain cannot address the camera by a name
-that resolves to it. It also means the UI is refused under any other DNS name,
-such as a router-assigned `name.lan`; use the address or the `.local` name. A
-renamed mDNS label takes effect for this check after the next `joan-daemon`
+that resolves to it, and none of the accepted suffixes resolves in public DNS.
+A router name works only when its first label is the camera's mDNS label, so
+keep the DHCP reservation name and the mDNS label the same. A renamed mDNS label
+takes effect for this check after the next `joan-daemon`
 restart, together with the responder. On the authenticated API routes, a
 request that carries an `Origin` header must also match `http://<Host>`, or it
 gets `403 origin_rejected`.

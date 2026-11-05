@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 # Build the host daemon against the vendored mbedTLS (fetched by the target
-# build into build/*/deps) and exercise network time against a loopback SNTP server.
+# build into build/*/deps); exercise network time against a loopback SNTP server
+# and the HTTP Host check.
 set -eu
 root=$(git rev-parse --show-toplevel)
 src=$(ls -d "$root"/build/release/deps/mbedtls-2.25.0 "$root"/build/deps/mbedtls-2.25.0 2>/dev/null | head -n 1) || :
@@ -14,3 +15,4 @@ make -C "$root/src/daemon" clean >/dev/null
 make -C "$root/src/daemon" -j2 CFLAGS='-Os -Wall -Wextra -Werror' \
     CPPFLAGS="-I. -I$work/mbedtls/include" LDFLAGS="-L$work/mbedtls/library" >/dev/null
 python3 "$root/tools/tests/test_ntp.py"
+python3 "$root/tools/tests/test_host.py"

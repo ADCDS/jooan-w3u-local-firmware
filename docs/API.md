@@ -15,10 +15,10 @@ physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
 a private or loopback IPv4 literal (10/8, 172.16/12, 192.168/16, 127/8), a
-loopback or ULA IPv6 literal, or the configured `<label>.local`; anything else
-gets `403 host_rejected` (see
-[Network security](NETWORK-SECURITY.md#host-and-origin-checks)). Address the
-camera by IP or by its `.local` name, not by a router-assigned DNS name.
+loopback or ULA IPv6 literal, or the configured label bare or under `.local`,
+`.lan`, `.home.arpa` or `.internal` (for example `camera1.local` or
+`camera1.lan`); anything else gets `403 host_rejected` (see
+[Network security](NETWORK-SECURITY.md#host-and-origin-checks)).
 
 All routes except setup status and session creation require an authenticated
 administrator session (`401 authentication_required`). State-changing HTTP
