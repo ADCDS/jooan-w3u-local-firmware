@@ -123,6 +123,10 @@ while [ "$i" -lt 18 ]; do
 done
 [ "${state:-}" = COMPLETED ] || exit 1
 killall udhcpc 2>/dev/null || :
-udhcpc -a -n -q -t 5 -T 3 -i wlan0 -x hostname:JooanW3U \
-    -p /var/run/udhcpc_wlan0_pid.txt -s /mnt/mtd/run/default.script >/dev/null 2>&1
+# Leave one persistent client behind: it daemonizes once it holds a lease (or
+# after the first 15 s without one) and keeps renewing. A one-shot -q client
+# would exit here and the lease would never be renewed.
+udhcpc -a -b -t 5 -T 3 -i wlan0 -x hostname:JooanW3U \
+    -p /var/run/udhcpc_wlan0_pid.txt -s /mnt/mtd/run/default.script \
+    </dev/null >/dev/null 2>&1
 ifconfig wlan0 2>/dev/null | grep -q 'inet addr:'

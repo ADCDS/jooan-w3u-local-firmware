@@ -39,6 +39,9 @@ INI = "/opt/jooanipc-open/camera.ini"
 ENV = "/opt/jooanipc-open/deployment.env"
 HANDOFF = "/opt/jooanipc-open/boot-handoff.sh"
 RELEASES = "/mnt/mtd/jooanipc-open/releases"
+MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
+NATIVE = "/opt/jooanipc-open/native"
+WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
 
 
 def log(message):
@@ -65,6 +68,7 @@ class Camera:
     def __init__(self, host, password, media_password):
         self.host, self.password, self.media_password = host, password, media_password
         self.prefix = (["sshpass", "-e"] if password and shutil.which("sshpass") else [])
+        self._media_cert = None
 
     def ssh_bytes(self, script, data=None, timeout=120, check=True):
         env = os.environ | ({"SSHPASS": self.password} if self.prefix else {})
@@ -106,10 +110,24 @@ class Camera:
             raise RuntimeError(f"platform login failed: {status} {data[:200]!r}")
         return headers["Set-Cookie"].split(";", 1)[0], json.loads(data)["csrf"]
 
+    def media_context(self):
+        """Trust exactly the media daemon's own certificate, read over SSH.
+
+        SSH authenticates the camera by its host key, so the certificate it
+        returns is the one the daemon serves; the Basic credentials below are
+        then only sent to that certificate's holder. The name is not checked:
+        the certificate is self-signed and the camera is addressed by IP."""
+        if self._media_cert is None:
+            pem = self.ssh(f"cat {MEDIA_CERT}")
+            if "-----BEGIN CERTIFICATE-----" not in pem:
+                raise RuntimeError(f"no media certificate at {MEDIA_CERT}")
+            self._media_cert = pem
+        context = ssl.create_default_context(cadata=self._media_cert)
+        context.check_hostname = False
+        return context
+
     def media_status(self):
-        context = ssl.create_default_context()
-        context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
-        c = http.client.HTTPSConnection(self.host, 18443, timeout=15, context=context)
+        c = http.client.HTTPSConnection(self.host, 18443, timeout=15, context=self.media_context())
         token = base64.b64encode(f"admin:{self.media_password}".encode()).decode()
         c.request("GET", "/api/v1/status", headers={"Authorization": "Basic " + token})
         r = c.getresponse()
@@ -138,6 +156,33 @@ def boot_mode(cam):
     if "leaving current owner alone" in logs:
         raise RuntimeError("the boot handoff gave up:\n" + logs[-600:])
     return None
+
+
+def preflight_problems(facts, platform, local, appfs, config):
+    """Reasons the bundle must not be applied to the camera as it is now."""
+    problems = []
+    if facts.get("appfs_size") != "3211264" or facts.get("appfs_name") != "appfs":
+        problems.append("not the qualified JA-A12 flash layout")
+    if int(facts.get("opt_free", 0) or 0) < 64:
+        problems.append("/opt has less than 64 KiB free")
+    if facts.get("trial") != "no":
+        problems.append("a failed jooanipc-open boot trial is latched")
+    if facts.get("native_failed"):
+        problems.append("native-failed is latched (" + facts["native_failed"].strip() + "): the last native "
+                        f"boot failed and the camera runs the OEM handoff; fix the cause, then delete {NATIVE}-failed")
+    if facts.get("qualified", "0") == "0":
+        problems.append("jooanipc-open did not qualify on this boot (reboot to fall back first)")
+    files = config.get("files", {})
+    # A bundle may create (any content) or delete (None) the native marker.
+    native_after = files[NATIVE] is not None if NATIVE in files else facts.get("native") == "yes"
+    if native_after and facts.get("wifi_json") != "yes":
+        problems.append(f"native boot needs a committed Wi-Fi network ({WIFI_JSON}); without it the boot "
+                        "fails after 300 s and latches native-failed. Commit one through the platform first")
+    if local and platform.get("release_sequence", 0) >= local["release_sequence"]:
+        problems.append(f"platform already at sequence {platform.get('release_sequence')}")
+    if appfs and facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:
+        problems.append(f"appfs is {facts.get('appfs_md5')}, bundle expects {appfs['expected_current_appfs_md5']}")
+    return problems
 
 
 def wait_reboot(cam, seconds=600):
@@ -211,24 +256,15 @@ def main():
         "echo appfs_md5=$(md5sum /dev/mtdblock4 | cut -c1-32);"
         "echo opt_free=$(df -k /opt | awk 'END {print $4}');"
         "echo trial=$([ -e /opt/jooanipc-open/boot-trial ] && echo yes || echo no);"
+        f"echo native=$([ -e {NATIVE} ] && echo yes || echo no);"
+        f"echo native_failed=$(tr '\\n' ' ' < {NATIVE}-failed 2>/dev/null);"
+        f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
         "echo qualified=$(cat /tmp/jipc-handoff.log /tmp/jipc-native.log 2>/dev/null | "
         "grep -c -E 'boot handoff qualified|native boot qualified');"
         "echo release=$(sed -n 's/^JIPC_RELEASE=//p' " + ENV + ")").splitlines() if "=" in line)
     status, _, data = cam.platform("GET", "/api/v1/setup/status")
     platform = json.loads(data) if status == 200 else {}
-    problems = []
-    if facts.get("appfs_size") != "3211264" or facts.get("appfs_name") != "appfs":
-        problems.append("not the qualified JA-A12 flash layout")
-    if int(facts.get("opt_free", 0)) < 64:
-        problems.append("/opt has less than 64 KiB free")
-    if facts.get("trial") != "no":
-        problems.append("a failed jooanipc-open boot trial is latched")
-    if facts.get("qualified", "0") == "0":
-        problems.append("jooanipc-open did not qualify on this boot (reboot to fall back first)")
-    if local and platform.get("release_sequence", 0) >= local["release_sequence"]:
-        problems.append(f"platform already at sequence {platform.get('release_sequence')}")
-    if appfs and facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:
-        problems.append(f"appfs is {facts.get('appfs_md5')}, bundle expects {appfs['expected_current_appfs_md5']}")
+    problems = preflight_problems(facts, platform, local, appfs, config)
     log(f"camera: platform {platform.get('release_version')} (sequence {platform.get('release_sequence')}), "
         f"media {facts.get('release', '?').rsplit('/', 1)[-1]}, appfs {facts.get('appfs_md5')}")
     plan = []

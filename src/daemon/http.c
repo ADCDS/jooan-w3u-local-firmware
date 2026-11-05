@@ -119,7 +119,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     return error_json(c,404,"route_not_found","route not found");
 }
 
-static void serve(Conn*c,const char*remote){JoanRequest r;int parsed=parse_request(c,&r);if(parsed){if(parsed==-3)return;if(parsed==-2)error_json(c,413,"payload_too_large","request body exceeds route limit");else error_json(c,400,"bad_request","malformed request or unsupported transfer encoding");return;}snprintf(r.remote,sizeof(r.remote),"%s",remote);if(!strncmp(r.path,"/api/",5))route(c,&r);else static_file(c,r.path);if(r.body){memset(r.body,0,r.content_length);free(r.body);}}
+static void serve(Conn*c,const char*remote){JoanRequest r;int parsed=parse_request(c,&r);if(parsed){if(parsed==-3)return;if(parsed==-2)error_json(c,413,"payload_too_large","request body exceeds route limit");else error_json(c,400,"bad_request","malformed request or unsupported transfer encoding");return;}snprintf(r.remote,sizeof(r.remote),"%s",remote);/* Every request, login and static assets included, must name this camera: an IP literal on a private or loopback network, or <label>.local. A DNS-rebinding name never reaches a handler. */if(!host_ok(r.host))error_json(c,403,"host_rejected","request host is not this camera");else if(!strncmp(r.path,"/api/",5))route(c,&r);else static_file(c,r.path);if(r.body){memset(r.body,0,r.content_length);free(r.body);}}
 
 typedef struct {
     int fd;

@@ -19,4 +19,8 @@ assert 'kill -TERM "$f"' in text and 'kill -KILL "$f"' in text
 assert "grep -qx 'motor_home=1'" in text and "motor homing complete" in text
 assert text.rstrip().endswith("log 'native boot qualified; OEM application never started'")
 assert text.index('rm -f "$root/native-trial"') > text.index("[ -n \"$homed\" ]")
+# Lock contention is recorded, never a silent exit 0 that leaves the feeder
+# timer to reset the camera back into the same native boot.
+assert 'mkdir "$run/boot.lock" 2>/dev/null || exit 0' not in text
+assert text.index("stage 'failed: boot lock held") < text.index("stage start")
 print("native boot script: PASS")

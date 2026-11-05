@@ -16,6 +16,10 @@ image=/tmp/jipc-flash-candidate.squashfs
 backup=/tmp/jipc-appfs-rollback.bin
 root=/opt/jooanipc-open
 state=/tmp/jipc-install
+# The platform supervisor's maintenance lock. While it exists the supervisor
+# neither restarts its runtime nor lets the network watchdog reboot; holding it
+# from here on keeps a reboot from landing on a half-written or failed appfs.
+platform_lock=/run/jooan-local/state.lock
 mkdir -p "$state"
 log() { printf '%s %s\n' "$(cat /proc/uptime)" "$*"; }
 die() { log "ABORT: $*"; exit 1; }
@@ -92,11 +96,13 @@ for name in boot-handoff.sh camera.ini deployment.env; do
     cp "$root/$name" "$state/$name.before"
 done
 sh -n "$root/boot-handoff.sh.next"
-absent jooanipc || die 'OEM media owner is running; use the OEM->native installer'
-absent my_watch_dog || die 'OEM watchdog is running; use the OEM->native installer'
+absent jooanipc || die 'OEM media owner is running; this installer upgrades a qualified native boot only'
+absent my_watch_dog || die 'OEM watchdog is running; this installer upgrades a qualified native boot only'
 native=$(owner jooanipc-open) || die 'native owner missing or ambiguous'
 syslog=$(owner syslogd) || die 'OEM syslog missing or ambiguous'
 holds_watchdog "$native" || die 'native owner does not hold /dev/watchdog'
+[ ! -d "$platform_lock" ] || die 'platform maintenance is in progress'
+mkdir -p /run/jooan-local && mkdir "$platform_lock" || die 'cannot take the platform maintenance lock'
 ns=$(awk '{print $22}' "/proc/$native/stat")
 ss=$(awk '{print $22}' "/proc/$syslog/stat")
 log 'preconditions passed; stopping native media and transferring watchdog'
@@ -142,8 +148,16 @@ if /sbin/flashcp -v "$image" /dev/mtd4 && [ "$(hash /dev/mtd4)" = "$1" ]; then
     log 'flashcp and complete partition readback passed'
 else
     log 'flash verification failed; restoring original appfs and configuration'
-    /sbin/flashcp -v "$backup" /dev/mtd4 || die 'rollback flash failed; watchdog feeder left running'
-    [ "$(hash /dev/mtd4)" = "$2" ] || die 'rollback readback failed; watchdog feeder left running'
+    tries=0
+    until /sbin/flashcp -v "$backup" /dev/mtd4 && [ "$(hash /dev/mtd4)" = "$2" ]; do
+        tries=$((tries + 1))
+        # Do not reboot onto a damaged appfs: it holds startapp and the OEM
+        # boot. The feeder and the maintenance lock keep the camera up with
+        # both images still in /tmp; docs/RECOVERY.md has the manual steps.
+        [ "$tries" -lt 3 ] || die "rollback failed $tries times; camera kept up for manual recovery (docs/RECOVERY.md), images in /tmp"
+        log "rollback attempt $tries failed; retrying"
+        sleep 2
+    done
     restore_config
     log 'original appfs and configuration restored'
     sync

@@ -78,6 +78,13 @@ typedef struct jipc_app {
 typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
 
 uint64_t jipc_now_us(void);
+/* Failed-login throttle (src/authlimit.c), keyed by peer address. */
+#define JIPC_AUTH_FAILURES 10u
+#define JIPC_AUTH_WINDOW_US UINT64_C(60000000)
+int jipc_auth_blocked(int fd);
+void jipc_auth_result(int fd, int ok);
+int jipc_auth_blocked_at(const char *peer, uint64_t now);
+void jipc_auth_result_at(const char *peer, uint64_t now, int ok);
 void jipc_sleep_ms(unsigned milliseconds);
 void jipc_log(const char *level, const char *format, ...);
 int jipc_random(void *data, size_t bytes);

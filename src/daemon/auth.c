@@ -66,7 +66,14 @@ static int build_records(const char *password, int warning,
     memset(key, 0, sizeof(key));
     if(n<=0||n>=384)return-1;
     *ssh_len=(size_t)n;
-    n=snprintf(rtsp,320,"%s\n",password);if(n<=0||n>=320)return-1;*rtsp_len=(size_t)n;
+    /* The OEM application's loopback RTSP gets its own random secret, never
+     * the admin password: nothing outside the camera reads that stream, and a
+     * plaintext copy of the admin password on flash would undo the hashes
+     * above. */
+    if(joan_random(salt,12))return-1;
+    joan_hex(salt,12,hk);
+    n=snprintf(rtsp,320,"%s\n",hk);memset(hk,0,sizeof(hk));memset(salt,0,sizeof(salt));
+    if(n<=0||n>=320)return-1;*rtsp_len=(size_t)n;
     return 0;
 }
 
@@ -123,6 +130,23 @@ done:
     return ok;
 }
 
+/* Replace the OEM RTSP secret on every start. This also overwrites the
+ * plaintext admin password that releases before 0.2.24 kept in this file.
+ * Until the bridge pushes the new secret, the guard keeps the OEM RTSP port
+ * closed, which is the fail-closed state. */
+static int refresh_oem_rtsp_secret(const JoanConfig *cfg)
+{
+    char path[512],marker[512],secret[32];unsigned char raw[12];int rc;
+    if(snprintf(path,sizeof(path),"%s/rtsp.password",cfg->state_dir)>=(int)sizeof(path)||
+       snprintf(marker,sizeof(marker),"%s/rtsp.synced",cfg->state_dir)>=(int)sizeof(marker))return-1;
+    if(joan_random(raw,sizeof(raw)))return-1;
+    joan_hex(raw,sizeof(raw),secret);secret[24]='\n';
+    unlink(marker);
+    rc=joan_write_atomic(path,secret,25,0600);
+    memset(raw,0,sizeof(raw));memset(secret,0,sizeof(secret));
+    return rc;
+}
+
 int joan_auth_init(const JoanConfig *cfg)
 {
     char path[512],ssh_path[512];
@@ -133,16 +157,17 @@ int joan_auth_init(const JoanConfig *cfg)
     if (f) {
         fclose(f);
         if(ssh_password_path(cfg,ssh_path))return-1;
-        f=fopen(ssh_path,"r");if(f){char rtsp_path[512];fclose(f);snprintf(rtsp_path,sizeof(rtsp_path),"%s/rtsp.password",cfg->state_dir);f=fopen(rtsp_path,"r");if(f){fclose(f);return 0;}}
+        f=fopen(ssh_path,"r");if(f){char rtsp_path[512];fclose(f);snprintf(rtsp_path,sizeof(rtsp_path),"%s/rtsp.password",cfg->state_dir);f=fopen(rtsp_path,"r");if(f){fclose(f);return refresh_oem_rtsp_secret(cfg);}}
         /* A pre-sync bootstrap database can be repaired because its public
          * initial secret is known. Never guess or reset a customized secret. */
         if(verify(cfg,DEFAULT_PASSWORD,NULL))return save_record(cfg,DEFAULT_PASSWORD,1);
         /* Upgraded 0.1 databases contain no recoverable plaintext. Preserve
          * the web credential and mark SSH unsynchronized until rotation. */
-        return 0;
+        return refresh_oem_rtsp_secret(cfg);
     }
-    /* Deliberately recognizable bootstrap secret; API access remains local TLS,
-     * and all privileged endpoints remain locked until it is replaced. */
+    /* Deliberately recognizable bootstrap secret, documented in INSTALL.md.
+     * The System page and /api/v1/setup/status report it until it is
+     * replaced; nothing else is locked behind the change. */
     return save_record(cfg, DEFAULT_PASSWORD, 1); /* hygiene: allow-public-bootstrap */
 }
 

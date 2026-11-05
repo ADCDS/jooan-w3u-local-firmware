@@ -172,7 +172,7 @@ static int send_all(connection *c,const void *data,size_t n){
     }
     return 0;
 }
-static const char *reason(int code){switch(code){case 200:return "OK";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
+static const char *reason(int code){switch(code){case 200:return "OK";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 429:return "Too Many Requests";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
 static int header(connection *c,int status,const char *type,uint64_t length){
     char out[1024];int n=snprintf(out,sizeof(out),"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %llu\r\nConnection: %s\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n%s\r\n",status,reason(status),type,(unsigned long long)length,c->keepalive?"keep-alive":"close",status==401?"WWW-Authenticate: Basic realm=\"jooanipc-open\", charset=\"UTF-8\"\r\n":"");
     if(n<0||(size_t)n>=sizeof(out))return -1;
@@ -285,8 +285,13 @@ static void dispatch(connection *c,request *r){
     int soap=!strcmp(r->target,"/onvif/device_service")||!strcmp(r->target,"/onvif/media_service")||!strcmp(r->target,"/onvif/ptz_service");
     if((!strcmp(r->target,"/health")||!strcmp(r->target,"/healthz"))&&!strcmp(r->method,"GET")){int ready=app->backend_ready&&!app->stop;
         if(ready)response(c,200,"application/json","{\"ok\":true}\n",12);else error_response(c,503,"Not ready");return;}
-    int authorized=basic_authorized(app,r->authorization);
-    if(!authorized&&soap&&!strcmp(r->method,"POST"))authorized=jipc_onvif_public_time(r->body)||jipc_onvif_authorize(app,r->body);
+    if(jipc_auth_blocked(c->fd)){error_response(c,429,"Too many failed logins from this address; retry in a minute");return;}
+    int authorized=basic_authorized(app,r->authorization),offered=r->authorization[0]!=0;
+    if(!authorized&&soap&&!strcmp(r->method,"POST")){
+        if(jipc_onvif_public_time(r->body))authorized=-1; /* the one unauthenticated SOAP call */
+        else{offered|=strstr(r->body,"UsernameToken")!=NULL;authorized=jipc_onvif_authorize(app,r->body);}
+    }
+    if(offered&&authorized>=0)jipc_auth_result(c->fd,authorized);
     if(!authorized){error_response(c,401,"Authentication required");return;}
     if(r->origin[0]){char allowed[512];snprintf(allowed,sizeof(allowed),"%s://%s",c->server->secure?"https":"http",r->host);if(strcmp(allowed,r->origin)){error_response(c,403,"Cross-origin requests are not accepted");return;}}
     if(strcmp(r->method,"GET")&&strcmp(r->method,"POST")){error_response(c,405,"Use GET or POST");return;}

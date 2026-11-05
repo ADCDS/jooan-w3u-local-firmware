@@ -270,6 +270,14 @@ def main():
             wait_ready()
             assert (config.stat().st_mode & 0o777) == 0o600
             result["checks"].append("credential persistence, old-password rejection, CLI overrides retained on reload")
+            # Last: this locks 127.0.0.1 out for a minute. Earlier negative
+            # tests may already have counted, so the block can come sooner.
+            statuses = [request("GET", "/api/v1/status", password="not-" + secret)[0] for _ in range(10)]
+            assert set(statuses) <= {401, 429}, statuses
+            # After ten failures even the right password is not checked.
+            assert request("GET", "/api/v1/status")[0] == 429
+            assert request("GET", "/health")[0] == 200
+            result["checks"].append("failed-login throttle blocks an address after repeated wrong passwords")
         finally:
             process.terminate()
             try:

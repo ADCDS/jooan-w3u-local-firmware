@@ -238,7 +238,7 @@ class RuntimeHookTests(unittest.TestCase):
             "esac\n",
         )
         executable(fake_bin / "killall", "#!/bin/sh\nexit 0\n")
-        executable(fake_bin / "udhcpc", "#!/bin/sh\nexit 0\n")
+        executable(fake_bin / "udhcpc", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$UDHCPC_LOG\"\n")
         executable(
             fake_bin / "ifconfig",
             "#!/bin/sh\nprintf 'inet addr:192.168.1.2\\n'\n",
@@ -249,6 +249,7 @@ class RuntimeHookTests(unittest.TestCase):
             "WPA_LOG": str(log),
             "WPA_COUNTER": str(root / "wpa.counter"),
             "WPA_PINGS": str(root / "wpa.pings"),
+            "UDHCPC_LOG": str(root / "udhcpc.log"),
         }
         return environment, log
 
@@ -278,6 +279,24 @@ class RuntimeHookTests(unittest.TestCase):
             calls = log.read_text(encoding="utf-8")
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
+
+    def test_wifi_hook_leaves_a_renewing_dhcp_client(self) -> None:
+        """The apply kills every udhcpc. The client it starts must stay alive
+        to renew the lease: -b, never the one-shot -q or exit-on-failure -n."""
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        fixture = REPOSITORY / "tools/tests/wifi-space.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, _ = self._wifi_apply_environment(root)
+            result = subprocess.run([str(hook), str(fixture)], env=environment,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = (root / "udhcpc.log").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(calls), 1, calls)
+            arguments = calls[0].split()
+            self.assertIn("-b", arguments)
+            self.assertNotIn("-q", arguments)
+            self.assertNotIn("-n", arguments)
 
     def test_wifi_hook_disables_every_other_network(self) -> None:
         """jooanipc's own stored network (the retired, open JOOANTEST) sits in

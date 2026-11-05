@@ -722,7 +722,11 @@ static int handle(rtsp_client *client, const rtsp_request *request)
         return response(client, request->cseq, 200, "OK", public_methods, NULL);
     jipc_config config;
     jipc_config_copy(client->server->app, &config);
-    if (!authenticated(client, request, &config)) return challenge(client, request->cseq, &config);
+    if (config.username[0] && jipc_auth_blocked(client->fd))
+        return response(client, request->cseq, 503, "Service Unavailable", "Retry-After: 60\r\n", NULL);
+    int credentials_ok = authenticated(client, request, &config);
+    if (config.username[0] && request->authorization[0]) jipc_auth_result(client->fd, credentials_ok);
+    if (!credentials_ok) return challenge(client, request->cseq, &config);
     int track;
     char base[2048];
     int channel = uri_channel(request->uri, &track, base, sizeof(base));

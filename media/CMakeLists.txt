@@ -31,7 +31,7 @@ set_property(DIRECTORY "${mbedtls_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
 add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
-add_library(jipc_core STATIC src/util.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
+add_library(jipc_core STATIC src/util.c src/authlimit.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
   src/platform.c src/rtsp.c src/http.c src/onvif.c src/discovery.c src/ntp.c src/record.c)
 target_include_directories(jipc_core PUBLIC include)
 target_compile_definitions(jipc_core PUBLIC JIPC_WITH_MBEDTLS _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE _LARGEFILE64_SOURCE)
@@ -56,6 +56,10 @@ if(JIPC_BUILD_TESTS)
     target_compile_options(test-core PRIVATE -UNDEBUG)
     target_link_libraries(test-core PRIVATE jipc_core)
     add_test(NAME core COMMAND test-core)
+    add_executable(test-authlimit tests/test_authlimit.c)
+    target_compile_options(test-authlimit PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_link_libraries(test-authlimit PRIVATE jipc_core)
+    add_test(NAME auth-throttle COMMAND test-authlimit)
   endif()
   if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test_imp.c")
     add_executable(test-imp tests/test_imp.c)
@@ -92,6 +96,12 @@ if(JIPC_BUILD_TESTS)
   add_test(NAME native-boot COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_native_boot.py
     ${CMAKE_SOURCE_DIR}/scripts/native-boot.sh ${CMAKE_SOURCE_DIR}/src/main.c)
+  add_test(NAME install-preflight COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_install_camera.py
+    ${CMAKE_SOURCE_DIR}/scripts/install-camera.py)
+  add_test(NAME appfs-upgrade COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_upgrade_appfs.py
+    ${CMAKE_SOURCE_DIR}/scripts/upgrade-appfs.sh)
 endif()
 install(TARGETS jooanipc-open RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/replay.example.ini config/ja-a12.example.ini

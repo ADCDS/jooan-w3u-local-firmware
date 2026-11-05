@@ -31,10 +31,17 @@ fail() {
     exit 1
 }
 mkdir -p "$run" || exit 1
-mkdir "$run/boot.lock" 2>/dev/null || exit 0
 [ -f "$root/enabled" ] && [ -f "$root/native" ] || exit 0
 native=
 boot=$(cat /proc/sys/kernel/random/boot_id) || exit 1
+# One boot script per boot. If another one already holds the lock, record
+# that: the reset the ten-minute feeder timer then causes latches
+# native-failed, and the next boot takes the handoff instead of looping here.
+if ! mkdir "$run/boot.lock" 2>/dev/null; then
+    log 'boot lock held by another boot script; not launching the media daemon'
+    stage 'failed: boot lock held by another boot script'
+    exit 1
+fi
 stage start || exit 1
 
 [ -r "$root/deployment.env" ] || fail 'deployment manifest missing'
