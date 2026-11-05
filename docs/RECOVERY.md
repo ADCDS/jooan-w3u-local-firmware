@@ -54,8 +54,9 @@ network updates and use external recovery.
 
 Runtime replacement is a maintenance transaction: the signed controller and SSH
 recovery bundle remain available while the sole persistent runtime is replaced.
-During the two-minute health trial the supervisor restarts a candidate whose
-start failed: `start.sh` is bounded to 15 s while `entropy-ready.sh` waits up to
+During the two-minute health trial the supervisor applies the committed Wi-Fi
+network (a native boot gives up on its gateway after 300 s) and restarts a
+candidate whose start failed: `start.sh` is bounded to 15 s while `entropy-ready.sh` waits up to
 30 s, and an early native boot gathers entropy slowly. If the candidate still
 fails, or the trial is interrupted, it stays selected as the only runtime,
 because the update already deleted the previous one, and the supervisor keeps

@@ -479,8 +479,13 @@ class HostBuilderTests(unittest.TestCase):
         self.assertIn('jl_write_selection "$JL_PENDING" - 0', boot)
         self.assertIn('[ "$jl_trial_ok" != 1 ] && [ "$jl_old_stable" = - ]', boot)
         self.assertIn('jl_write_selection "$jl_trial" - 0', boot)
-        # The trial restarts a candidate whose first start failed (entropy).
-        trial = boot[boot.index("jl_checks=0"):boot.index("jl_trial_ok=1")]
+        # The trial restarts a candidate whose first start failed (entropy),
+        # bounded by elapsed time, and applies Wi-Fi while it runs: a native
+        # boot gives up on its gateway after 300 s.
+        trial = boot[boot.index("jl_trial_deadline="):boot.index("jl_trial_ok=1")]
+        self.assertIn('while [ "$(jl_uptime)" -lt "$jl_trial_deadline" ]', trial)
+        self.assertIn('jl_ensure_wifi "$jl_running"', trial)
+        self.assertLess(trial.index("jl_ensure_wifi"), trial.index("mark-healthy.sh"))
         self.assertIn("if ! jl_runtime_alive; then", trial)
         self.assertIn('jl_start_slot "$jl_running"', trial)
         self.assertNotIn('if jl_start_slot "$jl_running"; then', boot)

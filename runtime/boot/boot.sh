@@ -69,11 +69,14 @@ if [ "$jl_running" != - ]; then
         # bounded to 15 s while entropy-ready.sh waits up to 30 s, and an early
         # native boot (no OEM application running) gathers entropy slowly. So
         # restart it inside the two-minute window, as the supervisor loop does
-        # for a stable runtime.
-        jl_checks=0
-        while [ "$jl_checks" -lt 24 ]; do
+        # for a stable runtime. The window is elapsed time, not attempts: a
+        # failed start alone can take 25 s.
+        # The committed network must not wait for the trial either: a native
+        # boot gives up on its gateway after 300 s and latches native-failed.
+        jl_trial_deadline=$(( $(jl_uptime) + 120 ))
+        while [ "$(jl_uptime)" -lt "$jl_trial_deadline" ]; do
             sleep 5
-            jl_checks=$((jl_checks + 1))
+            jl_ensure_wifi "$jl_running" || :
             if ! jl_runtime_alive; then
                 jl_stop_slot "$jl_running" || :
                 jl_start_slot "$jl_running" || :
