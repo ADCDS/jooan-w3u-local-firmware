@@ -148,8 +148,8 @@ userspace owns the amplifier control. The amplifier is active-low on this
 board (factory `SpeakLevelEx=0`): `speaker_enable=1` drives GPIO63 low and `0`
 drives it high. The media backend enables it before talkback and waits 200 ms.
 Shutdown mutes it (GPIO63 high) if this application used it. Replay records
-the simulated state without GPIO access. Releases before 0.2.24's media
-release `8bacc63a` had this polarity inverted.
+the simulated state without GPIO access. Media releases before
+`4b20a364` had this polarity inverted.
 
 The platform's `local.rc` also drives GPIO63 at every boot: it writes `1`
 (mute) every 20 ms for roughly the first minute (in a native boot, where no
