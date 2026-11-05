@@ -136,7 +136,8 @@ done:
  * plaintext admin password that releases before 0.2.24 kept in this file.
  * The OEM application only runs in the fallback modes; the guard binds its
  * RTSP to loopback and refuses non-loopback accepts until the bridge has
- * pushed this secret and rtsp.synced matches it. */
+ * pushed this secret and rtsp.synced matches it. A failed refresh is not
+ * fatal to the daemon: it only leaves that OEM RTSP unsynchronized. */
 static int refresh_oem_rtsp_secret(const JoanConfig *cfg)
 {
     char path[512],marker[512],secret[32];unsigned char raw[12];int rc;
@@ -160,13 +161,14 @@ int joan_auth_init(const JoanConfig *cfg)
     if (f) {
         fclose(f);
         if(ssh_password_path(cfg,ssh_path))return-1;
-        f=fopen(ssh_path,"r");if(f){char rtsp_path[512];fclose(f);snprintf(rtsp_path,sizeof(rtsp_path),"%s/rtsp.password",cfg->state_dir);f=fopen(rtsp_path,"r");if(f){fclose(f);return refresh_oem_rtsp_secret(cfg);}}
+        f=fopen(ssh_path,"r");if(f){char rtsp_path[512];fclose(f);snprintf(rtsp_path,sizeof(rtsp_path),"%s/rtsp.password",cfg->state_dir);f=fopen(rtsp_path,"r");if(f){fclose(f);(void)refresh_oem_rtsp_secret(cfg);return 0;}}
         /* A pre-sync bootstrap database can be repaired because its public
          * initial secret is known. Never guess or reset a customized secret. */
         if(verify(cfg,DEFAULT_PASSWORD,NULL))return save_record(cfg,DEFAULT_PASSWORD,1);
         /* Upgraded 0.1 databases contain no recoverable plaintext. Preserve
          * the web credential and mark SSH unsynchronized until rotation. */
-        return refresh_oem_rtsp_secret(cfg);
+        (void)refresh_oem_rtsp_secret(cfg);
+        return 0;
     }
     /* Deliberately recognizable bootstrap secret, documented in INSTALL.md.
      * The System page and /api/v1/setup/status report it until it is
