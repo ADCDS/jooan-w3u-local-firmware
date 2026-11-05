@@ -146,7 +146,10 @@ in 0.2.14. The camera no longer remuxes video for browsers or routes audio,
 which also retired the per-viewer fMP4 buffers and the audio router process: on
 a 38 MB board that memory was part of what the OOM killer fought over. The
 router's sources and host tests remain in `src/audio/`; it is not built for
-the camera or shipped.
+the camera or shipped. Audio now comes from the media daemon itself: with
+`audio=1` it puts the microphone on its RTSP URLs and plays talk audio that
+arrives over the RTSP backchannel or its HTTPS API (see
+[Audio and talk](../media/README.md#audio-and-talk)).
 
 Since 0.2.22 `joan-daemon` is the platform only. The Digest RTSP proxy on
 TCP/554, the ONVIF subset on port 80 and the optional OEM audio pause were
@@ -217,9 +220,9 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Auto-tracking | ✗ |
 | Privacy / PTZ-hide schedule | ✗ |
 | **Audio** | |
-| Listen (camera microphone) | ✗ (the qualified media profile runs with audio disabled) |
-| Two-way talk | ✗ (the qualified media profile runs with audio disabled) |
-| Speaker volume | ✗ |
+| Listen (camera microphone) | → PCMA on the main RTSP URLs with `audio=1` (being qualified) |
+| Two-way talk | → ONVIF RTSP backchannel and `POST /api/v1/talk` with `audio=1` (being qualified) |
+| Speaker volume | → `volume` control with `audio=1` |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |
 | Day / Night / IR-cut mode | → manual `night`/`ircut` only; automatic day/night is not implemented |

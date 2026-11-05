@@ -36,7 +36,9 @@ typedef struct { uint32_t packs, pack_count, sequence, optional; } jipc_imp_stre
 typedef struct {
     int32_t sample_rate, bit_width, sound_mode, frame_count, samples, channels;
 } jipc_imp_audio_attr;
-typedef struct { int32_t depth, track; } jipc_imp_audio_channel;
+/* T23 1.1.0-1.3.0 (and OpenIMP for T23): the AEC channel select sits
+ * between the frame depth and the reserved word, 12 bytes in all. */
+typedef struct { int32_t depth, aec_channel, reserved; } jipc_imp_audio_channel;
 typedef struct {
     uint32_t bit_width, sound_mode, address, physical;
     uint64_t timestamp;
@@ -55,6 +57,7 @@ _Static_assert(sizeof(jipc_imp_pack) == 32, "encoder pack stride");
 _Static_assert(sizeof(jipc_imp_stream) == 16, "encoder stream ABI");
 _Static_assert(sizeof(jipc_imp_audio_attr) == 24, "audio attributes ABI");
 _Static_assert(sizeof(jipc_imp_audio_frame) == 32, "audio frame ABI");
+_Static_assert(sizeof(jipc_imp_audio_channel) == 12, "T23 AI channel parameter ABI");
 _Static_assert(offsetof(jipc_imp_audio_frame, timestamp) == 16, "audio timestamp");
 _Static_assert(offsetof(jipc_imp_audio_frame, bytes) == 28, "audio frame length");
 
@@ -67,6 +70,12 @@ int jipc_imp_control(void *state, const char *operation, int value, int value2,
                      char *error, size_t capacity);
 int jipc_imp_snapshot(void *state, unsigned channel, jipc_frame *frame,
                       char *error, size_t capacity);
-int jipc_imp_talk(void *state, const void *data, size_t bytes,
-                  char *error, size_t capacity);
+/* Audio output for the speaker thread only (src/speaker.c). write plays one
+ * JIPC_SPEAKER_FRAME of A-law and may block up to the driver's 800 ms. */
+int jipc_imp_ao_open(void *state, int volume, char *error, size_t capacity);
+int jipc_imp_ao_write(void *state, const unsigned char *pcma);
+void jipc_imp_ao_close(void *state);
+int jipc_imp_ao_volume(void *state, int volume);
+/* Microphone thread state as a JSON object. */
+int jipc_imp_audio_json(void *state, char *out, size_t capacity);
 #endif

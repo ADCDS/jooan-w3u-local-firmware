@@ -11,7 +11,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,10 +34,19 @@ typedef struct {
     int audio;
     int openimp_fullframe, workspace_created, workspace_enabled, main_only;
     unsigned char *frame;
-    uint64_t last_video[4], last_audio, next_owner_check;
-    int16_t talk_buffer[320];
-    size_t talk_count;
-    uint64_t talk_since;
+    uint64_t last_video[4], next_owner_check;
+    /* Microphone thread: the only caller of IMP_AI_*; never fails video. */
+    jipc_app *app;
+    pthread_t mic_thread;
+    int mic_started;
+    atomic_int mic_quit, mic_state;
+    atomic_uint mic_frames, mic_fill, mic_dropped, mic_restarts;
+    pthread_mutex_t mic_mutex;
+    int mic_mutex_ready;
+    char mic_error[160];
+    /* Audio output, used only by the speaker thread. Kept in this record so
+     * the buffer address fits the 32-bit ABI field in host tests too. */
+    int16_t ao_pcm[JIPC_SPEAKER_FRAME];
     jipc_imp_sensor sensor[2];
     int (*version)(void *);
     imp_zero isp_open, isp_close, enable_sensor, disable_sensor, system_init, system_exit;
@@ -60,6 +71,7 @@ typedef struct {
     int (*ai_set_channel)(int, int, jipc_imp_audio_channel *);
     imp_two ai_enable_channel, ai_disable_channel, ao_enable_channel, ao_disable_channel;
     int (*ai_get)(int, int, jipc_imp_audio_frame *, int);
+    int (*ai_poll)(int, int, unsigned);
     int (*ai_release)(int, int, jipc_imp_audio_frame *);
     int (*ao_send)(int, int, jipc_imp_audio_frame *, int);
     int (*ao_query)(int, int, int32_t *);
@@ -219,6 +231,7 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
     OPTIONAL(ai_disable, "IMP_AI_Disable"); OPTIONAL(ai_set_channel, "IMP_AI_SetChnParam");
     OPTIONAL(ai_enable_channel, "IMP_AI_EnableChn"); OPTIONAL(ai_disable_channel, "IMP_AI_DisableChn");
     OPTIONAL(ai_get, "IMP_AI_GetFrame"); OPTIONAL(ai_release, "IMP_AI_ReleaseFrame");
+    OPTIONAL(ai_poll, "IMP_AI_PollingFrame");
     OPTIONAL(ai_volume, "IMP_AI_SetVol"); OPTIONAL(ao_volume, "IMP_AO_SetVol");
     OPTIONAL(ao_set_attr, "IMP_AO_SetPubAttr"); OPTIONAL(ao_enable, "IMP_AO_Enable");
     OPTIONAL(ao_disable, "IMP_AO_Disable"); OPTIONAL(ao_enable_channel, "IMP_AO_EnableChn");
@@ -238,14 +251,24 @@ static void cleanup_result(const char *operation, int result)
     }
 }
 
+/* Audio teardown failures are reported but do not poison the SDK: audio
+ * is optional and its driver is separate from the video pipeline. */
+static void audio_cleanup(const char *operation, int result)
+{
+    if (result) jipc_log("error", "libimp audio cleanup %s returned %d", operation, result);
+}
+
+static void mic_stop(imp_state *s);
+
 void jipc_imp_close(void *state)
 {
     imp_state *s = state;
     if (!s) return;
-    if (s->ao_channel) cleanup_result("AO_DisableChn", s->ao_disable_channel(0, 0));
-    if (s->ao_enabled) cleanup_result("AO_Disable", s->ao_disable(0));
-    if (s->ai_channel) cleanup_result("AI_DisableChn", s->ai_disable_channel(1, 0));
-    if (s->ai_enabled) cleanup_result("AI_Disable", s->ai_disable(1));
+    mic_stop(s);
+    if (s->ao_channel) { audio_cleanup("AO_DisableChn", s->ao_disable_channel(0, 0)); s->ao_channel = 0; }
+    if (s->ao_enabled) { audio_cleanup("AO_Disable", s->ao_disable(0)); s->ao_enabled = 0; }
+    if (s->ai_channel) { audio_cleanup("AI_DisableChn", s->ai_disable_channel(1, 0)); s->ai_channel = 0; }
+    if (s->ai_enabled) { audio_cleanup("AI_Disable", s->ai_disable(1)); s->ai_enabled = 0; }
     for (int i = 3; i >= 0; --i)
         if (s->receiving[i]) cleanup_result("Encoder_StopRecvPic", s->stop(enc_channels[i]));
     for (int i = 3; i >= 0; --i)
@@ -273,6 +296,7 @@ void jipc_imp_close(void *state)
      * until process exit instead of unloading it underneath those threads. */
     if (s->library && !sdk_poisoned) dlclose(s->library);
     if (s->lock_fd >= 0) close(s->lock_fd);
+    if (s->mic_mutex_ready) pthread_mutex_destroy(&s->mic_mutex);
     free(s->frame);
     free(s);
 }
@@ -292,8 +316,8 @@ static int validate_provider(const char *version, const jipc_config *config,
         if (!abi || strcmp(abi, "oem80") || !encoder || strcmp(encoder, "native") ||
             !fallback || strcmp(fallback, "0"))
             return failure(error, capacity, "OpenIMP requires OPENIMP_T23_DRIVER_ABI=oem80, OPENIMP_T23_ENCODER=native and OPENIMP_T23_NATIVE_FALLBACK=0");
-        if (config->audio)
-            return failure(error, capacity, "OpenIMP bring-up requires audio disabled");
+        /* Audio: microphone and speaker over OpenIMP's /dev/dsp backend,
+         * qualified in docs/camera-audio-test-*.json. */
         if (config->fps != 15)
             return failure(error, capacity, "OpenIMP OEM sensor activation is qualified at 15 fps");
         if (jipc_native_video_validate(config,error,capacity)) return -1;
@@ -372,6 +396,190 @@ failed:
     return -1;
 }
 
+/* ---- Microphone thread -------------------------------------------------
+ * Captures 40 ms at 16 kHz, averages sample pairs to 8 kHz, encodes A-law and
+ * stamps each frame by sample count. While a talk session plays (half-duplex)
+ * it publishes silence instead. A late microphone is bridged with silence so
+ * RTP stays continuous; a stalled one is restarted with backoff. Nothing here
+ * can fail the video backend. */
+enum { MIC_OFF, MIC_STARTING, MIC_RUNNING, MIC_RESTARTING, MIC_FAILED };
+/* File-scope so the offline tests can shorten them. */
+static uint64_t mic_stall_us = UINT64_C(5000000);
+static uint64_t mic_retry_unit_us = UINT64_C(1000000);
+
+static void mic_set_error(imp_state *s, const char *message)
+{
+    if (s->mic_mutex_ready) pthread_mutex_lock(&s->mic_mutex);
+    snprintf(s->mic_error, sizeof s->mic_error, "%s", message);
+    if (s->mic_mutex_ready) pthread_mutex_unlock(&s->mic_mutex);
+    jipc_log("error", "microphone: %s", message);
+}
+
+static void mic_close(imp_state *s)
+{
+    if (s->ai_channel) { audio_cleanup("AI_DisableChn", s->ai_disable_channel(1, 0)); s->ai_channel = 0; }
+    if (s->ai_enabled) { audio_cleanup("AI_Disable", s->ai_disable(1)); s->ai_enabled = 0; }
+}
+
+static int mic_open(imp_state *s, char *error, size_t capacity)
+{
+    if (!s->ai_set_attr || !s->ai_enable || !s->ai_disable || !s->ai_set_channel ||
+        !s->ai_enable_channel || !s->ai_disable_channel || !s->ai_get || !s->ai_release)
+        return failure(error, capacity, "libimp lacks the IMP_AI microphone functions");
+    jipc_imp_audio_attr audio = {16000, 16, 1, 12, 640, 1};
+    jipc_imp_audio_channel channel = {12, 0, 0};
+    if (sdk_result(s->ai_set_attr(1, &audio), "IMP_AI_SetPubAttr", error, capacity)) return -1;
+    if (sdk_result(s->ai_enable(1), "IMP_AI_Enable", error, capacity)) return -1;
+    s->ai_enabled = 1;
+    if (sdk_result(s->ai_set_channel(1, 0, &channel), "IMP_AI_SetChnParam", error, capacity) ||
+        sdk_result(s->ai_enable_channel(1, 0), "IMP_AI_EnableChn", error, capacity)) {
+        mic_close(s);
+        return -1;
+    }
+    s->ai_channel = 1;
+    return 0;
+}
+
+static void *mic_main(void *opaque)
+{
+    imp_state *s = opaque;
+    jipc_app *app = s->app;
+    jipc_audio_clock clock;
+    unsigned char encoded[2048], silence[320];
+    memset(silence, 0xd5, sizeof silence);
+    unsigned backoff_s = 10;
+    uint64_t retry_at = 0, last_frame = 0, published_until = 0;
+    while (!atomic_load(&s->mic_quit) && !app->stop) {
+        uint64_t now = jipc_now_us();
+        if (!s->ai_channel) {
+            if (now < retry_at) { jipc_sleep_ms(retry_at - now > 100000 ? 100 : 1); continue; }
+            char error[160] = {0};
+            atomic_store(&s->mic_state, MIC_STARTING);
+            if (mic_open(s, error, sizeof error)) {
+                mic_set_error(s, error);
+                atomic_store(&s->mic_state, MIC_FAILED);
+                retry_at = now + (uint64_t)backoff_s * mic_retry_unit_us;
+                backoff_s = backoff_s >= 150 ? 300 : backoff_s * 2;
+                continue;
+            }
+            atomic_store(&s->mic_state, MIC_RUNNING);
+            jipc_audio_clock_init(&clock, 8000);
+            last_frame = jipc_now_us();
+            published_until = 0;
+        }
+        int ready = 1;
+        if (s->ai_poll) ready = !s->ai_poll(1, 0, 100);
+        else jipc_sleep_ms(10);
+        struct {
+            jipc_imp_audio_frame frame;
+            unsigned char guard[256 - sizeof(jipc_imp_audio_frame)];
+        } output;
+        int got = 0;
+        if (ready) {
+            memset(&output.frame, 0, sizeof output.frame);
+            memset(output.guard, 0xa5, sizeof output.guard);
+            /* Audio nonblocking enum is 1; the video API uses a different boolean. */
+            got = !s->ai_get(1, 0, &output.frame, 1);
+        }
+        now = jipc_now_us();
+        if (got) {
+            int abi_mismatch = 0;
+            for (size_t i = 0; i < sizeof output.guard; ++i) abi_mismatch |= output.guard[i] != 0xa5;
+            if (abi_mismatch) {
+                s->ai_release(1, 0, &output.frame);
+                mic_close(s);
+                mic_set_error(s, "libimp audio frame record exceeds the recovered 32-byte layout; microphone disabled");
+                atomic_store(&s->mic_state, MIC_FAILED);
+                break;
+            }
+            jipc_imp_audio_frame *frame = &output.frame;
+            size_t samples = frame->bytes / 4; /* 16 kHz pairs -> 8 kHz samples */
+            int valid = frame->address && frame->bit_width == 16 && frame->sound_mode == 1 &&
+                        !(frame->bytes % 4) && samples && samples <= sizeof encoded;
+            if (valid) {
+                const int16_t *pcm = (const int16_t *)(uintptr_t)frame->address;
+                for (size_t i = 0; i < samples; ++i)
+                    encoded[i] = jipc_alaw_encode(((int)pcm[i * 2] + pcm[i * 2 + 1]) / 2);
+            }
+            int released = s->ai_release(1, 0, frame);
+            if (valid && !released && jipc_audio_clock_ahead(&clock, now, (unsigned)samples)) {
+                atomic_fetch_add(&s->mic_dropped, 1); /* buffered burst or fast capture clock */
+                last_frame = now;
+                continue;
+            }
+            if (valid && !released) {
+                uint64_t pts = jipc_audio_clock_stamp(&clock, now, (unsigned)samples, NULL);
+                const unsigned char *payload = jipc_talk_active(app) ? silence : encoded;
+                if (samples > sizeof silence) payload = encoded; /* oversized frames are never muted */
+                if (!jipc_publish(app, JIPC_AUDIO_STREAM, payload, samples, pts, 1, JIPC_PCMA)) {
+                    atomic_fetch_add(&s->mic_frames, 1);
+                    published_until = pts + (uint64_t)samples * 125u;
+                }
+                last_frame = now;
+                backoff_s = 10;
+                continue;
+            }
+        }
+        /* Bridge a late microphone with silence so RTP time keeps moving. */
+        if (published_until && now > published_until + UINT64_C(120000)) {
+            for (unsigned fill = 0; fill < 25 && published_until + UINT64_C(40000) <= now; ++fill) {
+                uint64_t pts = jipc_audio_clock_stamp(&clock, published_until + UINT64_C(40000), 320, NULL);
+                if (jipc_publish(app, JIPC_AUDIO_STREAM, silence, sizeof silence, pts, 1, JIPC_PCMA)) break;
+                published_until = pts + UINT64_C(40000);
+                atomic_fetch_add(&s->mic_fill, 1);
+            }
+        }
+        if (now - last_frame > mic_stall_us) {
+            mic_close(s);
+            atomic_fetch_add(&s->mic_restarts, 1);
+            atomic_store(&s->mic_state, MIC_RESTARTING);
+            mic_set_error(s, "no microphone audio; restarting capture");
+            retry_at = now + (uint64_t)backoff_s * mic_retry_unit_us;
+            backoff_s = backoff_s >= 150 ? 300 : backoff_s * 2;
+        }
+    }
+    mic_close(s);
+    if (atomic_load(&s->mic_state) != MIC_FAILED) atomic_store(&s->mic_state, MIC_OFF);
+    return NULL;
+}
+
+static void mic_start(imp_state *s)
+{
+    atomic_store(&s->mic_quit, 0);
+    pthread_attr_t attributes;
+    int created = -1;
+    if (!pthread_attr_init(&attributes)) {
+        if (!pthread_attr_setstacksize(&attributes, 64u * 1024u))
+            created = pthread_create(&s->mic_thread, &attributes, mic_main, s);
+        pthread_attr_destroy(&attributes);
+    }
+    if (created) { mic_set_error(s, "cannot start the microphone thread"); atomic_store(&s->mic_state, MIC_FAILED); }
+    else s->mic_started = 1;
+}
+
+static void mic_stop(imp_state *s)
+{
+    if (!s->mic_started) return;
+    atomic_store(&s->mic_quit, 1);
+    pthread_join(s->mic_thread, NULL);
+    s->mic_started = 0;
+}
+
+int jipc_imp_audio_json(void *state, char *out, size_t capacity)
+{
+    imp_state *s = state;
+    static const char *const names[] = {"off", "starting", "running", "restarting", "failed"};
+    int mic = atomic_load(&s->mic_state);
+    char escaped[340] = "\"\"";
+    if (s->mic_mutex_ready) pthread_mutex_lock(&s->mic_mutex);
+    jipc_json_escape(s->mic_error, escaped, sizeof escaped);
+    if (s->mic_mutex_ready) pthread_mutex_unlock(&s->mic_mutex);
+    int n = snprintf(out, capacity, "{\"state\":\"%s\",\"frames\":%u,\"silence_fill\":%u,\"dropped\":%u,\"restarts\":%u,\"error\":%s}",
+                     names[mic >= 0 && mic <= MIC_FAILED ? mic : 0], atomic_load(&s->mic_frames),
+                     atomic_load(&s->mic_fill), atomic_load(&s->mic_dropped), atomic_load(&s->mic_restarts), escaped);
+    return n < 0 || (size_t)n >= capacity ? -1 : 0;
+}
+
 int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
 {
     *out = NULL;
@@ -393,6 +601,8 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
     imp_state *s = calloc(1, sizeof *s);
     if (!s) return failure(error, capacity, "cannot allocate IMP backend");
     s->lock_fd = -1;
+    s->app = app;
+    if (!pthread_mutex_init(&s->mic_mutex, NULL)) s->mic_mutex_ready = 1;
     s->sensors = config.sensors; s->main_only = config.main_only;
     for (unsigned i = 0; i < 4; ++i) s->fds[i] = -1;
     for (unsigned i = 0; i < 2; ++i) { s->width[i] = jipc_video_width(&config, i*2); s->height[i] = jipc_video_height(&config, i*2); }
@@ -469,22 +679,10 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         if (s->vflip[sensor]) STEP(s->vflip[sensor]((flip >> 1) & 1), "IMP_ISP_Tuning_SetISPVflip");
     }
     if (video_graph_open(s,error,capacity)) goto failed;
-    if (s->audio) {
-        if (!s->ai_set_attr || !s->ai_enable || !s->ai_disable || !s->ai_set_channel ||
-            !s->ai_enable_channel || !s->ai_disable_channel || !s->ai_get || !s->ai_release) {
-            failure(error, capacity, "audio enabled but required IMP_AI symbols are missing"); goto failed;
-        }
-        jipc_imp_audio_attr audio = {16000, 16, 1, 40, 640, 1};
-        jipc_imp_audio_channel channel = {20, 0};
-        STEP(s->ai_set_attr(1, &audio), "IMP_AI_SetPubAttr");
-        STEP(s->ai_enable(1), "IMP_AI_Enable"); s->ai_enabled = 1;
-        STEP(s->ai_set_channel(1, 0, &channel), "IMP_AI_SetChnParam");
-        STEP(s->ai_enable_channel(1, 0), "IMP_AI_EnableChn"); s->ai_channel = 1;
-    }
-    s->last_audio = s->next_owner_check = jipc_now_us();
+    s->next_owner_check = jipc_now_us();
     /* A successfully created graph is insufficient evidence of usable media.
-     * Require every configured stream (and microphone, when enabled) to yield
-     * data before reporting readiness to HTTP/RTSP. */
+     * Require every configured video stream to yield data before reporting
+     * readiness to HTTP/RTSP. The microphone starts afterwards, on its own. */
     uint64_t ready_deadline = jipc_now_us() + 5000000;
     for (;;) {
         if (app->stop || jipc_imp_poll(app, s, 20, error, capacity)) goto failed;
@@ -494,17 +692,13 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
             ready &= app->streams[i].sequence != 0 && app->streams[i].sps_size != 0 && app->streams[i].pps_size != 0;
             pthread_mutex_unlock(&app->streams[i].mutex);
         }
-        if (s->audio) {
-            pthread_mutex_lock(&app->streams[JIPC_AUDIO_STREAM].mutex);
-            ready &= app->streams[JIPC_AUDIO_STREAM].sequence != 0;
-            pthread_mutex_unlock(&app->streams[JIPC_AUDIO_STREAM].mutex);
-        }
         if (ready) break;
         if (jipc_now_us() >= ready_deadline) {
-            failure(error, capacity, "IMP graph did not deliver all configured H.264 parameter sets/video/audio within 5 seconds");
+            failure(error, capacity, "IMP graph did not deliver all configured H.264 parameter sets and video within 5 seconds");
             goto failed;
         }
     }
+    if (s->audio) mic_start(s);
     *out = s;
     return 0;
 failed:
@@ -555,57 +749,56 @@ static int copy_stream(imp_state *s, int channel, jipc_frame *frame,
     return 0;
 }
 
-/* G.711 A-law is implemented directly from its piecewise quantizer definition. */
-static unsigned char pcm_alaw(int sample)
+/* ---- Audio output (speaker thread only) ----------------------------- */
+int jipc_imp_ao_open(void *state, int volume, char *error, size_t capacity)
 {
-    unsigned mask = sample >= 0 ? 0xd5 : 0x55;
-    unsigned magnitude = sample >= 0 ? (unsigned)sample : (unsigned)(-sample - 1);
-    if (magnitude > 32767) magnitude = 32767;
-    unsigned segment = 0;
-    for (unsigned threshold = 256; segment < 7 && magnitude >= threshold; threshold <<= 1) ++segment;
-    unsigned quantized = segment ? magnitude >> (segment + 3) : magnitude >> 4;
-    return (unsigned char)(((segment << 4) | (quantized & 15)) ^ mask);
-}
-
-static int alaw_pcm(unsigned char sample)
-{
-    unsigned value = sample ^ 0x55;
-    unsigned segment = (value >> 4) & 7;
-    int magnitude = (int)((value & 15) << 4) + 8;
-    if (segment) magnitude += 256;
-    if (segment > 1) magnitude <<= segment - 1;
-    return value & 128 ? magnitude : -magnitude;
-}
-
-static int speaker_flush(imp_state *s)
-{
-    if (!s->talk_count) return 0;
-    memset(s->talk_buffer + s->talk_count, 0,
-           (320 - s->talk_count) * sizeof s->talk_buffer[0]);
-    jipc_imp_audio_frame frame = {.bit_width = 16, .sound_mode = 1,
-        .address = (uint32_t)(uintptr_t)s->talk_buffer, .bytes = sizeof s->talk_buffer};
-    int rc = s->ao_send(0, 0, &frame, 1);
-    if (!rc) s->talk_count = 0;
-    return rc;
-}
-
-static int audio_output_open(imp_state *s, char *error, size_t capacity)
-{
+    imp_state *s = state;
     if (!s->audio) return failure(error, capacity, "audio is disabled");
     if (!s->ao_set_attr || !s->ao_enable || !s->ao_disable || !s->ao_enable_channel ||
         !s->ao_disable_channel || !s->ao_send)
-        return failure(error, capacity, "SDK lacks required audio output symbols");
+        return failure(error, capacity, "libimp lacks the IMP_AO speaker functions");
     if (!s->ao_enabled) {
-        jipc_imp_audio_attr attribute = {8000, 16, 1, 20, 320, 1};
+        jipc_imp_audio_attr attribute = {8000, 16, 1, 20, JIPC_SPEAKER_FRAME, 1};
         if (sdk_result(s->ao_set_attr(0, &attribute), "IMP_AO_SetPubAttr", error, capacity)) return -1;
         if (sdk_result(s->ao_enable(0), "IMP_AO_Enable", error, capacity)) return -1;
         s->ao_enabled = 1;
     }
     if (!s->ao_channel) {
-        if (sdk_result(s->ao_enable_channel(0, 0), "IMP_AO_EnableChn", error, capacity)) return -1;
+        if (sdk_result(s->ao_enable_channel(0, 0), "IMP_AO_EnableChn", error, capacity)) {
+            jipc_imp_ao_close(s);
+            return -1;
+        }
         s->ao_channel = 1;
     }
+    if (s->ao_volume && s->ao_volume(0, 0, volume))
+        jipc_log("error", "IMP_AO_SetVol(%d) refused; playing at the library default", volume);
     return 0;
+}
+
+int jipc_imp_ao_write(void *state, const unsigned char *pcma)
+{
+    imp_state *s = state;
+    if (!s->ao_channel || !pcma) return -1;
+    for (unsigned i = 0; i < JIPC_SPEAKER_FRAME; ++i) s->ao_pcm[i] = (int16_t)jipc_alaw_decode(pcma[i]);
+    jipc_imp_audio_frame frame = {.bit_width = 16, .sound_mode = 1,
+        .address = (uint32_t)(uintptr_t)s->ao_pcm, .bytes = sizeof s->ao_pcm};
+    /* Blocking (0): the driver paces playback. Never Clear/FlushChnBuf: the
+     * driver's SYNC behind them has no timeout. */
+    return s->ao_send(0, 0, &frame, 0) ? -1 : 0;
+}
+
+void jipc_imp_ao_close(void *state)
+{
+    imp_state *s = state;
+    if (s->ao_channel) { audio_cleanup("AO_DisableChn", s->ao_disable_channel(0, 0)); s->ao_channel = 0; }
+    if (s->ao_enabled) { audio_cleanup("AO_Disable", s->ao_disable(0)); s->ao_enabled = 0; }
+}
+
+int jipc_imp_ao_volume(void *state, int volume)
+{
+    imp_state *s = state;
+    if (volume < -30 || volume > 120) return -1;
+    return s->ao_volume && s->ao_channel ? (s->ao_volume(0, 0, volume) ? -1 : 0) : 0;
 }
 
 /* Descriptor identities are immutable until media shutdown joins its thread.
@@ -651,47 +844,6 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
         if (now - s->last_video[i] > 15000000)
             return failure(error, capacity, "no encoded video on stream %u for 15 seconds", i);
     }
-    if (s->ai_channel) {
-        struct {
-            jipc_imp_audio_frame frame;
-            unsigned char guard[256 - sizeof(jipc_imp_audio_frame)];
-        } output;
-        memset(&output.frame, 0, sizeof output.frame);
-        memset(output.guard, 0xa5, sizeof output.guard);
-        /* Audio nonblocking enum is 1; the video API uses a different boolean. */
-        if (!s->ai_get(1, 0, &output.frame, 1)) {
-            int abi_mismatch = 0;
-            for (size_t i = 0; i < sizeof output.guard; ++i)
-                abi_mismatch |= output.guard[i] != 0xa5;
-            if (abi_mismatch) {
-                s->ai_release(1, 0, &output.frame);
-                sdk_poisoned = 1;
-                return failure(error, capacity, "libimp audio frame record ABI exceeds the recovered 32-byte layout");
-            }
-            jipc_imp_audio_frame *frame = &output.frame;
-            unsigned char encoded[4096];
-            size_t samples = frame->bytes / 4; /* average pairs: 16 kHz -> 8 kHz */
-            int valid = frame->address && frame->bit_width == 16 && frame->sound_mode == 1 &&
-                        !(frame->bytes % 4) && samples && samples <= sizeof encoded;
-            if (valid) {
-                const int16_t *pcm = (const int16_t *)(uintptr_t)frame->address;
-                for (size_t i = 0; i < samples; ++i)
-                    encoded[i] = pcm_alaw(((int)pcm[i * 2] + pcm[i * 2 + 1]) / 2);
-            }
-            int released = s->ai_release(1, 0, frame);
-            if (!valid || released) return failure(error, capacity, "invalid microphone frame or IMP_AI_ReleaseFrame failure");
-            if (jipc_publish(app, JIPC_AUDIO_STREAM, encoded, samples, now, 1, JIPC_PCMA))
-                return failure(error, capacity, "cannot publish microphone audio");
-            s->last_audio = now;
-        }
-        if (now - s->last_audio > 15000000)
-            return failure(error, capacity, "no microphone audio for 15 seconds");
-    }
-    /* Preserve 20 ms HTTP chunks across requests instead of padding each chunk
-     * into a 40 ms SDK frame. Flush a final partial chunk after a brief idle. */
-    if (s->talk_count && now - s->talk_since >= 50000 && speaker_flush(s) &&
-        now - s->talk_since >= 5000000)
-        return failure(error, capacity, "speaker queue has refused pending audio for 5 seconds");
     if (now - s->next_owner_check >= 5000000) {
         s->next_owner_check = now;
         if (exclusive_owner(error, capacity)) return -1;
@@ -719,13 +871,10 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
     if (!strcmp(operation, "volume")) {
         if (value < -30 || value > 120 || (sensor != 0 && sensor != 1))
             return failure(error, capacity, "volume requires -30..120 and target 0 (microphone) or 1 (speaker)");
-        if (!sensor && s->ai_volume && s->ai_channel)
+        if (sensor) return failure(error, capacity, "speaker volume belongs to the speaker service");
+        if (s->ai_volume && s->ai_channel)
             return sdk_result(s->ai_volume(1, 0, value), "IMP_AI_SetVol", error, capacity);
-        if (sensor && s->ao_volume) {
-            if (audio_output_open(s, error, capacity)) return -1;
-            return sdk_result(s->ao_volume(0, 0, value), "IMP_AO_SetVol", error, capacity);
-        }
-        return failure(error, capacity, "requested audio channel is not enabled or SDK lacks volume control");
+        return failure(error, capacity, "the microphone is not running or libimp lacks its volume control");
     }
     if (sensor < 0 || (unsigned)sensor >= s->sensors) return failure(error, capacity, "invalid sensor index");
     imp_byte setter = NULL;
@@ -804,30 +953,4 @@ done:
     }
     if (result) jipc_frame_free(frame);
     return result;
-}
-
-int jipc_imp_talk(void *state, const void *data, size_t bytes,
-                  char *error, size_t capacity)
-{
-    imp_state *s = state;
-    if (!s->audio) return failure(error, capacity, "audio is disabled");
-    if (!data || !bytes || bytes > 8000) return failure(error, capacity, "speaker input requires 1..8000 PCMA bytes (8 kHz mono)");
-    if (audio_output_open(s, error, capacity)) return -1;
-    if (s->ao_query) {
-        int32_t queue[3] = {0};
-        if (sdk_result(s->ao_query(0, 0, queue), "IMP_AO_QueryChnStat", error, capacity)) return -1;
-        size_t required = (s->talk_count + bytes) / 320;
-        if (queue[1] < 0 || required > (size_t)queue[1])
-            return failure(error, capacity, "speaker queue lacks room for this PCMA chunk; send shorter chunks");
-    }
-    const unsigned char *alaw = data;
-    s->talk_since = jipc_now_us();
-    for (size_t offset = 0; offset < bytes; ++offset) {
-        if (s->talk_count == 320 && speaker_flush(s))
-            return failure(error, capacity, "IMP_AO_SendFrame refused audio; speaker queue may be full");
-        s->talk_buffer[s->talk_count++] = (int16_t)alaw_pcm(alaw[offset]);
-        if (s->talk_count == 320 && speaker_flush(s))
-            return failure(error, capacity, "IMP_AO_SendFrame refused audio; speaker queue may be full");
-    }
-    return 0;
 }

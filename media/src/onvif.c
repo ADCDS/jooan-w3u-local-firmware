@@ -256,8 +256,12 @@ static void ptz_config(writer *w,const jipc_config *c,const char *tag){
 }
 static void profile(jipc_app *app,writer *w,const jipc_config *c,unsigned ch,const char *tag){
     put(w,"<trt:%s token=\"%s\" fixed=\"true\"><tt:Name>Sensor %u %s</tt:Name><tt:VideoSourceConfiguration token=\"source%u\"><tt:Name>Sensor %u</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>sensor%u</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"%u\" height=\"%u\"/></tt:VideoSourceConfiguration>",tag,profile_token(ch),ch/2,ch%2?(c->main_only?"main (shared)":"sub"):"main",ch/2,ch/2,ch/2,jipc_video_width(c,(ch/2)*2),jipc_video_height(c,(ch/2)*2));
+    /* tt:Profile is a sequence: VideoSource, AudioSource, VideoEncoder,
+     * AudioEncoder, ..., PTZ. Clients that bind by position (zeep, used by
+     * Frigate) drop elements that come out of order. */
+    if(c->audio)put(w,"<tt:AudioSourceConfiguration token=\"audio_source\"><tt:Name>Microphone</tt:Name><tt:UseCount>%u</tt:UseCount><tt:SourceToken>microphone</tt:SourceToken></tt:AudioSourceConfiguration>",c->sensors*2);
     video_config(app,w,c,ch);
-    if(c->audio)put(w,"<tt:AudioSourceConfiguration token=\"audio_source\"><tt:Name>Microphone</tt:Name><tt:UseCount>%u</tt:UseCount><tt:SourceToken>microphone</tt:SourceToken></tt:AudioSourceConfiguration><tt:AudioEncoderConfiguration token=\"audio_encoder\"><tt:Name>G711 A-law</tt:Name><tt:UseCount>%u</tt:UseCount><tt:Encoding>G711</tt:Encoding><tt:Bitrate>64</tt:Bitrate><tt:SampleRate>8</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration>",c->sensors*2,c->sensors*2);
+    if(c->audio)put(w,"<tt:AudioEncoderConfiguration token=\"audio_encoder\"><tt:Name>G711 A-law</tt:Name><tt:UseCount>%u</tt:UseCount><tt:Encoding>G711</tt:Encoding><tt:Bitrate>64</tt:Bitrate><tt:SampleRate>8</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:AudioEncoderConfiguration>",c->sensors*2);
     if(ch<2)ptz_config(w,c,"tt:PTZConfiguration");
     put(w,"</trt:%s>",tag);
 }

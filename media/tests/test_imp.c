@@ -11,6 +11,7 @@
 static int calls[128], call_count, destruction_failure;
 static int release_count, release_result, send_count, send_result, free_audio_slots = 100;
 static int stream_overwrite, audio_overwrite;
+static atomic_int audio_mode; /* 1: the fake microphone delivers frames */
 static int16_t last_audio[320];
 static jipc_imp_stream fake_stream;
 static jipc_imp_audio_frame fake_audio;
@@ -194,7 +195,7 @@ static int audio_device(int device) { CHECK(!device); return 0; }
 static int audio_channel(int device, int channel) { CHECK(!device && !channel); return 0; }
 static int audio_send(int device, int channel, jipc_imp_audio_frame *frame, int block)
 {
-    CHECK(!device && !channel && block == 1 && frame->bytes == 640);
+    CHECK(!device && !channel && block == 0 && frame->bytes == 640);
     CHECK(frame->bit_width == 16 && frame->sound_mode == 1);
     ++send_count;
     memcpy(last_audio, (void *)(uintptr_t)frame->address, sizeof last_audio);
@@ -209,48 +210,40 @@ static int audio_queue(int device, int channel, int32_t *queue)
 
 static void test_speaker(void)
 {
-    CHECK(pcm_alaw(0) == 0xd5 && pcm_alaw(-1) == 0x55);
-    CHECK(pcm_alaw(32767) == 0xaa && pcm_alaw(-32768) == 0x2a);
-    CHECK(alaw_pcm(0xd5) == 8 && alaw_pcm(0x55) == -8);
+    CHECK(jipc_alaw_encode(0) == 0xd5 && jipc_alaw_encode(-1) == 0x55);
+    CHECK(jipc_alaw_encode(32767) == 0xaa && jipc_alaw_encode(-32768) == 0x2a);
+    CHECK(jipc_alaw_decode(0xd5) == 8 && jipc_alaw_decode(0x55) == -8);
+    for (unsigned code = 0; code < 256; ++code)
+        CHECK(jipc_alaw_encode(jipc_alaw_decode((unsigned char)code)) == code);
     imp_state *state = low_memory(sizeof *state);
     state->audio = 1;
     state->ao_set_attr = audio_attributes; state->ao_enable = state->ao_disable = audio_device;
     state->ao_enable_channel = state->ao_disable_channel = audio_channel;
     state->ao_send = audio_send; state->ao_query = audio_queue;
-    unsigned char pcma[320]; memset(pcma, 0xd5, sizeof pcma);
+    unsigned char pcma[JIPC_SPEAKER_FRAME]; memset(pcma, 0xd5, sizeof pcma);
     char error[256] = {0};
     send_count = send_result = 0;
-    CHECK(!jipc_imp_talk(state, pcma, 160, error, sizeof error));
-    CHECK(!send_count && state->talk_count == 160);
-    CHECK(!jipc_imp_talk(state, pcma, 160, error, sizeof error));
-    CHECK(send_count == 1 && state->talk_count == 0);
+    CHECK(jipc_imp_ao_write(state, pcma) == -1 && !send_count); /* not open */
+    CHECK(!jipc_imp_ao_open(state, 60, error, sizeof error));
+    CHECK(state->ao_enabled && state->ao_channel);
+    CHECK(!jipc_imp_ao_write(state, pcma) && send_count == 1);
     for (unsigned i = 0; i < 320; ++i) CHECK(last_audio[i] == 8);
-    CHECK(!jipc_imp_talk(state, pcma, 160, error, sizeof error));
-    state->talk_since = jipc_now_us() - 60000;
-    state->next_owner_check = jipc_now_us(); /* Prevent unrelated /proc scans. */
-    CHECK(!jipc_imp_poll(NULL, state, 0, error, sizeof error));
-    CHECK(send_count == 2 && !state->talk_count);
-    for (unsigned i = 0; i < 160; ++i) CHECK(last_audio[i] == 8);
-    for (unsigned i = 160; i < 320; ++i) CHECK(last_audio[i] == 0);
-    free_audio_slots = 0;
-    CHECK(jipc_imp_talk(state, pcma, sizeof pcma, error, sizeof error) == -1);
-    CHECK(!state->talk_count && send_count == 2);
-    free_audio_slots = 100;
     send_result = -1;
-    CHECK(jipc_imp_talk(state, pcma, sizeof pcma, error, sizeof error) == -1);
-    CHECK(state->talk_count == 320);
+    CHECK(jipc_imp_ao_write(state, pcma) == -1 && send_count == 2);
     send_result = 0;
-    state->talk_since = jipc_now_us() - 60000;
-    CHECK(!jipc_imp_poll(NULL, state, 0, error, sizeof error));
-    CHECK(!state->talk_count && send_count == 4);
+    CHECK(jipc_imp_ao_volume(state, 200) == -1 && !jipc_imp_ao_volume(state, 60));
+    jipc_imp_ao_close(state);
+    CHECK(!state->ao_enabled && !state->ao_channel && !sdk_poisoned);
+    state->audio = 0;
+    CHECK(jipc_imp_ao_open(state, 60, error, sizeof error) == -1);
     CHECK(!munmap(state, sizeof *state));
 }
 
 static int audio_get(int device, int channel, jipc_imp_audio_frame *frame, int block)
 {
     CHECK(device == 1 && !channel && block == 1);
-    if (!audio_available) return -1;
-    audio_available = 0;
+    if (!atomic_load(&audio_mode)) return -1;
+    jipc_sleep_ms(5);
     *frame = fake_audio;
     if (audio_overwrite) ((unsigned char *)frame)[sizeof *frame] = 0;
     return 0;
@@ -261,38 +254,83 @@ static int audio_release(int device, int channel, jipc_imp_audio_frame *frame)
     ++release_count;
     return 0;
 }
+static int mic_attributes(int device, jipc_imp_audio_attr *attribute)
+{
+    CHECK(device == 1 && attribute->sample_rate == 16000 && attribute->bit_width == 16);
+    CHECK(attribute->samples == 640 && attribute->frame_count == 12 && attribute->channels == 1);
+    return 0;
+}
+static int mic_device(int device) { CHECK(device == 1); return 0; }
+static int mic_parameters(int device, int channel, jipc_imp_audio_channel *parameters)
+{
+    /* The 12-byte T23 layout: depth, AEC channel select, reserved. */
+    CHECK(device == 1 && !channel && parameters->depth == 12 &&
+          !parameters->aec_channel && !parameters->reserved);
+    return 0;
+}
+static int mic_channel(int device, int channel) { CHECK(device == 1 && !channel); return 0; }
+static int mic_poll(int device, int channel, unsigned timeout_ms)
+{
+    CHECK(device == 1 && !channel && timeout_ms == 100);
+    if (atomic_load(&audio_mode)) return 0;
+    jipc_sleep_ms(2);
+    return -1;
+}
+static int wait_for(atomic_uint *counter, unsigned minimum, unsigned milliseconds)
+{
+    for (unsigned waited = 0; waited < milliseconds; waited += 5) {
+        if (atomic_load(counter) >= minimum) return 1;
+        jipc_sleep_ms(5);
+    }
+    return atomic_load(counter) >= minimum;
+}
 
 static void test_microphone(void)
 {
-    int16_t *pcm = low_memory(4096);
+    int16_t *pcm = low_memory(4096); /* zeros encode to A-law 0xd5 */
     fake_audio = (jipc_imp_audio_frame){.bit_width = 16, .sound_mode = 1,
         .address = (uint32_t)(uintptr_t)pcm, .bytes = 1280};
     jipc_app *app = calloc(1, sizeof *app); CHECK(app);
     app->config.fps = 15;
     CHECK(!jipc_streams_init(app));
-    imp_state state = {.ai_channel = 1, .ai_get = audio_get, .ai_release = audio_release};
-    state.last_audio = state.next_owner_check = jipc_now_us();
-    char error[256] = {0};
-    audio_available = 1; release_count = 0;
-    CHECK(!jipc_imp_poll(app, &state, 0, error, sizeof error));
-    CHECK(release_count == 1);
-    jipc_frame frame = {0}; uint64_t cursor = 0;
-    CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &frame, 0) == 1);
-    CHECK(frame.codec == JIPC_PCMA && frame.size == 320);
-    for (size_t i = 0; i < frame.size; ++i) CHECK(frame.data[i] == 0xd5);
-    jipc_frame_free(&frame);
-    audio_available = 1; fake_audio.bytes = 1282;
-    CHECK(jipc_imp_poll(app, &state, 0, error, sizeof error) == -1);
-    CHECK(release_count == 2);
-    audio_available = audio_overwrite = 1;
-    fake_audio.bytes = 1280;
-    CHECK(jipc_imp_poll(app, &state, 0, error, sizeof error) == -1);
-    CHECK(release_count == 3 && sdk_poisoned && strstr(error, "record ABI"));
-    audio_overwrite = sdk_poisoned = 0;
-    state.last_audio = jipc_now_us() - 16000000;
-    CHECK(jipc_imp_poll(app, &state, 0, error, sizeof error) == -1);
-    CHECK(strstr(error, "microphone"));
+    imp_state *s = low_memory(sizeof *s);
+    s->app = app; s->audio = 1;
+    CHECK(!pthread_mutex_init(&s->mic_mutex, NULL)); s->mic_mutex_ready = 1;
+    s->ai_set_attr = mic_attributes; s->ai_enable = s->ai_disable = mic_device;
+    s->ai_set_channel = mic_parameters; s->ai_enable_channel = s->ai_disable_channel = mic_channel;
+    s->ai_get = audio_get; s->ai_release = audio_release; s->ai_poll = mic_poll;
+    mic_stall_us = 300000; mic_retry_unit_us = 1000;
+    release_count = 0;
+    atomic_store(&audio_mode, 1);
+    mic_start(s);
+    CHECK(wait_for(&s->mic_frames, 3, 2000));
+    CHECK(atomic_load(&s->mic_state) == MIC_RUNNING);
+    jipc_frame first = {0}, second = {0};
+    uint64_t cursor = app->streams[JIPC_AUDIO_STREAM].sequence - 2;
+    CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &first, 0) == 1);
+    CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &second, 0) == 1);
+    CHECK(first.codec == JIPC_PCMA && first.size == 320);
+    for (size_t i = 0; i < first.size; ++i) CHECK(first.data[i] == 0xd5);
+    CHECK(second.pts_us - first.pts_us == 40000); /* stamped by sample count */
+    jipc_frame_free(&first); jipc_frame_free(&second);
+    /* The microphone stops: silence keeps time moving, then capture restarts. */
+    atomic_store(&audio_mode, 0);
+    CHECK(wait_for(&s->mic_fill, 1, 2000));
+    CHECK(wait_for(&s->mic_restarts, 1, 3000));
+    /* A frame record larger than the ABI disables only the microphone. */
+    audio_overwrite = 1;
+    atomic_store(&audio_mode, 1);
+    for (unsigned waited = 0; waited < 3000 && atomic_load(&s->mic_state) != MIC_FAILED; waited += 5) jipc_sleep_ms(5);
+    CHECK(atomic_load(&s->mic_state) == MIC_FAILED && !sdk_poisoned);
+    char json[512];
+    CHECK(!jipc_imp_audio_json(s, json, sizeof json) && strstr(json, "\"state\":\"failed\""));
+    mic_stop(s);
+    audio_overwrite = 0;
+    atomic_store(&audio_mode, 0);
+    CHECK(!s->ai_channel && !s->ai_enabled);
+    pthread_mutex_destroy(&s->mic_mutex);
     jipc_streams_destroy(app); free(app);
+    CHECK(!munmap(s, sizeof *s));
     CHECK(!munmap(pcm, 4096));
 }
 
@@ -432,8 +470,8 @@ static void test_provider(void)
     setenv("OPENIMP_T23_NATIVE_FALLBACK", "1", 1);
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     setenv("OPENIMP_T23_NATIVE_FALLBACK", "0", 1);
-    config.audio = 1;
-    CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
+    config.audio = 1; /* qualified: microphone and speaker over OpenIMP */
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
     config.audio = 0; config.sensors = 2;
     CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
     config.width=1280;config.height=720;config.width1=640;config.height1=360;

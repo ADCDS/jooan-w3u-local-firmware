@@ -10,7 +10,12 @@
 #define JIPC_VIDEO_STREAMS 4
 #define JIPC_AUDIO_STREAM 4
 #define JIPC_STREAMS 5
-#define JIPC_RING_SLOTS 4
+/* Ring depth per stream: video keeps four frames (a slow reader then waits
+ * for an IDR); audio keeps 1.28 s of 40 ms frames so jittery readers do not
+ * drop sound. */
+#define JIPC_RING_MAX 32
+#define JIPC_VIDEO_RING 4
+#define JIPC_AUDIO_RING 32
 #define JIPC_MAX_FRAME (1024u * 1024u)
 #define JIPC_MAX_JSON 16384
 enum jipc_codec { JIPC_H264 = 1, JIPC_PCMA = 2, JIPC_JPEG = 3 };
@@ -24,7 +29,8 @@ typedef struct {
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t ready;
-    jipc_frame slots[JIPC_RING_SLOTS];
+    jipc_frame slots[JIPC_RING_MAX];
+    unsigned capacity;
     uint64_t sequence;
     unsigned char sps[512], pps[512];
     size_t sps_size, pps_size;
@@ -74,6 +80,7 @@ typedef struct jipc_app {
     uint64_t produced[JIPC_STREAMS];
     int record_active;
     char record_error[256];
+    void *speaker_state;
 } jipc_app;
 typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
 
@@ -136,8 +143,49 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity);
 int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
                           char *error, size_t capacity);
-int jipc_backend_talk(jipc_app *app, const void *pcma, size_t size,
+/* Speaker input from HTTP; owner identifies the talker (see jipc_talk_submit). */
+int jipc_backend_talk(jipc_app *app, uint64_t owner, const void *pcma, size_t size,
                       char *error, size_t capacity);
+/* JSON object describing microphone state ("{...}"), or -1. */
+int jipc_backend_audio_json(jipc_app *app, char *out, size_t capacity);
+
+/* G.711 A-law and an audio clock that stamps frames by sample count
+ * (src/audio.c). The clock anchors at the first frame's capture time and
+ * re-anchors, reporting a discontinuity, when it drifts more than 150 ms. */
+unsigned char jipc_alaw_encode(int sample);
+int jipc_alaw_decode(unsigned char code);
+typedef struct { uint64_t anchor_us, samples; unsigned rate; int started; } jipc_audio_clock;
+void jipc_audio_clock_init(jipc_audio_clock *clock, unsigned rate);
+int jipc_audio_clock_ahead(const jipc_audio_clock *clock, uint64_t now_us, unsigned samples);
+uint64_t jipc_audio_clock_stamp(jipc_audio_clock *clock, uint64_t now_us,
+                                unsigned samples, int *discontinuity);
+
+/* Speaker service (src/speaker.c): the only caller of the audio output and
+ * the only automatic driver of the speaker amplifier. Producers never block. */
+#define JIPC_SPEAKER_FRAME 320u          /* samples (and A-law bytes) per write: 40 ms */
+typedef struct {
+    void *context;
+    int (*open)(void *context, int volume, char *error, size_t capacity);
+    /* Plays one JIPC_SPEAKER_FRAME of A-law; may block up to ~800 ms. */
+    int (*write)(void *context, const unsigned char *pcma);
+    void (*close)(void *context);
+    int (*volume)(void *context, int volume);
+    int (*amplifier)(void *context, int on);
+} jipc_speaker_sink;
+enum { JIPC_TALK_OK = 0, JIPC_TALK_INVALID = -1, JIPC_TALK_BUSY = -2, JIPC_TALK_UNAVAILABLE = -3 };
+int jipc_speaker_start(jipc_app *app, const jipc_speaker_sink *sink);
+void jipc_speaker_stop(jipc_app *app);
+int jipc_speaker_available(jipc_app *app);
+/* RTSP submissions (http=0) drop the oldest audio when the queue is full;
+ * HTTP submissions (http=1) are refused with JIPC_TALK_BUSY instead. */
+int jipc_talk_submit(jipc_app *app, uint64_t owner, uint32_t ssrc, int http,
+                     const unsigned char *pcma, size_t size, char *error, size_t capacity);
+void jipc_talk_release(jipc_app *app, uint64_t owner);
+/* Nonzero while a talk session plays and for 300 ms after (half-duplex). */
+int jipc_talk_active(jipc_app *app);
+int jipc_speaker_set_volume(jipc_app *app, int volume, char *error, size_t capacity);
+int jipc_speaker_gate_open(jipc_app *app);
+int jipc_speaker_status_json(jipc_app *app, char *out, size_t capacity);
 int jipc_platform_control(jipc_app *app, const char *operation, int value,
                           int value2, char *error, size_t capacity);
 int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacity);

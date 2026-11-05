@@ -279,6 +279,91 @@ class ProtocolTests(unittest.TestCase):
                 offset += size
         self.assertTrue(found_bye)
 
+    def test_sdp_without_require_is_unchanged(self):
+        code, _, body = self.client.request("DESCRIBE")
+        self.assertEqual(code, 200)
+        self.assertEqual(body.count(b"m="), 2 if self.settings.audio else 1)
+        self.assertNotIn(b"sendonly", body)
+        self.assertNotIn(b"trackID=2", body)
+
+    def test_require_unknown_option(self):
+        client = self.client
+        code, fields, _ = client.request("OPTIONS", headers={"Require": "com.example.unknown"})
+        self.assertEqual(code, 551)
+        self.assertEqual(fields["unsupported"], "com.example.unknown")
+        code, fields, _ = client.request("DESCRIBE", headers={
+            "Require": "www.onvif.org/ver20/backchannel, com.example.unknown"})
+        self.assertEqual(code, 551)
+        if self.settings.backchannel:
+            self.assertEqual(fields["unsupported"], "com.example.unknown")
+
+    def test_backchannel_track(self):
+        if not self.settings.backchannel:
+            self.skipTest("daemon has no speaker backchannel")
+        client = self.client
+        # SETUP of the talk track without a prior Require is not offered.
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=2",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=4-5"})[0], 404)
+        code, _, body = client.request("DESCRIBE", headers={"Require": "www.onvif.org/ver20/backchannel"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body.count(b"m="), 3)
+        self.assertRegex(body, rb"m=audio 0 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000/1\r\na=sendonly\r\na=control:trackID=2")
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=2",
+            {"Transport": "RTP/AVP;unicast;client_port=5000-5001"})[0], 461)
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=0",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"})[0], 200)
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=1",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=2-3"})[0], 200)
+        # Channels already taken by another track are refused.
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=2",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=2-3"})[0], 461)
+        code, fields, _ = client.request("SETUP", client.uri + "/trackID=2",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=4-5"})
+        self.assertEqual(code, 200)
+        self.assertIn("interleaved=4-5", fields["transport"])
+        self.assertIn("timeout=60", fields["session"])
+        code, fields, _ = client.request("PLAY")
+        self.assertEqual(code, 200)
+        self.assertIn("trackID=0", fields["rtp-info"])
+        self.assertNotIn("trackID=2", fields["rtp-info"])
+        self.assertEqual(client.request("TEARDOWN")[0], 200)
+
+    def test_talk_only_session(self):
+        if not self.settings.backchannel:
+            self.skipTest("daemon has no speaker backchannel")
+        client = self.client
+        self.assertEqual(client.request("DESCRIBE", headers={"Require": "www.onvif.org/ver20/backchannel"})[0], 200)
+        # go2rtc's #media=audio session asks for the talk track alone, on 0-1.
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=2",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"})[0], 200)
+        code, fields, _ = client.request("PLAY")
+        self.assertEqual(code, 200)
+        self.assertNotIn("rtp-info", fields)
+        self.assertEqual(client.request("TEARDOWN")[0], 200)
+
+    def test_audio_rtp_timeline(self):
+        if not self.settings.audio:
+            self.skipTest("daemon has no audio")
+        client = self.client
+        self.assertEqual(client.request("DESCRIBE")[0], 200)
+        self.assertEqual(client.request("SETUP", client.uri + "/trackID=1",
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=2-3"})[0], 200)
+        self.assertEqual(client.request("PLAY")[0], 200)
+        deadline = time.monotonic() + 5
+        packets = []
+        while time.monotonic() < deadline and len(packets) < 12:
+            channel, packet = client.next_packet(deadline)
+            if channel == 2:
+                packets.append(packet)
+        self.assertGreaterEqual(len(packets), 12)
+        for previous, current in zip(packets, packets[1:]):
+            seq0, ts0 = struct.unpack("!HI", previous[2:8])
+            seq1, ts1 = struct.unpack("!HI", current[2:8])
+            self.assertEqual(seq1, (seq0 + 1) & 65535)
+            # Stamped by sample count: one A-law byte is one 8 kHz sample.
+            self.assertEqual((ts1 - ts0) & 0xffffffff, len(previous) - 12)
+        self.assertEqual(client.request("TEARDOWN")[0], 200)
+
     def test_reject_bad_framing_and_transport(self):
         client = self.client
         self.assertEqual(client.request("DESCRIBE")[0], 200)
@@ -303,6 +388,7 @@ def main():
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", required=True)
     parser.add_argument("--audio", action="store_true")
+    parser.add_argument("--backchannel", action="store_true", help="the daemon runs a speaker")
     ProtocolTests.settings = parser.parse_args()
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(ProtocolTests))

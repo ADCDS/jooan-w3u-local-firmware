@@ -8,7 +8,11 @@ import argparse
 import base64
 import http.client
 import json
+import os
 from pathlib import Path
+import re
+import sys
+from types import SimpleNamespace
 import secrets
 import signal
 import socket
@@ -70,6 +74,167 @@ def sntp_server(stop):
     return sock, thread, counts
 
 
+def talk_checks(rtsp_port, secret, request, capture, context_status):
+    """A go2rtc-like talker: RFC 2069 digest with the nonce reused, Require on
+    DESCRIBE, three interleaved tracks, then 1024-byte PT 8 packets with RTP
+    timestamp 0 every 128 ms (go2rtc 1.9.14's repacketizer)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_rtsp import Client
+    settings = SimpleNamespace(host="127.0.0.1", port=rtsp_port, username="admin", password=secret)
+    talker = Client(settings)
+    talker.uri = f"rtsp://127.0.0.1:{rtsp_port}/live/ch0"
+    code, _, body = talker.request("DESCRIBE", headers={"Require": "www.onvif.org/ver20/backchannel"}, legacy=True)
+    assert code == 200 and b"a=sendonly" in body, body
+    for track, pair in ((0, "0-1"), (1, "2-3"), (2, "4-5")):
+        code = talker.request("SETUP", talker.uri + f"/trackID={track}",
+                              {"Transport": f"RTP/AVP/TCP;unicast;interleaved={pair}"}, legacy=True)[0]
+        assert code == 200, (track, code)
+    assert talker.request("PLAY", legacy=True)[0] == 200
+
+    def drain(seconds):
+        """Read what the camera sends; return the microphone payloads."""
+        audio, deadline = [], time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                channel, packet = talker.next_packet(deadline)
+            except (socket.timeout, TimeoutError):
+                break
+            if channel == 2 and len(packet) > 12:
+                audio.append(packet[12:])
+        return audio
+
+    before = b"".join(drain(0.6))
+    assert before and set(before) != {0xd5}, "the replay tone should be audible before talk"
+    payloads = [bytes(((i * 13 + n * 29) & 0x7f) | 0x80 for i in range(1024)) for n in range(12)]
+    ssrc, talking_status, mic_during = 0x1234ABCD, None, b""
+    for n, payload in enumerate(payloads):
+        rtp = struct.pack("!BBHII", 0x80, 0x80 | 8, n, 0, ssrc) + payload
+        talker.sock.sendall(b"$" + bytes([4]) + len(rtp).to_bytes(2, "big") + rtp)
+        mic = b"".join(drain(0.128))
+        if n >= 6:
+            mic_during += mic
+        if n == 6:
+            talking_status = json.loads(request("GET", "/api/v1/status")[1])
+            # A second talker, over RTSP or HTTP, is refused while this one talks.
+            code, body = request_talk(context_status, b"\xd5" * 800)
+            assert code == 409, (code, body)
+            other = Client(settings)
+            other.uri = talker.uri
+            assert other.request("DESCRIBE", headers={"Require": "www.onvif.org/ver20/backchannel"})[0] == 200
+            assert other.request("SETUP", other.uri + "/trackID=2",
+                                 {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"})[0] == 200
+            assert other.request("PLAY")[0] == 200
+            rtp2 = struct.pack("!BBHII", 0x80, 8, 1, 0, 0x55AA55AA) + b"\x9a" * 160
+            other.sock.sendall(b"$" + bytes([0]) + len(rtp2).to_bytes(2, "big") + rtp2)
+            time.sleep(0.05)
+            other.close()
+    assert talking_status["platform"]["speaker_enable"] == 1, talking_status["platform"]
+    speaker = talking_status["audio"]["speaker"]
+    assert speaker["state"] == "talking" and speaker["half_duplex"], speaker
+    assert mic_during and set(mic_during) == {0xd5}, "half-duplex: the microphone is muted while talking"
+    # Stop talking: the deadman ends the session and mutes within a second.
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline:
+        drain(0.1)
+        status = json.loads(request("GET", "/api/v1/status")[1])
+        if status["platform"]["speaker_enable"] == 0 and status["audio"]["speaker"]["state"] == "idle":
+            break
+    else:
+        raise AssertionError(f"speaker not muted after talk: {status}")
+    assert status["audio"]["speaker"]["refused"] >= 2, status["audio"]["speaker"]
+    played = capture.read_bytes()
+    position = 0
+    for n, payload in enumerate(payloads):
+        found = played.find(payload, position)
+        assert found >= 0, f"talk packet {n} missing or out of order in what was played"
+        position = found + len(payload)
+    assert talker.request("TEARDOWN", legacy=True)[0] == 200
+    talker.close()
+    # HTTP talk on an idle speaker is accepted and plays.
+    code, body = request_talk(context_status, bytes(range(128, 256)) * 10)
+    assert code == 200, (code, body)
+    return status["audio"]
+
+
+def go2rtc_interop(binary, root, rtsp_port, secret, request):
+    """Optional (GO2RTC_BIN): the Frigate layout against the real go2rtc. The
+    talk stream must offer `audio, sendonly` and play a pushed file."""
+    tone = root / "tone.wav"
+    run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+         "sine=frequency=1000:sample_rate=8000:duration=1", "-ac", "1", tone])
+    api, restream = port(), port()
+    camera = f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch0"  # hygiene: allow-test-vector
+    (root / "go2rtc.yaml").write_text(
+        f'api:\n  listen: "127.0.0.1:{api}"\nrtsp:\n  listen: "127.0.0.1:{restream}"\n'
+        'webrtc:\n  listen: ""\nstreams:\n'
+        f'  cam:\n    - {camera}#backchannel=0\n'
+        f'  cam_talk:\n    - rtsp://127.0.0.1:{restream}/cam#backchannel=0\n'
+        f'    - {camera}#backchannel=1#media=audio\n')
+    log = (root / "go2rtc.log").open("w")
+    go2rtc = subprocess.Popen([binary, "-config", str(root / "go2rtc.yaml")], stdout=log,
+                              stderr=subprocess.STDOUT, cwd=root)
+    try:
+        time.sleep(2)
+        connection = http.client.HTTPConnection("127.0.0.1", api, timeout=10)
+        connection.request("GET", "/api/streams?src=cam_talk&video=all&audio=all&microphone")
+        streams = json.loads(connection.getresponse().read())
+        medias = [m for producer in streams.get("producers", []) for m in producer.get("medias") or []]
+        assert "audio, sendonly, PCMA/8000" in medias, streams
+        before = json.loads(request("GET", "/api/v1/status")[1])["audio"]["speaker"]["played_ms"]
+        connection.request("POST", f"/api/streams?dst=cam_talk&src=ffmpeg:{tone}%23audio=pcma%23input=file")
+        assert connection.getresponse().status == 200
+        connection.close()
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            speaker = json.loads(request("GET", "/api/v1/status")[1])["audio"]["speaker"]
+            if speaker["played_ms"] - before >= 800 and speaker["state"] == "idle":
+                break
+            time.sleep(0.2)
+        else:
+            raise AssertionError(f"go2rtc talk did not play: {speaker}")
+    finally:
+        go2rtc.terminate()
+        go2rtc.wait(timeout=10)
+        log.close()
+
+
+def request_talk(connection, data):
+    client = connection()
+    try:
+        client.request("POST", "/api/v1/talk", body=data, headers={
+            "Authorization": "Basic " + base64.b64encode(f"admin:{connection.secret}".encode()).decode(),
+            "Content-Type": "audio/PCMA"})
+        reply = client.getresponse()
+        return reply.status, reply.read()
+    finally:
+        client.close()
+
+
+def onvif_profile_order(connection, secret):
+    """tt:Profile children must follow the schema sequence (zeep binds by
+    position and would drop PTZConfiguration otherwise)."""
+    client = connection()
+    try:
+        body = ('<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>'
+                '<GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body></s:Envelope>')
+        client.request("POST", "/onvif/media_service", body=body, headers={
+            "Authorization": "Basic " + base64.b64encode(f"admin:{secret}".encode()).decode(),
+            "Content-Type": "application/soap+xml"})
+        reply = client.getresponse()
+        assert reply.status == 200
+        tree = ET.fromstring(reply.read())
+    finally:
+        client.close()
+    order = ["VideoSourceConfiguration", "AudioSourceConfiguration", "VideoEncoderConfiguration",
+             "AudioEncoderConfiguration", "PTZConfiguration"]
+    profiles = tree.findall(".//{http://www.onvif.org/ver10/media/wsdl}Profiles")
+    assert profiles
+    for profile in profiles:
+        names = [child.tag.rsplit("}", 1)[-1] for child in profile if child.tag.rsplit("}", 1)[-1] in order]
+        assert names == sorted(names, key=order.index), names
+        assert "AudioSourceConfiguration" in names and "AudioEncoderConfiguration" in names, names
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -127,7 +292,12 @@ def main():
         command = prefix + [str(binary), "--config", str(config), "--input", str(fixture),
                             "--http-port", str(http_port), "--rtsp-port", str(rtsp_port), "--duration", "180"]
         log = (root / "daemon.log").open("w")
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=root)
+        capture = root / "speaker.alaw"
+        # No boot gate on a workstation; capture what the speaker would play;
+        # an audible replay tone so the half-duplex mute is observable.
+        environment = os.environ | {"JIPC_SPEAKER_GATE": "", "JIPC_SPEAKER_CAPTURE": str(capture),
+                                    "JIPC_REPLAY_TONE": "1"}
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=root, env=environment)
 
         def request(method, path, data=None, password=None):
             password = secret if password is None else password
@@ -184,8 +354,29 @@ def main():
             result["clock"] = clock
             result["checks"].append("SNTP sync ignoring a forged-origin reply; ONVIF reports NTP time")
             protocol = run(["python3", here / "test_rtsp.py", "--port", rtsp_port,
-                            "--username", "admin", "--password", secret, "--audio"], timeout=100)
+                            "--username", "admin", "--password", secret, "--audio", "--backchannel"], timeout=100)
             result["rtsp_protocol"] = protocol.stderr.strip()
+
+            def connection():
+                return (http.client.HTTPSConnection("127.0.0.1", http_port, context=context, timeout=5)
+                        if args.tls else http.client.HTTPConnection("127.0.0.1", http_port, timeout=5))
+            connection.secret = secret
+            result["audio"] = talk_checks(rtsp_port, secret, request, capture, connection)
+            result["checks"].append("go2rtc-style backchannel talk: one talker, half-duplex mute, "
+                                    "deadman unmute/mute, ordered playback; HTTP talk")
+            probe = run(["ffprobe", "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a:0",
+                         "-show_entries", "packet=pts_time", "-of", "csv=p=0", "-read_intervals", "%+2",
+                         f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch0"], timeout=30)  # hygiene: allow-test-vector
+            times = [float(value.strip(',')) for value in probe.stdout.split() if value.strip(',')]
+            assert len(times) >= 20, probe.stdout
+            steps = {round(b - a, 3) for a, b in zip(times, times[1:])}
+            assert steps == {0.02}, (steps, times[:40])
+            result["checks"].append("FFprobe reads the microphone track with exact 20 ms packet spacing")
+            onvif_profile_order(connection, secret)
+            result["checks"].append("ONVIF profile children in schema order with audio enabled")
+            if os.environ.get("GO2RTC_BIN") and not args.tls:
+                go2rtc_interop(os.environ["GO2RTC_BIN"], root, rtsp_port, secret, request)
+                result["checks"].append("go2rtc talk stream offers a sendonly PCMA track and plays a pushed file")
             http_args = ["python3", here / "test_http_onvif.py", "--port", http_port,
                          "--username", "admin", "--password", secret]
             if args.tls:

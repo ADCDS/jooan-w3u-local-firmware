@@ -46,8 +46,9 @@ miss:
    do detection and notifications.
 3. **No automatic night vision.** Infrared and the white light switch only
    when something calls the API, and the setting is not remembered.
-4. **No audio at all.** No microphone, no two-way talk, no siren. The video
-   library this firmware ships with only runs with audio off.
+4. **Audio is new and off by default.** The microphone and two-way talk
+   (from Frigate's live view) work with `audio=1` and are being qualified on
+   the test camera. There is no siren yet.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
    2304×1296); the fixed lens streams only 640×360. No JPEG snapshots.
 6. **No microSD recording or playback on the camera.** Recording happens on
@@ -123,12 +124,12 @@ under [Sources](#sources):
 
 | Feature | Official firmware | This firmware | How it's done here, or what's missing |
 | --- | --- | --- | --- |
-| Listen through the microphone | Built-in microphone[^off] | **Missing** (media) | Audio is off (`audio=0`), and the media daemon refuses to start the shipped OpenIMP video library with audio on. Its microphone code (8 kHz A-law over RTSP) is written for other library builds and is unused here. |
-| Two-way talk | Yes[^off] | **Missing** (media) | `POST /api/v1/talk` exists but refuses while audio is off. |
-| Siren and alarm sounds | A loud alarm on motion[^amz-us]; custom alarm sounds[^off]; alarm schedule (`SoundAlarmSchedule`) and self-recorded sounds (`the_user_records_alarm_information` = 1) [cfg] | **Missing** | The platform mutes the speaker amplifier early in every boot and leaves it muted. |
-| Volume | Microphone and speaker volume (`support_volume_setting`, `support_speaker_volume_setting`) [cfg] | **Missing** (media) | A `volume` control exists but needs audio. |
+| Listen through the microphone | Built-in microphone[^off] | **Partial** (media) | With `audio=1` both main RTSP URLs carry the microphone as 8 kHz PCMA, which Frigate can record as AAC. Off by default; being qualified on the test camera. |
+| Two-way talk | Yes[^off] | **Partial** (media) | ONVIF RTSP backchannel, which go2rtc and Frigate's live-view microphone use (the page must be opened over HTTPS), and `POST /api/v1/talk`. One talker at a time, half-duplex. Being qualified on the test camera. |
+| Siren and alarm sounds | A loud alarm on motion[^amz-us]; custom alarm sounds[^off]; alarm schedule (`SoundAlarmSchedule`) and self-recorded sounds (`the_user_records_alarm_information` = 1) [cfg] | **Missing** | The platform mutes the speaker amplifier during boot; afterwards the media daemon switches it on only for a talk session. |
+| Volume | Microphone and speaker volume (`support_volume_setting`, `support_speaker_volume_setting`) [cfg] | **Partial** (media) | The `volume` control sets either one with `audio=1`; it is not remembered after a restart. |
 | Voice prompts | Spoken setup and status prompts [app] | **Missing** | The media installer's rebuilt app partition leaves the prompt files out, so they are gone in the fallback modes too. |
-| Sound detection | Yes[^off]; crying detection is claimed only by the Amazon UK listing[^amz-uk] | **Missing** | |
+| Sound detection | Yes[^off]; crying detection is claimed only by the Amazon UK listing[^amz-uk] | **Missing** | Frigate can detect sounds on the microphone track once audio is on. |
 
 ## Detection and alerts
 
