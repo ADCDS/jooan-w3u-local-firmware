@@ -51,16 +51,35 @@ network updates and use external recovery.
 
 Runtime replacement is a maintenance transaction: the signed controller and SSH
 recovery bundle remain available while the sole persistent runtime is replaced.
-If the candidate cannot boot or pass health, it is removed and selection returns
-to no runtime; recover through controller-owned SSH and retry or uninstall. The
-old runtime may continue from tmpfs until the update reboot, but it is not an
+During the two-minute health trial the supervisor restarts a candidate whose
+start failed: `start.sh` is bounded to 15 s while `entropy-ready.sh` waits up to
+30 s, and an early native boot gathers entropy slowly. If the candidate still
+fails, or the trial is interrupted, it stays selected as the only runtime,
+because the update already deleted the previous one, and the supervisor keeps
+restarting it; recover through controller-owned SSH and retry or uninstall.
+(Until this was fixed, a failed trial removed the candidate and left no
+runtime; the paragraph below is that state.) The old runtime may continue from tmpfs until the update reboot, but it is not an
 on-flash rollback slot. A failed platform update does not fall back to the OEM
 updater: GoAhead stays killed while the controller runs.
 
 Without a runtime, nothing applies the committed Wi-Fi network. A native boot
 then cannot reach its gateway, fails after 300 s and latches `native-failed`,
 and later boots run the guarded OEM application, which joins its own stored
-network. Plan the SSH recovery path for that state.
+network. On the verified unit that is the vendor bench network `JOOANTEST`
+(open, probed as a hidden SSID). To reach the camera in that state:
+
+1. Publish a temporary hidden, open `JOOANTEST` network on an access point the
+   camera can hear, restricted to the camera's MAC and on an isolated subnet.
+   The camera joins within seconds. It may not take an IPv4 address, but its
+   IPv6 link-local address answers SSH (dropbear listens on `[::]:22`), for
+   example through `ssh -L 2222:[fe80::…%<bridge>]:22` on that access point.
+2. Install the runtime as the stable slot: copy `runtime.tar.gz` and
+   `runtime.md5` from the release stage to `/opt/custom/jooan-local/slots/A/`,
+   then, with `common.sh` sourced, `jl_lock; jl_write_selection A - 0; jl_unlock`.
+3. Delete `/opt/jooanipc-open/native-failed`, `sync` and reboot. The supervisor
+   starts the runtime (and restarts it if its first start fails), its hook
+   applies the committed network, and the native boot qualifies.
+4. Remove the temporary network.
 
 Signed uninstall is destructive removal, not restoration of predecessor state.
 It removes the Web UI, route pruning, the process guard, project SSH, and the

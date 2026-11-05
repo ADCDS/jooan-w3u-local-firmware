@@ -169,8 +169,10 @@ runtime must total no more than 200704 bytes (196 KiB), with at least 65536 byte
 the controller and recovery path are durable, selection becomes `- - 0`, the old
 persistent runtime is removed, and one signed candidate is staged while at least
 57344 bytes (56 KiB) remain free. This exceeds the OEM 50 KiB cleanup threshold.
-Failure leaves controller-owned SSH recovery; successful health promotion selects
-the candidate and restores the 64 KiB steady reserve. The candidate is healthy
+The trial restarts a candidate whose first start failed; one that still fails
+stays as the only runtime (nothing older exists to restore) and the supervisor
+keeps restarting it, with controller-owned SSH for recovery. Successful health
+promotion selects the candidate and restores the 64 KiB steady reserve. The candidate is healthy
 when `joan-daemon` runs and listens on port 80; if the OEM application is
 running (fallback modes only), it must also have the containment guard mapped.
 Before 0.2.24 health also required the OEM application, so no platform update

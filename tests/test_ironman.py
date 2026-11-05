@@ -470,6 +470,21 @@ class HostBuilderTests(unittest.TestCase):
         self.assertIn("admin:$1$joorec01$", installer)
         self.assertIn("entropy-ready.sh", assembly)
 
+    def test_failed_trial_never_leaves_no_runtime(self) -> None:
+        """Updates delete the old runtime before staging the candidate, so a
+        failed or interrupted trial has nothing to restore. Removing the
+        candidate too left no runtime and, on a native boot, no Wi-Fi."""
+        boot = (REPOSITORY / "runtime/boot/boot.sh").read_text()
+        self.assertIn('[ "$JL_ATTEMPTED" = 1 ] && [ "$JL_STABLE" = - ]', boot)
+        self.assertIn('jl_write_selection "$JL_PENDING" - 0', boot)
+        self.assertIn('[ "$jl_trial_ok" != 1 ] && [ "$jl_old_stable" = - ]', boot)
+        self.assertIn('jl_write_selection "$jl_trial" - 0', boot)
+        # The trial restarts a candidate whose first start failed (entropy).
+        trial = boot[boot.index("jl_checks=0"):boot.index("jl_trial_ok=1")]
+        self.assertIn("if ! jl_runtime_alive; then", trial)
+        self.assertIn('jl_start_slot "$jl_running"', trial)
+        self.assertNotIn('if jl_start_slot "$jl_running"; then', boot)
+
     def test_uninstall_does_not_delete_its_direct_apply_mount(self) -> None:
         uninstall = (REPOSITORY / "packaging/payload/uninstall-upgrade.sh").read_text()
         self.assertIn("Do not delete $run here", uninstall)

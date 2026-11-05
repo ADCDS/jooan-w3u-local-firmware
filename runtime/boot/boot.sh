@@ -32,7 +32,15 @@ if ! jl_read_selection; then
     jl_log 'invalid selection; no runtime started'
     JL_STABLE=- JL_PENDING=- JL_ATTEMPTED=0
 else
-    if [ "$JL_PENDING" != - ] && [ "$JL_ATTEMPTED" = 1 ]; then
+    if [ "$JL_PENDING" != - ] && [ "$JL_ATTEMPTED" = 1 ] && [ "$JL_STABLE" = - ]; then
+        # An update deletes the old runtime before staging the candidate, so
+        # an interrupted trial has nothing to roll back to. Removing the
+        # candidate too would leave no runtime and, on a native boot, no
+        # Wi-Fi (the runtime's hook applies the committed network).
+        jl_log "unconfirmed trial $JL_PENDING kept: there is no previous runtime"
+        jl_write_selection "$JL_PENDING" - 0 || { jl_unlock; exit 1; }
+        JL_STABLE=$JL_PENDING JL_PENDING=- JL_ATTEMPTED=0
+    elif [ "$JL_PENDING" != - ] && [ "$JL_ATTEMPTED" = 1 ]; then
         jl_log "unconfirmed trial $JL_PENDING rolled back to $JL_STABLE"
         jl_write_selection "$JL_STABLE" - 0 || { jl_unlock; exit 1; }
         jl_prune_other_slots "$JL_STABLE" || { jl_unlock; exit 1; }
@@ -54,21 +62,39 @@ jl_trial=$JL_PENDING
 jl_old_stable=$JL_STABLE
 jl_trial_ok=0
 if [ "$jl_running" != - ]; then
-    if jl_start_slot "$jl_running"; then
-        if [ "$jl_trial" != - ]; then
-            # A candidate must pass its real health hook; elapsed time is not health.
-            jl_checks=0
-            while [ "$jl_checks" -lt 12 ]; do
-                sleep 5
-                if "$JL_CONTROL/admin/mark-healthy.sh" "$jl_running"; then
-                    jl_trial_ok=1
-                    break
-                fi
-                jl_checks=$((jl_checks + 1))
-            done
-        fi
+    jl_start_slot "$jl_running" || jl_log "runtime $jl_running did not start; retrying"
+    if [ "$jl_trial" != - ]; then
+        # A candidate must pass its real health hook; elapsed time is not health.
+        # Its first start can fail through no fault of its own: start.sh is
+        # bounded to 15 s while entropy-ready.sh waits up to 30 s, and an early
+        # native boot (no OEM application running) gathers entropy slowly. So
+        # restart it inside the two-minute window, as the supervisor loop does
+        # for a stable runtime.
+        jl_checks=0
+        while [ "$jl_checks" -lt 24 ]; do
+            sleep 5
+            jl_checks=$((jl_checks + 1))
+            if ! jl_runtime_alive; then
+                jl_stop_slot "$jl_running" || :
+                jl_start_slot "$jl_running" || :
+                continue
+            fi
+            if "$JL_CONTROL/admin/mark-healthy.sh" "$jl_running"; then
+                jl_trial_ok=1
+                break
+            fi
+        done
     fi
-    if [ "$jl_trial" != - ] && [ "$jl_trial_ok" != 1 ]; then
+    if [ "$jl_trial" != - ] && [ "$jl_trial_ok" != 1 ] && [ "$jl_old_stable" = - ]; then
+        # Nothing to restore (see the unconfirmed-trial case above). Keep the
+        # candidate as the runtime: the loop below keeps restarting it, its
+        # hook keeps applying Wi-Fi, and SSH recovery stays reachable.
+        jl_log "trial $jl_trial failed with no previous runtime; keeping it"
+        if jl_lock; then
+            jl_write_selection "$jl_trial" - 0 || :
+            jl_unlock
+        fi
+    elif [ "$jl_trial" != - ] && [ "$jl_trial_ok" != 1 ]; then
         jl_log "trial $jl_trial failed; restoring runtime $jl_old_stable"
         # Never overlap two slots if the old process set cannot be stopped.
         if [ "$JL_SLOT_STARTED" = 0 ] || jl_stop_slot "$jl_trial"; then
