@@ -12,7 +12,9 @@ kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 
 **Native dual-sensor capture works on the physical T23N with our OpenIMP
 OEM80 fork:** the movable view runs at **1920×1080**, the fixed view at
-**640×360**, both at 15 fps with audio disabled. `main_only=1` creates two
+**640×360**, both at 15 fps. With `audio=1` the microphone streams on the
+main URLs and you can talk through the speaker (see [Audio and talk](#audio-and-talk));
+camera1 is being qualified with audio on. `main_only=1` creates two
 physical H.264 encoders; the four existing URLs remain available, with each
 substream URL sharing its lens's main feed. Bitrates are 3072/768 kbps with a
 one-second GOP. Physical pan/tilt and persistent named presets work, and
@@ -57,7 +59,7 @@ JA-A12 storage budget and required boot dependencies.
 | Clock | Optional SNTP client for the RTC-less board: random origin cookie, clock steps of one second or more, status under `clock` |
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
-| Audio | Implemented in the daemon (microphone PCM to 8 kHz PCMA, PCMA speaker input) and in replay (labelled silence), but **not available on the camera**: the shipped OpenIMP build has no audio path, so the IMP backend refuses to start with `audio=1` |
+| Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
 | Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
@@ -112,7 +114,9 @@ ffmpeg -f lavfi -i testsrc2=size=320x240:rate=15 -t 2 \
 `--init` creates a 0600 file with a random password and prints that new password
 once. It refuses an existing destination. Update the private file's dimensions
 to match your fixture. Empty input1/2/3 reuse input0. Replay reports its backend
-as `replay`; camera controls are simulations and audio is PCMA silence.
+as `replay`; camera controls are simulations and audio is PCMA silence
+(`JIPC_REPLAY_TONE=1` sends a 500 Hz tone instead). Set `JIPC_SPEAKER_CAPTURE`
+to a file path to record what talkers send.
 
 The authenticated maintenance page is `http://127.0.0.1:8080/`. Video URLs are
 `rtsp://admin:<password>@127.0.0.1:8554/live/ch0` through `ch3`; `/stream0..3` and
@@ -227,7 +231,7 @@ Authenticated REST endpoints:
 | `POST /api/v1/recording` | `{ "enabled":true }` starts recording; false stops |
 | `GET /api/v1/recordings` | Bounded file listing; download a listed name under the same path |
 | `GET /api/v1/snapshot?channel=0` | Native JPEG when the backend can produce one |
-| `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono |
+| `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono, at most 8000 bytes (1 s) per request: `200` queued, `409` another talker or the 2 s queue is full, `503` speaker unavailable |
 
 `/health` and `/healthz` report readiness without credentials and are never
 throttled. ONVIF's public time query is read-only and never counts as a failed
@@ -235,6 +239,68 @@ login, but like every other request it is refused while its address is
 throttled; all other SOAP operations require Basic or fresh WSSE
 authentication. Supported motor, preset, light and speaker controls are described
 in [platform controls](docs/platform.md). Unknown actions fail explicitly.
+
+## Audio and talk
+
+`audio=1` turns on both directions; `audio=0` (the default) leaves the audio
+device closed.
+
+**Microphone.** Each main URL (`/live/ch0`, `/live/ch2`) carries a second
+track, PCMA 8 kHz mono, with RTP timestamps that advance exactly 8 per byte.
+Frigate records it with `preset-record-generic-audio-aac`.
+
+**Talk.** A client asks for the speaker track by sending
+`Require: www.onvif.org/ver20/backchannel` with `DESCRIBE`. The SDP then
+gains a third `m=audio` line, `sendonly`, PCMA/8000, `trackID=2`. Without the
+header the SDP is unchanged. The talk track works over RTSP-over-TCP only
+(UDP gets `461`), and a session may set up only that track. go2rtc does all
+of this with `#backchannel=1`; Frigate shows its microphone button for such a
+stream when the page is opened over HTTPS:
+
+```yaml
+go2rtc:
+  streams:
+    jooan_main:
+      - rtsp://admin:<password>@<camera>:18554/live/ch0#backchannel=0
+    jooan_main_talk:
+      - rtsp://127.0.0.1:8554/jooan_main#backchannel=0
+      - rtsp://admin:<password>@<camera>:18554/live/ch0#backchannel=1#media=audio
+cameras:
+  jooan_main:
+    live:
+      streams:
+        Main: jooan_main_talk
+```
+
+Keep `#backchannel=0` on recording and detection sources: go2rtc reconnects a
+source when talk starts, and the separate talk stream keeps that away from
+recordings. `POST /api/v1/talk` takes the same audio over HTTPS.
+
+The speaker rules:
+
+- One talker at a time. Another connection, or another RTP source on the
+  same connection, gets `409` (HTTP) or is ignored (RTSP).
+- Each session switches the amplifier on, waits 200 ms, and plays from a 2 s
+  queue. RTSP audio more than 600 ms ahead is cut back to 300 ms; HTTP
+  talkers are told when the queue is full.
+- 500 ms without audio ends the session: 80 ms of silence, then mute.
+  `TEARDOWN` or a closed connection ends it after at most 200 ms of queued
+  audio.
+- Half-duplex: the microphone sends silence while someone talks and for
+  300 ms after, so the talker does not hear themselves. Set
+  `JIPC_TALK_FULL_DUPLEX=1` in the daemon's environment to turn this off.
+- Talk is refused until the platform's boot mute hook has finished (the
+  marker `/run/jooan-local/speaker-hook-released`), so nothing plays during
+  boot.
+- Three failed speaker writes close the output, mute, and refuse talk for
+  5 s, doubling to 60 s on repeated faults. The output closes after 10 s idle.
+- Speaker volume: `POST /api/v1/control`
+  `{"operation":"volume","value":60,"value2":1}`, -30 to 120, 60 is unity
+  gain (about 0.5 dB per step). `value2` 0 sets the microphone.
+
+`GET /api/v1/status` reports both directions under `audio`: microphone state,
+frame, silence-fill, dropped and restart counts; speaker state, sessions,
+played and dropped milliseconds, refusals and faults.
 
 ## Source and license
 

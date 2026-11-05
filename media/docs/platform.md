@@ -131,8 +131,9 @@ With the IMP backend, `POST /api/v1/control` also accepts:
   sensors; there is no automatic mode (`night` drives this and the IR-cut GPIO
   together);
 - `idr`: request a key frame on stream channel `value`;
-- `volume`: `value` -30–120 on `value2` 0 (microphone) or 1 (speaker); it
-  fails on the camera, where audio is disabled.
+- `volume`: `value` -30–120 (60 is unity gain, about 0.5 dB per step) on
+  `value2` 0 (microphone) or 1 (speaker); it needs `audio=1`. The speaker
+  volume also applies to the next talk session.
 
 Nothing applies these at start; they last until the daemon restarts.
 
@@ -146,7 +147,7 @@ Factory `HardwareParam/LightParam` and `SubLightParam` both identify:
 | White light | 60 | Active high |
 | Pilot/alarm LED | 58 | Active high for the main profile |
 | IR-cut coil A/B | 49 / 50 | Model 1, 150 ms pulse, then both low |
-| Speaker amplifier enable | 63 | Active high; media waits 200 ms before playback |
+| Speaker amplifier enable | 63 | Active low (`0` = on); media waits 200 ms before playback |
 
 In the OEM application, `set_IRCUT_Mode` at `0x4861e4` establishes model-1
 polarity: night pulses GPIO49 high with GPIO50 low; day pulses GPIO50 high
@@ -162,16 +163,20 @@ operation. `white_light` and `pilot_led` accept 0 or 1.
 from `0x4808fc`. The OEM audio module leaves its own `spk_gpio` unset, so
 userspace owns the amplifier control. The amplifier is active-low on this
 board (factory `SpeakLevelEx=0`): `speaker_enable=1` drives GPIO63 low and `0`
-drives it high. The media backend enables it before talkback and waits 200 ms.
-Shutdown mutes it (GPIO63 high) if this application used it. Replay records
-the simulated state without GPIO access. Media releases before
-`4b20a364` had this polarity inverted.
+drives it high. The speaker service in the media daemon is the only automatic
+driver of the pin: it enables the amplifier at the start of each talk session
+(never from a cached state), waits 200 ms, and mutes after 500 ms without
+audio or when the talker disconnects. Shutdown mutes it (GPIO63 high) if this
+application used it. Replay records the simulated state without GPIO access.
+Media releases before `4b20a364` had this polarity inverted.
 
 The platform's `local.rc` also drives GPIO63 at every boot: it writes `1`
 (mute) every 20 ms for roughly the first minute (in a native boot, where no
 containment guard takes the pin over, for the whole window) and leaves it at
 `1`. Holding the pin high is what silenced the OEM motion siren on hardware.
-Do not race that early-boot hook with `speaker_enable`.
+When the hook is done it creates `/run/jooan-local/speaker-hook-released`;
+until that file exists the media daemon refuses talk and `speaker_enable`, so
+the two never race.
 
 GPIO57 is not exposed as a blue LED: factory `IndicatorParam/type` is zero,
 and `HardwareParam/OneTouchCallGpio` identifies GPIO57 as a button input.

@@ -342,7 +342,13 @@ static void dispatch(connection *c,request *r){
     if(!strcmp(r->target,"/api/v1/talk")&&!strcmp(r->method,"POST")){
         if(strcasecmp(r->type,"audio/PCMA")&&strcasecmp(r->type,"audio/PCMA;rate=8000")){error_response(c,415,"Use audio/PCMA at 8000 Hz mono");return;}
         if(!r->length){error_response(c,400,"Audio body is empty");return;}
-        if(jipc_backend_talk(app,r->body,r->length,error,sizeof(error))<0)error_response(c,409,error[0]?error:"Speaker unavailable");else response(c,200,"application/json","{\"ok\":true}\n",12);
+        /* One talker at a time, keyed by peer address; chunks are queued for
+         * the speaker thread and never wait on the audio output. */
+        uint64_t owner=UINT64_C(1)<<32;struct sockaddr_storage peer;socklen_t peer_size=sizeof(peer);
+        if(!getpeername(c->fd,(struct sockaddr*)&peer,&peer_size)&&peer.ss_family==AF_INET)owner|=ntohl(((struct sockaddr_in*)&peer)->sin_addr.s_addr);
+        int talk=jipc_backend_talk(app,owner,r->body,r->length,error,sizeof(error));
+        if(talk==JIPC_TALK_OK)response(c,200,"application/json","{\"ok\":true}\n",12);
+        else error_response(c,talk==JIPC_TALK_BUSY?409:talk==JIPC_TALK_INVALID?400:503,error[0]?error:"Speaker unavailable");
         return;
     }
     error_response(c,404,"Endpoint not found");

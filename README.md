@@ -71,8 +71,9 @@ With 0.2.24 and its media layer:
   manual night/IR-cut and white light; web console and API; SSH; Wi-Fi with
   stage, commit and rollback; optional network time from a local server;
   mDNS; signed updates.
-- **Missing:** audio (microphone, talk, speaker); motion and person
-  detection; automatic day/night; digital zoom; on-screen timestamp;
+- **New, off by default:** audio (microphone on RTSP, talk through the
+  speaker from Frigate or the API), being qualified on the test camera.
+- **Missing:** a siren; motion and person detection; automatic day/night; digital zoom; on-screen timestamp;
   snapshots in the qualified profile; patrol, auto-tracking and privacy
   schedules; on-camera recording (off in the qualified profile: record with
   the NVR) and SD-card management; Wi-Fi scanning; a reboot button; any cloud

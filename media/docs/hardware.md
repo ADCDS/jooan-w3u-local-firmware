@@ -3,7 +3,7 @@
 Native dual-sensor capture and native encoding now work on the physical target
 with the [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi).
 The current `main_only=1` profile encodes the movable view at 1920×1080 and
-the fixed view at 640×360, configured at 15 fps with audio disabled. All four
+the fixed view at 640×360, configured at 15 fps; audio is optional (`audio=1`). All four
 logical H.264 URLs decode: channels 1/3 share the corresponding main feed.
 Physical pan,
 tilt, deadman stop and repeated two-axis preset return passed. Frigate on NVR host
@@ -84,11 +84,11 @@ export OPENIMP_T23_ENCODER=native
 export OPENIMP_T23_NATIVE_FALLBACK=0
 ```
 
-Set `sensors=2`, `fps=15`, `audio=0`, `flip0=3` and `flip1=3` for the tested
+Set `sensors=2`, `fps=15`, `flip0=3` and `flip1=3` (and `audio=0` or `1`) for the tested
 profile. With `main_only=0`, one published sensor is also permitted, but both
 physical slots are registered and enumerated because `direct_mode=2` AE visits
 both. The current `main_only=1` mode requires two published sensors. Other FPS
-settings and OpenIMP audio are explicitly rejected. Both installed sensors need
+settings are explicitly rejected; `audio=1` is accepted. Both installed sensors need
 horizontal and vertical flip for an upright scene. These bits also align manual
 PTZ controls with the displayed image; stored presets remain raw coordinates.
 
@@ -139,15 +139,31 @@ together; changing only `main_only` leaves incompatible main dimensions.
 | Encoder pack | 32 | Target 32-bit addresses and timestamp |
 | Encoder stream | 16 | Target pointer, pack count and sequence fields |
 | Audio frame | 32 | Pointer and physical address, 64-bit timestamp, length |
+| Audio input channel parameter | 12 | Buffer depth, AEC channel, reserved word (OpenIMP's T23 layout) |
 
 Logical video streams 0/1 belong to sensor 0 and 2/3 to sensor 1. The recovered
 independent-encoder mapping is 0/4/1/5. In that layout JPEG uses the sensor's
 substream group, so snapshot resolution is the configured substream resolution.
 JPEG is explicitly unavailable in `main_only=1`: no extra JPEG resources are
 allocated, ONVIF advertises no snapshot capability, and RTSP frame extraction
-is the available still-image path. Native audio
-capture converts 16 kHz PCM into 8 kHz PCMA. Speaker input is 8 kHz PCMA; the backend
-assembles the SDK's 40 ms PCM blocks and enables GPIO63 with its settling delay.
+is the available still-image path.
+
+Audio runs on two threads of its own, so neither can stall video. The
+microphone thread is the only `IMP_AI` caller: it opens capture at 16 kHz
+mono with 40 ms periods after video is ready, polls with a 100 ms timeout,
+averages pairs of samples down to 8 kHz and encodes PCMA. Timestamps come
+from the sample count, not from dequeue time, so they step exactly 40 ms; a
+frame more than 150 ms late re-anchors forward (a gap), and frames that would
+run more than 150 ms ahead are dropped, so time never repeats. Silence fills
+gaps longer than 120 ms. After 5 s without audio the thread closes capture
+and retries with a backoff of 10 s doubling to 300 s; an ABI mismatch turns
+off only the microphone. The speaker thread is the only `IMP_AO` caller: one
+320-sample frame (40 ms, from 8 kHz PCMA) per blocking send. It never calls
+`IMP_AO_FlushChnBuf` or `IMP_AO_ClearChnBuf`, which wait on the driver
+without a bound on this kernel.
+
+`/dev/dsp` belongs to the daemon: opening it from a shell while the daemon
+runs takes the device away from the SDK and stops video.
 
 The earlier research's 60-byte frame-source declaration was incomplete. This
 project uses 84 bytes and compile-time assertions, with evidence derived from
@@ -158,7 +174,8 @@ records exact target layouts.
 
 Both real sensor views through all four H.264 URLs, physical PTZ/presets, clean
 native shutdown/restart and Frigate recording/ONVIF interoperability have been
-exercised. Audio is disabled. Native JPEG, microphone/speaker, light/IR-cut
+exercised. Audio passes host and QEMU tests and is being qualified on the
+camera. Native JPEG, light/IR-cut
 behavior, arbitrary resolutions, long-duration soak and cold power-cycle
 recovery are not qualified by this run. The broad `hardware_validated` status
 field remains false because that complete hardware feature matrix is pending;

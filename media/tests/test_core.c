@@ -72,9 +72,55 @@ static void ntp_checks(jipc_app *app)
 
     app->config.ntp_server[0] = 0; CHECK(!jipc_config_save(&app->config));
 }
+static void audio_checks(void)
+{
+    /* Sample-count clock: 40 ms frames step exactly despite dequeue jitter,
+     * and a long stall re-anchors with a discontinuity. */
+    jipc_audio_clock clock; jipc_audio_clock_init(&clock, 8000);
+    int jump = 0;
+    uint64_t now = 10000000, pts = jipc_audio_clock_stamp(&clock, now, 320, &jump);
+    CHECK(jump && pts == now - 40000);
+    const int jitter[] = {20000, -15000, 9000, -20000, 0};
+    for (unsigned i = 0; i < 5; ++i) {
+        uint64_t next = jipc_audio_clock_stamp(&clock, now + 40000 * (i + 1) + (uint64_t)(int64_t)jitter[i], 320, &jump);
+        CHECK(!jump && next == pts + 40000 * (i + 1));
+    }
+    uint64_t later = jipc_audio_clock_stamp(&clock, now + 40000 * 6 + 300000, 320, &jump);
+    CHECK(jump && later == now + 40000 * 6 + 300000 - 40000);
+    /* A burst of buffered frames is "ahead" (the caller drops it); stamping
+     * one anyway never moves time back or repeats it. */
+    uint64_t t0 = now + 40000 * 6 + 300000, last = later;
+    CHECK(!jipc_audio_clock_ahead(&clock, t0 + 40000, 320));
+    unsigned accepted = 0, dropped = 0;
+    for (unsigned i = 0; i < 20; ++i) {
+        if (jipc_audio_clock_ahead(&clock, t0 + 40000 + i * 1000, 320)) { ++dropped; continue; }
+        uint64_t next = jipc_audio_clock_stamp(&clock, t0 + 40000 + i * 1000, 320, &jump);
+        CHECK(!jump && next == last + 40000);
+        last = next; ++accepted;
+    }
+    CHECK(accepted == 5 && dropped == 15); /* stays within 150 ms of now */
+    uint64_t forced = jipc_audio_clock_stamp(&clock, t0, 320, &jump);
+    CHECK(!jump && forced == last + 40000);
+    /* Ring depth per stream: video 4, audio 32; a slow audio reader resumes
+     * at the oldest retained frame, not the newest. */
+    jipc_app *app = calloc(1, sizeof *app); CHECK(app);
+    jipc_config_defaults(&app->config);
+    CHECK(!jipc_streams_init(app));
+    CHECK(app->streams[0].capacity == JIPC_VIDEO_RING && app->streams[JIPC_AUDIO_STREAM].capacity == JIPC_AUDIO_RING);
+    unsigned char sample[320]; memset(sample, 0xd5, sizeof sample);
+    for (unsigned i = 0; i < 40; ++i)
+        CHECK(!jipc_publish(app, JIPC_AUDIO_STREAM, sample, sizeof sample, 1000 + i, 1, JIPC_PCMA));
+    jipc_frame frame = {0}; uint64_t cursor = 1;
+    CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &frame, 0) == 1);
+    CHECK(frame.sequence == 40 - JIPC_AUDIO_RING + 1 && frame.pts_us == 1000 + 40 - JIPC_AUDIO_RING);
+    jipc_frame_free(&frame);
+    jipc_streams_destroy(app); free(app);
+}
+
 int main(void)
 {
     CHECK(sizeof(off_t) >= 8);
+    audio_checks();
     char hex[65], encoded[256]; unsigned char decoded[256], sha[20];
     jipc_md5("abc", 3, hex); CHECK(!strcmp(hex, "900150983cd24fb0d6963f7d28e17f72"));
     jipc_sha1("abc", 3, sha); CHECK(!memcmp(sha, (unsigned char[]){0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d}, 20));

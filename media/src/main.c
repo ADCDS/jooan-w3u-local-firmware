@@ -48,6 +48,16 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     if (jipc_ntp_status_json(app, status, sizeof(status)) >= 0) {
         cJSON *clock = cJSON_Parse(status); if (clock) cJSON_AddItemToObject(o, "clock", clock);
     }
+    cJSON *audio = cJSON_AddObjectToObject(o, "audio");
+    if (audio) {
+        cJSON_AddBoolToObject(audio, "enabled", cfg.audio);
+        if (!jipc_backend_audio_json(app, status, sizeof(status))) {
+            cJSON *mic = cJSON_Parse(status); if (mic) cJSON_AddItemToObject(audio, "microphone", mic);
+        }
+        if (!jipc_speaker_status_json(app, status, sizeof(status))) {
+            cJSON *speaker = cJSON_Parse(status); if (speaker) cJSON_AddItemToObject(audio, "speaker", speaker);
+        }
+    }
     char *text = cJSON_PrintUnformatted(o); int rc = -1;
     if (text && strlen(text) < capacity) { strcpy(out, text); rc = (int)strlen(text); }
     cJSON_free(text); cJSON_Delete(o); return rc;
@@ -153,7 +163,7 @@ int main(int argc, char **argv)
                     for(unsigned i=0;i<config.sensors*2;++i){
                         pthread_mutex_lock(&app->streams[i].mutex);
                         uint64_t sequence=app->streams[i].sequence;
-                        uint64_t stamp=sequence?app->streams[i].slots[(sequence-1)%JIPC_RING_SLOTS].pts_us:0;
+                        uint64_t stamp=sequence?app->streams[i].slots[(sequence-1)%app->streams[i].capacity].pts_us:0;
                         pthread_mutex_unlock(&app->streams[i].mutex);
                         if(!stamp||now<stamp||now-stamp>15000000)fresh=0;
                     }

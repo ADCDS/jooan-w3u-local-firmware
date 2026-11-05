@@ -20,9 +20,8 @@ typedef struct {
     void *imp;
     replay_input replay[JIPC_VIDEO_STREAMS];
     unsigned idr_mask;
-    int speaker_enabled;
-    uint64_t speaker_enabled_us;
     atomic_int quit;
+    FILE *speaker_capture; /* replay sink: what the speaker would play */
 } media_state;
 
 static int fail(char *out, size_t capacity, const char *message)
@@ -73,6 +72,7 @@ int jipc_streams_init(jipc_app *app)
             pthread_condattr_destroy(&monotonic);
             return -1;
         }
+        app->streams[i].capacity = i == JIPC_AUDIO_STREAM ? JIPC_AUDIO_RING : JIPC_VIDEO_RING;
         app->streams[i].width = jipc_video_width(&app->config, i);
         app->streams[i].height = jipc_video_height(&app->config, i);
         app->streams[i].fps = app->config.fps;
@@ -84,7 +84,7 @@ int jipc_streams_init(jipc_app *app)
 void jipc_streams_destroy(jipc_app *app)
 {
     for (unsigned i = 0; i < JIPC_STREAMS; ++i) {
-        for (unsigned j = 0; j < JIPC_RING_SLOTS; ++j)
+        for (unsigned j = 0; j < JIPC_RING_MAX; ++j)
             free(app->streams[i].slots[j].data);
         pthread_cond_destroy(&app->streams[i].ready);
         pthread_mutex_destroy(&app->streams[i].mutex);
@@ -101,6 +101,7 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     if (!copy) return -1;
     memcpy(copy, data, bytes);
     jipc_stream *stream = &app->streams[channel];
+    if (!stream->capacity) { free(copy); return -1; }
     pthread_mutex_lock(&stream->mutex);
     if (codec == JIPC_H264) {
         size_t payload, start = annexb_next(copy, bytes, 0, &payload);
@@ -122,7 +123,7 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
         }
     }
     uint64_t sequence = ++stream->sequence;
-    jipc_frame *frame = &stream->slots[(sequence - 1) % JIPC_RING_SLOTS];
+    jipc_frame *frame = &stream->slots[(sequence - 1) % stream->capacity];
     free(frame->data);
     *frame = (jipc_frame){copy, bytes, pts_us, sequence, !!keyframe, codec};
     app->produced[channel] = sequence;
@@ -160,11 +161,11 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
         pthread_mutex_unlock(&stream->mutex);
         return 0;
     }
-    uint64_t oldest = stream->sequence > JIPC_RING_SLOTS ?
-                      stream->sequence - JIPC_RING_SLOTS + 1 : 1;
+    uint64_t oldest = stream->sequence > stream->capacity ?
+                      stream->sequence - stream->capacity + 1 : 1;
     uint64_t wanted = *cursor ? *cursor + 1 : stream->sequence;
     if (wanted < oldest) wanted = oldest;
-    jipc_frame *source = &stream->slots[(wanted - 1) % JIPC_RING_SLOTS];
+    jipc_frame *source = &stream->slots[(wanted - 1) % stream->capacity];
     unsigned char *copy = malloc(source->size);
     if (!copy) { pthread_mutex_unlock(&stream->mutex); return -1; }
     memcpy(copy, source->data, source->size);
@@ -285,6 +286,7 @@ static void media_release(media_state *state)
 {
     if (!state) return;
     if (state->imp) jipc_imp_close(state->imp);
+    if (state->speaker_capture) fclose(state->speaker_capture);
     for (unsigned i = 0; i < JIPC_VIDEO_STREAMS; ++i) {
         if (state->replay[i].file) fclose(state->replay[i].file);
         free(state->replay[i].nal);
@@ -309,8 +311,19 @@ static void *media_main(void *opaque)
     jipc_app *app = state->app;
     uint64_t next_video = jipc_now_us(), next_audio = next_video;
     const uint64_t interval = 1000000u / state->config.fps;
-    unsigned char silence[160];
-    memset(silence, 0xd5, sizeof silence); /* G.711 A-law +zero, 20 ms @8 kHz. */
+    /* Replay audio: 20 ms of A-law silence, or a quiet 500 Hz tone with
+     * JIPC_REPLAY_TONE=1 so tests can tell sound from the half-duplex mute. */
+    unsigned char silence[160], tone[160], *replay_audio = silence;
+    memset(silence, 0xd5, sizeof silence);
+    for (unsigned i = 0; i < sizeof tone; ++i) {
+        static const int wave[16] = {0, 1531, 2828, 3695, 4000, 3695, 2828, 1531,
+                                     0, -1531, -2828, -3695, -4000, -3695, -2828, -1531};
+        tone[i] = jipc_alaw_encode(wave[i % 16]);
+    }
+    const char *tone_env = getenv("JIPC_REPLAY_TONE");
+    if (tone_env && !strcmp(tone_env, "1")) replay_audio = tone;
+    jipc_audio_clock clock;
+    jipc_audio_clock_init(&clock, 8000);
     while (!app->stop && !atomic_load(&state->quit)) {
         char error[256] = {0};
         if (state->imp) {
@@ -352,8 +365,9 @@ static void *media_main(void *opaque)
             if (now > next_video + interval * 4) next_video = now + interval;
         }
         if (state->config.audio && now >= next_audio) {
-            if (jipc_publish(app, JIPC_AUDIO_STREAM, silence, sizeof silence,
-                             next_audio, 1, JIPC_PCMA)) {
+            const unsigned char *payload = jipc_talk_active(app) ? silence : replay_audio;
+            if (jipc_publish(app, JIPC_AUDIO_STREAM, payload, sizeof silence,
+                             jipc_audio_clock_stamp(&clock, next_audio + 20000, sizeof silence, NULL), 1, JIPC_PCMA)) {
                 pthread_mutex_lock(&app->control_mutex);
                 backend_failed(state, "cannot publish replay audio");
                 pthread_mutex_unlock(&app->control_mutex);
@@ -368,6 +382,73 @@ static void *media_main(void *opaque)
     app->backend_ready = 0;
     pthread_mutex_unlock(&app->control_mutex);
     return NULL;
+}
+
+/* Speaker sinks, used only by the speaker thread (src/speaker.c). The
+ * hardware sink drives the IMP audio output; the replay sink paces in real
+ * time and appends what would be played to JIPC_SPEAKER_CAPTURE. */
+static int sink_amplifier(void *context, int on)
+{
+    media_state *state = context;
+    char error[160];
+    return jipc_platform_control(state->app, "speaker_enable", on, 0, error, sizeof error);
+}
+static int imp_sink_open(void *context, int volume, char *error, size_t capacity)
+{
+    media_state *state = context;
+    return jipc_imp_ao_open(state->imp, volume, error, capacity);
+}
+static int imp_sink_write(void *context, const unsigned char *pcma)
+{
+    media_state *state = context;
+    return jipc_imp_ao_write(state->imp, pcma);
+}
+static void imp_sink_close(void *context)
+{
+    media_state *state = context;
+    jipc_imp_ao_close(state->imp);
+}
+static int imp_sink_volume(void *context, int volume)
+{
+    media_state *state = context;
+    return jipc_imp_ao_volume(state->imp, volume);
+}
+static int replay_sink_open(void *context, int volume, char *error, size_t capacity)
+{
+    (void)context; (void)error; (void)capacity;
+    return volume < -30 || volume > 120 ? -1 : 0;
+}
+static int replay_sink_write(void *context, const unsigned char *pcma)
+{
+    media_state *state = context;
+    if (state->speaker_capture &&
+        fwrite(pcma, 1, JIPC_SPEAKER_FRAME, state->speaker_capture) == JIPC_SPEAKER_FRAME)
+        fflush(state->speaker_capture);
+    jipc_sleep_ms(40);
+    return 0;
+}
+static void replay_sink_close(void *context) { (void)context; }
+static int replay_sink_volume(void *context, int volume)
+{
+    (void)context;
+    return volume < -30 || volume > 120 ? -1 : 0;
+}
+
+static void speaker_begin(jipc_app *app, media_state *state)
+{
+    jipc_speaker_sink sink = {.context = state, .amplifier = sink_amplifier};
+    if (state->imp) {
+        sink.open = imp_sink_open; sink.write = imp_sink_write;
+        sink.close = imp_sink_close; sink.volume = imp_sink_volume;
+    } else {
+        const char *capture = getenv("JIPC_SPEAKER_CAPTURE");
+        if (capture && capture[0]) state->speaker_capture = fopen(capture, "ab");
+        sink.open = replay_sink_open; sink.write = replay_sink_write;
+        sink.close = replay_sink_close; sink.volume = replay_sink_volume;
+    }
+    /* Talk is optional: video never depends on the speaker. */
+    if (jipc_speaker_start(app, &sink))
+        jipc_log("error", "speaker service unavailable; two-way talk is disabled");
 }
 
 int jipc_backend_start(jipc_app *app)
@@ -430,11 +511,14 @@ int jipc_backend_start(jipc_app *app)
         return fail(app->backend_error, sizeof app->backend_error, "cannot start media thread");
     }
     app->media_started = 1;
+    if (state->config.audio) speaker_begin(app, state);
     return 0;
 }
 
 void jipc_backend_stop(jipc_app *app)
 {
+    /* The speaker uses the backend's audio output: stop it first. */
+    jipc_speaker_stop(app);
     pthread_mutex_lock(&app->control_mutex);
     media_state *state = app->backend_state;
     if (state) atomic_store(&state->quit, 1);
@@ -478,12 +562,12 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     } else if (state->imp && !strcmp(operation, "night")) {
         rc = jipc_imp_control(state->imp, "isp_night", value, value2, error, capacity);
         if (!rc) rc = jipc_platform_control(app, operation, value, value2, error, capacity);
-    } else if (state->imp && !strcmp(operation, "speaker_enable")) {
-        rc = jipc_platform_control(app, operation, value, value2, error, capacity);
-        if (!rc) {
-            state->speaker_enabled = value;
-            if (value) state->speaker_enabled_us = jipc_now_us();
-        }
+    } else if (!strcmp(operation, "speaker_enable")) {
+        if (value && !jipc_speaker_gate_open(app))
+            rc = fail(error, capacity, "the speaker stays muted until the boot hook releases it");
+        else rc = jipc_platform_control(app, operation, value, value2, error, capacity);
+    } else if (!strcmp(operation, "volume") && value2 == 1) {
+        rc = jipc_speaker_set_volume(app, value, error, capacity);
     } else if (state->imp && (!strcmp(operation, "flip") || !strcmp(operation, "hflip") || !strcmp(operation, "vflip"))) {
         if (value2 < 0 || (unsigned)value2 >= state->config.sensors || value < 0 ||
             value > (!strcmp(operation,"flip") ? 3 : 1)) {
@@ -524,30 +608,21 @@ int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
     return rc;
 }
 
-int jipc_backend_talk(jipc_app *app, const void *data, size_t bytes,
+int jipc_backend_talk(jipc_app *app, uint64_t owner, const void *data, size_t bytes,
                       char *error, size_t capacity)
+{
+    /* Queued for the speaker thread; never blocks on the audio output. */
+    return jipc_talk_submit(app, owner, 0, 1, data, bytes, error, capacity);
+}
+
+int jipc_backend_audio_json(jipc_app *app, char *out, size_t capacity)
 {
     control_lock(app);
     media_state *state = app->backend_state;
-    int rc = 0;
-    if (!state || !app->backend_ready) rc = fail(error, capacity, "media backend is not ready");
-    else if (!state->imp) rc = fail(error, capacity, "speaker output requires the IMP hardware backend");
-    else if (!data || !bytes || bytes > 8000 || !state->config.audio)
-        rc = fail(error, capacity, "speaker output requires enabled audio and 1..8000 PCMA bytes");
-    else {
-        if (!state->speaker_enabled) {
-            rc = jipc_platform_control(app, "speaker_enable", 1, 0, error, capacity);
-            if (!rc) {
-                state->speaker_enabled = 1;
-                state->speaker_enabled_us = jipc_now_us();
-            }
-        }
-        if (!rc) {
-            uint64_t now = jipc_now_us(), ready = state->speaker_enabled_us + 200000;
-            if (now < ready) jipc_sleep_ms((unsigned)((ready - now + 999) / 1000));
-            rc = jipc_imp_talk(state->imp, data, bytes, error, capacity);
-        }
-    }
+    int rc;
+    if (!state || !state->config.audio) rc = snprintf(out, capacity, "{\"state\":\"off\"}");
+    else if (state->imp) rc = jipc_imp_audio_json(state->imp, out, capacity) ? -1 : 0;
+    else rc = snprintf(out, capacity, "{\"state\":\"replay\"}");
     pthread_mutex_unlock(&app->control_mutex);
-    return rc;
+    return rc < 0 || (size_t)rc >= capacity ? -1 : 0;
 }

@@ -29,6 +29,11 @@
 #define RTP_PAYLOAD_MAX 1200u
 #define RTSP_CLIENT_LIMIT 64u
 #define RTSP_TIMEOUT_US UINT64_C(120000000)
+/* Advertised below the enforced timeout so keepalives arrive with margin. */
+#define RTSP_ADVERTISED_TIMEOUT 60
+#define RTSP_TRACKS 3                /* video, audio, and the talk backchannel */
+#define BACKCHANNEL_TRACK 2
+#define BACKCHANNEL_TAG "www.onvif.org/ver20/backchannel"
 
 typedef struct {
     int setup, tcp, rtp_fd, rtcp_fd;
@@ -45,7 +50,9 @@ typedef struct {
     pthread_t thread;
     int fd, done, channel, playing, need_keyframe;
     struct sockaddr_in peer;
-    rtsp_track tracks[2];
+    uint64_t id;                     /* talk lease owner */
+    int backchannel;                 /* the client asked for the talk track */
+    rtsp_track tracks[RTSP_TRACKS];
     unsigned char input[RTSP_BUFFER_SIZE];
     size_t input_size;
     char nonce[33], session[33], base_uri[2048];
@@ -62,10 +69,15 @@ struct rtsp_server {
     pthread_mutex_t mutex;
     atomic_int stopping;
     rtsp_client **clients;
+    uint64_t next_id;
+    /* One RTP timeline per stream for the process lifetime: a client that
+     * reconnects (go2rtc does when talk starts) sees a gap, not a jump. */
+    uint32_t timeline_base[JIPC_STREAMS], timeline_ssrc[JIPC_STREAMS];
 };
 
 typedef struct {
     char method[32], uri[2048], authorization[3072], transport[1024], session[128], range[128];
+    char require[256];
     unsigned cseq;
     size_t content_length;
 } rtsp_request;
@@ -198,6 +210,11 @@ static int parse_request(char *header, rtsp_request *request)
             request->content_length = (size_t)number;
         } else if (!strcasecmp(line, "Transfer-Encoding")) {
             return -1;
+        } else if (!strcasecmp(line, "Require")) {
+            size_t used = strlen(request->require), length = strlen(value);
+            if (used + (used ? 2 : 0) + length >= sizeof(request->require)) return -1;
+            if (used) memcpy(request->require + used, ", ", 2), used += 2;
+            memcpy(request->require + used, value, length + 1);
         } else {
             char *target = NULL;
             size_t capacity = 0;
@@ -343,6 +360,7 @@ static int uri_channel(const char *uri, int *track, char *base, size_t capacity)
     if (suffix) {
         if (!strcmp(suffix, "/trackID=0")) *track = 0;
         else if (!strcmp(suffix, "/trackID=1")) *track = 1;
+        else if (!strcmp(suffix, "/trackID=2")) *track = BACKCHANNEL_TRACK;
         else return -1;
     }
     int channel = -1;
@@ -369,7 +387,7 @@ static int session_matches(const rtsp_client *client, const char *session)
 }
 
 static int describe(rtsp_client *client, const rtsp_request *request,
-                    int channel, const char *base, const jipc_config *config)
+                    int channel, const char *base, const jipc_config *config, int backchannel)
 {
     unsigned char sps[512], pps[512];
     size_t sps_size, pps_size;
@@ -398,6 +416,14 @@ static int describe(rtsp_client *client, const rtsp_request *request,
     if (config->audio) {
         int added = snprintf(sdp + length, sizeof(sdp) - (size_t)length,
             "m=audio 0 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000/1\r\na=control:trackID=1\r\n");
+        if (added < 0 || (size_t)added >= sizeof(sdp) - (size_t)length) return -1;
+        length += added;
+    }
+    /* Only for a client that required the ONVIF backchannel; everyone else
+     * gets exactly the SDP above. */
+    if (backchannel) {
+        int added = snprintf(sdp + length, sizeof(sdp) - (size_t)length,
+            "m=audio 0 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000/1\r\na=sendonly\r\na=control:trackID=2\r\n");
         if (added < 0 || (size_t)added >= sizeof(sdp) - (size_t)length) return -1;
     }
     snprintf(extra, sizeof(extra), "Content-Type: application/sdp\r\nContent-Base: %s\r\n", base);
@@ -475,6 +501,9 @@ static int setup(rtsp_client *client, const rtsp_request *request, int channel,
     if (track_id < 0) track_id = 0;
     if (track_id == 1 && !config->audio)
         return response(client, request->cseq, 404, "Not Found", NULL, NULL);
+    if (track_id == BACKCHANNEL_TRACK &&
+        (!config->audio || !client->backchannel || !jipc_speaker_available(client->server->app)))
+        return response(client, request->cseq, 404, "Not Found", NULL, NULL);
     if (client->playing)
         return response(client, request->cseq, 455, "Method Not Valid in This State", NULL, NULL);
     if ((request->session[0] && !session_matches(client, request->session)) ||
@@ -496,6 +525,9 @@ static int setup(rtsp_client *client, const rtsp_request *request, int channel,
     else if (!token || (strcasecmp(trim(token), "RTP/AVP") &&
                        strcasecmp(trim(token), "RTP/AVP/UDP")))
         return response(client, request->cseq, 461, "Unsupported Transport", NULL, NULL);
+    /* The talk track is received over the RTSP connection only. */
+    if (track_id == BACKCHANNEL_TRACK && !proposed.tcp)
+        return response(client, request->cseq, 461, "Unsupported Transport", NULL, NULL);
     int have_pair = 0, invalid = 0;
     while ((token = strtok_r(NULL, ";", &save))) {
         token = trim(token);
@@ -515,11 +547,13 @@ static int setup(rtsp_client *client, const rtsp_request *request, int channel,
         proposed.rtcp_channel = proposed.rtp_channel + 1;
         have_pair = 1;
     }
-    rtsp_track *other = &client->tracks[1 - track_id];
-    if (proposed.tcp && other->setup && other->tcp &&
-        (proposed.rtp_channel == other->rtp_channel || proposed.rtp_channel == other->rtcp_channel ||
-         proposed.rtcp_channel == other->rtp_channel || proposed.rtcp_channel == other->rtcp_channel))
-        invalid = 1;
+    for (int i = 0; i < RTSP_TRACKS; ++i) {
+        rtsp_track *other = &client->tracks[i];
+        if (i != track_id && proposed.tcp && other->setup && other->tcp &&
+            (proposed.rtp_channel == other->rtp_channel || proposed.rtp_channel == other->rtcp_channel ||
+             proposed.rtcp_channel == other->rtp_channel || proposed.rtcp_channel == other->rtcp_channel))
+            invalid = 1;
+    }
     if (invalid || !have_pair)
         return response(client, request->cseq, 461, "Unsupported Transport", NULL, NULL);
     if (!proposed.tcp && udp_pair(client, &proposed))
@@ -527,22 +561,27 @@ static int setup(rtsp_client *client, const rtsp_request *request, int channel,
     uint32_t seed[3];
     if (jipc_random(seed, sizeof(seed))) { close_track(&proposed); return -1; }
     proposed.sequence = (uint16_t)seed[0];
-    proposed.ssrc = seed[1] ? seed[1] : 1;
-    proposed.timestamp_base = seed[2];
+    unsigned stream = track_id == 1 ? JIPC_AUDIO_STREAM : (unsigned)channel;
+    proposed.ssrc = track_id == BACKCHANNEL_TRACK ? (seed[1] ? seed[1] : 1) : client->server->timeline_ssrc[stream];
+    proposed.timestamp_base = track_id == BACKCHANNEL_TRACK ? seed[2] : client->server->timeline_base[stream];
     proposed.setup = 1;
     close_track(&client->tracks[track_id]);
     client->tracks[track_id] = proposed;
     client->channel = channel;
     snprintf(client->base_uri, sizeof(client->base_uri), "%s", base);
     char extra[1024];
-    if (proposed.tcp)
-        snprintf(extra, sizeof(extra), "Session: %s;timeout=120\r\n"
+    if (track_id == BACKCHANNEL_TRACK)
+        snprintf(extra, sizeof(extra), "Session: %s;timeout=%d\r\n"
+                 "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u\r\n",
+                 client->session, RTSP_ADVERTISED_TIMEOUT, proposed.rtp_channel, proposed.rtcp_channel);
+    else if (proposed.tcp)
+        snprintf(extra, sizeof(extra), "Session: %s;timeout=%d\r\n"
                  "Transport: RTP/AVP/TCP;unicast;interleaved=%u-%u;ssrc=%08X\r\n",
-                 client->session, proposed.rtp_channel, proposed.rtcp_channel, proposed.ssrc);
+                 client->session, RTSP_ADVERTISED_TIMEOUT, proposed.rtp_channel, proposed.rtcp_channel, proposed.ssrc);
     else
-        snprintf(extra, sizeof(extra), "Session: %s;timeout=120\r\n"
+        snprintf(extra, sizeof(extra), "Session: %s;timeout=%d\r\n"
                  "Transport: RTP/AVP;unicast;client_port=%u-%u;server_port=%u-%u;ssrc=%08X\r\n",
-                 client->session, proposed.client_rtp, proposed.client_rtcp,
+                 client->session, RTSP_ADVERTISED_TIMEOUT, proposed.client_rtp, proposed.client_rtcp,
                  proposed.server_rtp, proposed.server_rtcp, proposed.ssrc);
     return response(client, request->cseq, 200, "OK", extra, NULL);
 }
@@ -574,9 +613,11 @@ static int send_transport(rtsp_client *client, rtsp_track *track, int rtcp,
 static uint32_t media_timestamp(rtsp_client *client, rtsp_track *track,
                                 uint64_t pts_us, unsigned rate)
 {
-    int64_t delta = (int64_t)pts_us - (int64_t)client->pts_origin_us;
-    return track->timestamp_base + (uint32_t)(delta / 1000000 * rate +
-                                             delta % 1000000 * rate / 1000000);
+    /* pts is monotonic process time, so every session of a stream shares one
+     * timeline (plus that stream's random base). */
+    (void)client;
+    return track->timestamp_base + (uint32_t)(pts_us / 1000000u * rate +
+                                             pts_us % 1000000u * rate / 1000000u);
 }
 
 static int rtp(rtsp_client *client, rtsp_track *track, unsigned payload_type,
@@ -684,8 +725,7 @@ static int rtcp_report(rtsp_client *client, unsigned index, int bye)
     put32(packet + 4, track->ssrc);
     put32(packet + 8, (uint32_t)((uint64_t)wall.tv_sec + UINT64_C(2208988800)));
     put32(packet + 12, (uint32_t)((uint64_t)wall.tv_nsec * UINT64_C(4294967296) / 1000000000));
-    uint64_t mapped_pts = client->pts_origin_us + now - client->mono_origin_us;
-    put32(packet + 16, media_timestamp(client, track, mapped_pts, index ? 8000 : 90000));
+    put32(packet + 16, media_timestamp(client, track, now, index ? 8000 : 90000));
     put32(packet + 20, track->packets); put32(packet + 24, track->octets);
     char cname[64];
     snprintf(cname, sizeof(cname), "jipc-%s", client->session);
@@ -714,26 +754,77 @@ static void request_idr(rtsp_client *client)
                                0, error, sizeof(error));
 }
 
+/* RFC 2326 12.32: every Require tag must be supported, or 551 lists the
+ * unsupported ones. The only tag offered is the ONVIF audio backchannel. */
+static int require_tags(const char *require, int can_backchannel, int *backchannel,
+                        char *unsupported, size_t capacity)
+{
+    char copy[256], *save = NULL;
+    snprintf(copy, sizeof(copy), "%s", require);
+    unsupported[0] = '\0';
+    *backchannel = 0;
+    for (char *tag = strtok_r(copy, ",", &save); tag; tag = strtok_r(NULL, ",", &save)) {
+        tag = trim(tag);
+        if (!*tag) continue;
+        if (can_backchannel && !strcasecmp(tag, BACKCHANNEL_TAG)) { *backchannel = 1; continue; }
+        size_t used = strlen(unsupported);
+        snprintf(unsupported + used, capacity - used, "%s%s", used ? ", " : "", tag);
+    }
+    return unsupported[0] ? -1 : 0;
+}
+
+static void backchannel_rtp(rtsp_client *client, const unsigned char *packet, size_t size)
+{
+    if (size < 12 || (packet[0] >> 6) != 2 || (packet[1] & 0x7f) != 8) return;
+    size_t header = 12 + (size_t)(packet[0] & 15) * 4, end = size;
+    if (packet[0] & 0x10) {
+        if (size < header + 4) return;
+        header += 4 + ((size_t)packet[header + 2] << 8 | packet[header + 3]) * 4;
+    }
+    if (packet[0] & 0x20) {
+        size_t padding = packet[size - 1];
+        if (!padding || padding > size) return;
+        end -= padding;
+    }
+    if (header >= end || end - header > 2048) return;
+    uint32_t ssrc = (uint32_t)packet[8] << 24 | (uint32_t)packet[9] << 16 |
+                    (uint32_t)packet[10] << 8 | packet[11];
+    char error[160];
+    /* go2rtc stamps every packet 0; the speaker plays in arrival order. */
+    (void)jipc_talk_submit(client->server->app, client->id, ssrc, 0,
+                           packet + header, end - header, error, sizeof(error));
+}
+
 static int handle(rtsp_client *client, const rtsp_request *request)
 {
     static const char public_methods[] =
         "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER\r\n";
-    if (!strcmp(request->method, "OPTIONS"))
-        return response(client, request->cseq, 200, "OK", public_methods, NULL);
     jipc_config config;
     jipc_config_copy(client->server->app, &config);
+    int backchannel = 0;
+    if (request->require[0]) {
+        char unsupported[256], extra[320];
+        int can = config.audio && jipc_speaker_available(client->server->app);
+        if (require_tags(request->require, can, &backchannel, unsupported, sizeof(unsupported))) {
+            snprintf(extra, sizeof(extra), "Unsupported: %s\r\n", unsupported);
+            return response(client, request->cseq, 551, "Option not supported", extra, NULL);
+        }
+    }
+    if (!strcmp(request->method, "OPTIONS"))
+        return response(client, request->cseq, 200, "OK", public_methods, NULL);
     if (config.username[0] && jipc_auth_blocked(client->fd))
         return response(client, request->cseq, 503, "Service Unavailable", "Retry-After: 60\r\n", NULL);
     int credentials_ok = authenticated(client, request, &config);
     if (config.username[0] && request->authorization[0]) jipc_auth_result(client->fd, credentials_ok);
     if (!credentials_ok) return challenge(client, request->cseq, &config);
+    if (backchannel) client->backchannel = 1;
     int track;
     char base[2048];
     int channel = uri_channel(request->uri, &track, base, sizeof(base));
     if (channel < 0 || (unsigned)channel >= config.sensors * 2)
         return response(client, request->cseq, 404, "Not Found", NULL, NULL);
     if (!strcmp(request->method, "DESCRIBE"))
-        return describe(client, request, channel, base, &config);
+        return describe(client, request, channel, base, &config, backchannel);
     if (!strcmp(request->method, "SETUP")) return setup(client, request, channel, track, base, &config);
     if (!strcmp(request->method, "GET_PARAMETER") && client->channel < 0)
         return response(client, request->cseq, 200, "OK", NULL, NULL);
@@ -746,22 +837,25 @@ static int handle(rtsp_client *client, const rtsp_request *request)
         if (request->range[0] && strcmp(request->range, "npt=now-") &&
             strcmp(request->range, "npt=0-") && strcmp(request->range, "npt=0.000-"))
             return response(client, request->cseq, 457, "Invalid Range", NULL, NULL);
-        if (!client->tracks[0].setup && !client->tracks[1].setup)
+        if (!client->tracks[0].setup && !client->tracks[1].setup && !client->tracks[BACKCHANNEL_TRACK].setup)
             return response(client, request->cseq, 455, "Method Not Valid in This State", NULL, NULL);
         size_t used = strlen(extra);
-        int count = snprintf(extra + used, sizeof(extra) - used, "Range: npt=now-\r\nRTP-Info: ");
+        int count = snprintf(extra + used, sizeof(extra) - used, "Range: npt=now-\r\n");
         if (count < 0 || (size_t)count >= sizeof(extra) - used) return -1;
         used += (size_t)count;
+        /* RTP-Info covers the tracks we send; a talk-only session has none. */
         int added = 0;
         for (unsigned i = 0; i < 2; ++i) if (client->tracks[i].setup) {
             count = snprintf(extra + used, sizeof(extra) - used,
-                             "%surl=%strackID=%u;seq=%u", added ? "," : "",
+                             "%surl=%strackID=%u;seq=%u", added ? "," : "RTP-Info: ",
                              client->base_uri, i, client->tracks[i].sequence);
             if (count < 0 || (size_t)count >= sizeof(extra) - used) return -1;
             used += (size_t)count; added = 1;
         }
-        if (used + 3 > sizeof(extra)) return -1;
-        memcpy(extra + used, "\r\n", 3);
+        if (added) {
+            if (used + 3 > sizeof(extra)) return -1;
+            memcpy(extra + used, "\r\n", 3);
+        }
         if (!client->playing) {
             client->need_keyframe = 1;
             /* Joining viewers should not wait an entire encoder GOP. */
@@ -780,6 +874,7 @@ static int handle(rtsp_client *client, const rtsp_request *request)
         int result = response(client, request->cseq, 200, "OK", extra, NULL);
         rtcp_report(client, 0, 1); rtcp_report(client, 1, 1);
         client->playing = 0;
+        jipc_talk_release(client->server->app, client->id);
         return result ? -1 : 1;
     }
     return response(client, request->cseq, 405, "Method Not Allowed", public_methods, NULL);
@@ -798,10 +893,15 @@ static int process_input(rtsp_client *client)
              * congestion-control extensions are not advertised or implemented.
              */
             unsigned id = client->input[1];
-            for (unsigned i = 0; i < 2; ++i)
+            for (unsigned i = 0; i < RTSP_TRACKS; ++i)
                 if (client->tracks[i].setup && client->tracks[i].tcp &&
                     id == client->tracks[i].rtcp_channel && length >= 4 &&
                     (client->input[4] >> 6) == 2) client->last_activity_us = jipc_now_us();
+            rtsp_track *talk = &client->tracks[BACKCHANNEL_TRACK];
+            if (talk->setup && talk->tcp && client->playing && id == talk->rtp_channel) {
+                backchannel_rtp(client, client->input + 4, length);
+                client->last_activity_us = jipc_now_us();
+            }
             consumed = length + 4;
         } else {
             size_t header_size = 0;
@@ -919,7 +1019,8 @@ static void *client_main(void *argument)
     if (client->playing && !stopped(client)) {
         rtcp_report(client, 0, 1); rtcp_report(client, 1, 1);
     }
-    close_track(&client->tracks[0]); close_track(&client->tracks[1]);
+    jipc_talk_release(client->server->app, client->id);
+    for (unsigned i = 0; i < RTSP_TRACKS; ++i) close_track(&client->tracks[i]);
     pthread_mutex_lock(&client->server->mutex);
     close(client->fd);
     client->fd = -1;
@@ -975,7 +1076,8 @@ static void *server_main(void *argument)
         client->server = server; client->fd = fd; client->peer = peer;
         client->channel = -1; client->need_keyframe = 1;
         client->last_activity_us = client->nonce_us = jipc_now_us();
-        for (unsigned i = 0; i < 2; ++i)
+        client->id = ++server->next_id;
+        for (unsigned i = 0; i < RTSP_TRACKS; ++i)
             client->tracks[i].rtp_fd = client->tracks[i].rtcp_fd = -1;
         if (random_hex(client->nonce, 16) || random_hex(client->session, 16)) {
             close(fd); free(client); continue;
@@ -1015,6 +1117,11 @@ int jipc_rtsp_start(jipc_app *app)
     rtsp_server *server = calloc(1, sizeof(*server));
     if (!server) { pthread_mutex_unlock(&server_mutex); return -1; }
     server->listener = -1; server->app = app; server->capacity = config.max_clients;
+    if (jipc_random(server->timeline_base, sizeof(server->timeline_base)) ||
+        jipc_random(server->timeline_ssrc, sizeof(server->timeline_ssrc))) {
+        free(server); pthread_mutex_unlock(&server_mutex); return -1;
+    }
+    for (unsigned i = 0; i < JIPC_STREAMS; ++i) if (!server->timeline_ssrc[i]) server->timeline_ssrc[i] = 1;
     server->clients = calloc(server->capacity, sizeof(*server->clients));
     if (!server->clients) { free(server); pthread_mutex_unlock(&server_mutex); return -1; }
     if (pthread_mutex_init(&server->mutex, NULL)) {
