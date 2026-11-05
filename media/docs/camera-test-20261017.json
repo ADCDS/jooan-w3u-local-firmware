@@ -1,0 +1,88 @@
+{
+  "camera": "camera.example",
+  "started_at_utc": "2026-10-17T16:36:17.629047+00:00",
+  "finished_at_utc": "2026-10-17T16:37:16.615704+00:00",
+  "test": "physical MIPS userspace with generated replay input",
+  "passed": true,
+  "binary_sha256": "7334d0f119847189d4540853ca4913943d7d7d10f9c6e0a0da444c27199b73e5",
+  "camera_clock_offset_seconds": -68340,
+  "checks": [
+    "Uploaded binary integrity, native MIPS version, 73 core checks and offline SDK contracts",
+    "Native IMP ownership gate refuses active OEM process without opening media devices",
+    "Native four-stream replay and certificate-verified HTTPS readiness",
+    "rtsp protocol suite on camera",
+    "http_onvif protocol suite on camera",
+    "Native local-subnet WS-Discovery 2005 Probe/Resolve, 2009 Probe and filter rejection over SSH UDP helper",
+    "WS-Discovery refuses routed off-subnet requests",
+    "FFmpeg independently decoded camera-served replay channel 0 over TCP",
+    "FFmpeg independently decoded camera-served replay channel 3 over UDP",
+    "Replay-only PTZ lease, presets and light controls; physical GPIO/motor untouched",
+    "Camera RAM recording rotation, authenticated download and independent decode",
+    "Credential persistence, old-password rejection and SIGHUP reload on camera"
+  ],
+  "native_sensor_capture_tested": false,
+  "persistent_camera_changes": false,
+  "native_imp_preflight": {
+    "exit": 1,
+    "result": "refused concurrent OEM media owner before loading external SDK"
+  },
+  "daemon_exit": 0,
+  "temporary_camera_files_removed": true,
+  "oem_pid_unchanged": 393,
+  "local_controller_pid_unchanged": 525,
+  "oem_process_stopped": false,
+  "tls_entropy_fix": {
+    "before": "/dev/random was open with entropy_avail=18; TLS setup took about 25 seconds and handshake PSA RNG also blocked",
+    "after": "Shared MbedTLS user config selects /dev/urandom fallback for both HTTPS and PSA; pthread locking enabled",
+    "measured_tls_setup_ms": 18,
+    "early_boot_rng_readiness_qualified": false
+  },
+  "protocol_tests": {
+    "rtsp": 6,
+    "http_onvif": 8,
+    "ws_discovery": "2005 Probe/Resolve, 2009 Probe, nonmatching-type silence and off-subnet silence"
+  },
+  "network": {
+    "test_ports": {
+      "https": 18443,
+      "rtsp": 18554,
+      "discovery": 13702
+    },
+    "tls_certificate_validation": "verified",
+    "rtsp_udp": "client opened both return flows through stateful routed bench network",
+    "discovery": "native UDP helper on camera; multicast membership established but external NVR/multicast interoperability not tested"
+  },
+  "sampled_resources_kib": {
+    "rss": 1776,
+    "high_water_rss": 1832,
+    "virtual_size": 32984
+  },
+  "sdk_candidate": {
+    "candidate_sha256": "bd904ec8f4123965ded8c0c57c25ad5c3ae0fdc17aa4a6374278a7c822cb31d9",
+    "bytes": 1162360,
+    "sdk_c058_loads": [
+      "23764:\t3c05c058 \tlui\ta1,0xc058",
+      "23aa8:\t3c05c058 \tlui\ta1,0xc058",
+      "23b9c:\t3c05c058 \tlui\ta1,0xc058",
+      "28880:\t3c05c058 \tlui\ta1,0xc058",
+      "28a38:\t3c05c058 \tlui\ta1,0xc058",
+      "28ca8:\t3c05c058 \tlui\ta1,0xc058",
+      "28f98:\t3c14c058 \tlui\ts4,0xc058",
+      "29550:\t3c05c058 \tlui\ta1,0xc058",
+      "29de8:\t3c05c058 \tlui\ta1,0xc058",
+      "29f0c:\t3c05c058 \tlui\ta1,0xc058",
+      "2a180:\t3c05c058 \tlui\ta1,0xc058",
+      "2a350:\t3c05c058 \tlui\ta1,0xc058"
+    ],
+    "known_driver_namespace": "0xc05063xx (80-byte channel_node)",
+    "candidate_namespace": "0xc05863xx (88-byte channel_node)",
+    "compatible": false,
+    "qualification": "Not qualified: namespace mismatch confirmed against retained research; no SDK initialization attempted."
+  },
+  "limits": [
+    "Generated video replay; no fresh sensor capture, native JPEG, native audio, or physical motor/GPIO test.",
+    "The active OEM process gate was tested; it was not bypassed.",
+    "Compatible external SDK is still required. Freeing memory does not fix the documented VPU ioctl ABI mismatch.",
+    "Existing camera clock, mounts, services, firmware and boot scripts were not reconfigured."
+  ]
+}

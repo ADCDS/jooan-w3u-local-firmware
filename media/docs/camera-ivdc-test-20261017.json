@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-17",
+  "target": "JOOAN JA-A12 / T23N, CV2005/CV2005S1, retained OEM Linux3.10.14 and modules",
+  "result": "Reserved-memory IVDC workspace lifecycle implemented. Physical allocation/adoption/detach/free completed twice, but only the first cycle was kernel-clean. Stable native capture remains unqualified.",
+  "implementation": {
+    "profile": "Explicit OEM80; SDK88 path preserved",
+    "owner": "Global FrameSource channel 0; enable primary first and stop dependent channels first",
+    "setup": [
+      "Cache misc-IVDC direct mode at FS0 CreateChn",
+      "Read line count; checked size and page-rounded KSEG0 physical bounds",
+      "Require initialized reserved-rmem allocator and rmem descriptor provenance",
+      "Checked WB+INV before SET_PADDR; mark possible publication before ioctl",
+      "After REQBUFS, require consumed DDR address to equal the reserved allocation"
+    ],
+    "teardown": [
+      "Track possible queue/start effects even on ioctl errors",
+      "Skip STREAMOFF if STREAMON was never attempted; otherwise require it to succeed",
+      "Join worker and release queue using REQBUFS(0)",
+      "Require consumed DDR address zero, then clear pending SET_PADDR",
+      "Close frame FD, check cache maintenance, then free reserved extent",
+      "Close cached misc FD at DestroyChn"
+    ],
+    "failure_retention": "Retain allocation/descriptor/FD state on uncertain cleanup; DestroyChn can retry partial EnableChn cleanup. System/ISP teardown refuses unsafe resources.",
+    "stale_process_protection": "Check consumed address and Linux TAINT_DIE before ISP startup and first DMA allocation. Another process or DLL reload is not recovery.",
+    "kernel_fault_guard": "After the observed repeat-cycle Oops, added TAINT_DIE refusal before workspace setup, allocation/release (including subsequent generic DMA allocations/frees), and global ISP teardown. This guard is fault-injection tested; the damaged-kernel case was not intentionally reproduced again.",
+    "native_encoder": "Existing full-NV12 address/size/cache guards remain unchanged; scratch provisioning does not implement native line-ring encoding."
+  },
+  "tests": {
+    "host_full_t23_suite": "Passed",
+    "host_t30_suite": "Passed; optional T30.so dynamic export check skipped because library is not built",
+    "new_tests": [
+      "IVDC helper boundaries and ownership",
+      "Seeded public FrameSource Disable/Destroy/SystemExit retry/retention paths",
+      "Fresh allocator refuses stale workspace before opening devices; initialized allocator retains real allocation records/extents after an injected Oops"
+    ],
+    "sanitizers": "ASan+UBSan on helper, seeded FrameSource lifecycle and real fake-backed DMA allocation records",
+    "mips": "Cross-built uClibc library/tool and native contract executables. Final helper (450 checks), FrameSource (385 checks) and DMA contracts passed under QEMU and on the camera CPU using mocked device calls; kernel taint unchanged.",
+    "coverage_limits": "Seeded lifecycle tests do not invoke the entire EnableChn/capture-worker graph; physical tests exercised successful FS0 enable/disable. No encoded frame was decoded by the focused probe.",
+    "assertions": {
+      "helper": 450,
+      "seeded_framesource": 385,
+      "dma": "stale initialization, allocation and both address forms of free quarantine"
+    }
+  },
+  "physical_tested_library_sha256": "d44aa484da6192ba5efdca1ae578de02f68fd43dbcca682f55f1a860f27ea3c5",
+  "physical_tested_probe_sha256": "8632a8f450351d59f95b361c72f86cb45ab38f5dcbfb889e875e2903890f88f4",
+  "physical_cycles": [
+    {
+      "cycle": 1,
+      "original_probe_exit": 0,
+      "workspace_physical": "0x02d81000",
+      "workspace_bytes": 622080,
+      "line_count": 540,
+      "driver_adopted_reserved_address": true,
+      "stream_on_off_returned_success": true,
+      "detach_verified_and_pending_pointer_cleared": true,
+      "reserved_extent_released": true,
+      "media_handles_remaining": 0,
+      "kernel_oops": false,
+      "kernel_clean_observed": true
+    },
+    {
+      "cycle": 2,
+      "original_probe_exit": 0,
+      "workspace_physical": "0x02d81000",
+      "workspace_bytes": 622080,
+      "line_count": 540,
+      "driver_adopted_reserved_address": true,
+      "stream_on_off_returned_success": true,
+      "detach_verified_and_pending_pointer_cleared": true,
+      "reserved_extent_released": true,
+      "media_handles_remaining": 0,
+      "kernel_oops": true,
+      "kernel_clean_observed": false
+    }
+  ],
+  "repeat_fault": {
+    "thread": "isp_fw_process",
+    "module": "tx_isp_t23",
+    "epc_offset": "0x115ac",
+    "function": "sensor_set_integration_time+0x20",
+    "caller": "tisp_ae_long_set_sensor_integration_time+0x44",
+    "sensor_slot": 1,
+    "attribute_pointer": "NULL",
+    "fault_address": "0xb0",
+    "timing": "After both sensors registered and FS0 started, before STREAMOFF on cycle2",
+    "interpretation": "Dual registration is necessary but insufficient; secondary activation, initialization or repeated-cycle lifetime remains unresolved. The trace does not identify the exact missing call."
+  },
+  "combined_jooanipc_open": {
+    "tested_library_sha256": "d44aa484da6192ba5efdca1ae578de02f68fd43dbcca682f55f1a860f27ea3c5",
+    "tested_client_sha256": "90da8b57560b088bfd3a52dce57815b5e213d563f3cc2b84e6ec4e1b705af667",
+    "result": "Stopped before FrameSource at IMP_ISP_Tuning_SetSensorFPS_Sec returning -1. No video readiness; no kernel Oops in this daemon run."
+  },
+  "probe_followup": "The public probe now rejects an already Oops-tainted kernel and fails when kernel taint changes, rather than treating API return codes alone as qualification.",
+  "recovery": {
+    "checked_utc": "2026-10-17T19:02:45.032957+00:00",
+    "uptime": "244.84 8.04",
+    "kernel_taint": 4096,
+    "oem_running": true,
+    "oem_watchdog_running": true,
+    "kernel_oops": false,
+    "external_power_used": false
+  },
+  "camera_changes": "RAM-only binaries/configuration, process control, necessary SSH reset after kernel Oops; no firmware, boot, module or power-script changes.",
+  "private_evidence": "jooanipc-open/build/camera-ivdc-20261017 (not shipped in repository)",
+  "post_fault_guard_artifacts": {
+    "libimp.so": "11b65a5dddf4ac469dc5b281962fe13be3a8d5787de65bbaa69b38382910a595",
+    "openimp-t23-ivdc-probe": "797f5ddd6fde55a1f56e709265df69fc146830beb166bb0435d426349d2304ef"
+  }
+}

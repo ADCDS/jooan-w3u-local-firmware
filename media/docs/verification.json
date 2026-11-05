@@ -1,0 +1,106 @@
+{
+  "schema_version": 2,
+  "verified_at_utc": "2026-10-17T16:41:29.058623+00:00",
+  "project_version": "0.1.0",
+  "source_manifest": {
+    "sha256": "56c726b51f183171a9405c6662216d78b9f01ef5166334d88da89d175d48023c",
+    "algorithm": "Sort included relative POSIX paths; concatenate UTF-8 lines '<lowercase file SHA256>  <path>\\n'; SHA256 those bytes.",
+    "includes": [
+      "CMakeLists.txt",
+      "Makefile",
+      "dependencies.lock.json",
+      "cmake/**",
+      "include/**",
+      "src/**",
+      "tests/**",
+      "vendor/**"
+    ],
+    "excludes": [
+      "tests/**/__pycache__/**"
+    ],
+    "files": 30,
+    "local_manifest": "build/verification/source.SHA256SUMS"
+  },
+  "builds": [
+    {
+      "path": "build/host/jooanipc-open",
+      "sha256": "9c70d55503ba98c8b660f96143ead22d5a876fc847426e57884d230e16072e28",
+      "bytes": 1193880,
+      "compiler": "Debian GCC 14.2.0",
+      "architecture": "x86-64",
+      "configuration": "Release",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles"
+      }
+    },
+    {
+      "path": "build/mips/jooanipc-open",
+      "sha256": "5cbd0f7ab9c82f5c6a4fa235dfb86f1139e5ffd1c3ee02b032c6d38b77efe511",
+      "bytes": 1025676,
+      "compiler": "Ingenic GCC 5.4.0",
+      "architecture": "ELF32 little-endian MIPS32r2 o32 hard-float uClibc",
+      "configuration": "Release",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles"
+      }
+    },
+    {
+      "path": "build/asan/jooanipc-open",
+      "sha256": "d7b25b53ac21eeb5639ad24c9c996b9c308b5346b08840b288a100d1cb43ce03",
+      "bytes": 5697528,
+      "compiler": "Debian GCC 14.2.0",
+      "architecture": "x86-64",
+      "configuration": "Debug; AddressSanitizer and UndefinedBehaviorSanitizer",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles"
+      }
+    }
+  ],
+  "host_sanitizer_integration": {
+    "passed": true,
+    "tls_certificate_validated": true,
+    "protocol_tests": {
+      "rtsp": 6,
+      "http_onvif": 8,
+      "ws_discovery": 4
+    },
+    "additional_checks": [
+      "CLI input override and ready status",
+      "FFmpeg decoded channel0 via tcp",
+      "FFmpeg decoded channel3 via udp",
+      "replay PTZ deadman, presets and light control",
+      "recording rotation, authenticated download and FFmpeg decode",
+      "credential persistence, old-password rejection, CLI overrides retained on reload"
+    ],
+    "daemon_exit": 0,
+    "local_receipt": "build/verification/host-asan-tls.json"
+  },
+  "physical_camera": {
+    "on_device_replay_passed": true,
+    "native_capture_passed": false,
+    "external_libimp_loaded": false,
+    "receipt": "camera-test-20261017.json"
+  },
+  "previous_verification": {
+    "source_commit": "56571bd",
+    "receipt": "verification-initial-20261017.json",
+    "scope": "Original host/QEMU validation before physical-camera TLS fix."
+  },
+  "limits": [
+    "Physical tests used generated H.264 replay; no fresh sensor capture or physical motor/GPIO/audio qualification.",
+    "The only available SDK uses the 88-byte VPU ioctl family, while the retained OEM kernel implements the 80-byte family.",
+    "Retained boot must initialize the kernel CSPRNG; early-boot entropy readiness and cold boot are not qualified.",
+    "LAN multicast and real NVR interoperability remain unqualified.",
+    "No OEM process was stopped, and all temporary camera test files were removed."
+  ],
+  "native_followup": {
+    "receipt": "camera-native-test-20261017.json",
+    "scope": "Later source-built OpenIMP native capture, hardware PTZ and Frigate work supersedes the historical replay-only limits below",
+    "latest_receipt": "camera-1080-test-20261018.json",
+    "latest_scope": "Two native encoders: 1080p movable view and 640x360 fixed view, four logical URLs, real image/recording checks and automatic boot qualification"
+  },
+  "scope": "Historical host/QEMU/replay verification; see native_followup for later hardware results"
+}

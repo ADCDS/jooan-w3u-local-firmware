@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-10-17T16:20:27.059970+00:00",
+  "project_version": "0.1.0",
+  "target": {
+    "board": "JOOAN W3-U / JA-A12",
+    "soc": "Ingenic T23N",
+    "sensors": [
+      "CV2005",
+      "CV2005S1"
+    ],
+    "oem_application_sha256": "edd1afa9f89f74f60d23fc56a1347f9b406400d38a23aa46ebcc45983fd09355",
+    "oem_artifacts_distributed": false
+  },
+  "source_manifest": {
+    "sha256": "f390560e4ea912dd1896d71aea06c9833be1841fd4be4ccfaab5e3d65f13b320",
+    "algorithm": "Sort included relative POSIX paths; concatenate UTF-8 lines '<lowercase file SHA256>  <path>\\n'; SHA256 those bytes.",
+    "includes": [
+      "CMakeLists.txt",
+      "Makefile",
+      "dependencies.lock.json",
+      "cmake/**",
+      "include/**",
+      "src/**",
+      "tests/**",
+      "vendor/**"
+    ],
+    "excludes": [
+      "tests/**/__pycache__/**"
+    ],
+    "files": 28,
+    "local_manifest": "build/verification/source.SHA256SUMS"
+  },
+  "builds": [
+    {
+      "path": "build/host/jooanipc-open",
+      "bytes": 1188776,
+      "sha256": "d1adcdcca7b139ee09ae853d009b204146f3ef0d6ed8b3bbeb38bcd870d85c3b",
+      "compiler": "Debian GCC 14.2.0",
+      "architecture": "x86-64 Linux",
+      "configuration": "Release",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles; no hardware"
+      }
+    },
+    {
+      "path": "build/mips/jooanipc-open",
+      "bytes": 1020772,
+      "sha256": "4a0ee6e8abac0847ee7a5a51678908b98355a03615a8589108c1a3154378943f",
+      "compiler": "Ingenic r3.3.0 GCC 5.4.0",
+      "architecture": "ELF32 little-endian MIPS32r2 o32 hard-float uClibc",
+      "configuration": "Release; -muclibc -march=mips32r2 -mhard-float -Os",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles; no hardware"
+      }
+    },
+    {
+      "path": "build/asan/jooanipc-open",
+      "bytes": 5655280,
+      "sha256": "8cffe2faf57ea6cb30e9f765e1ebaf8e83eed05c593d7bd0cc260c9428933018",
+      "compiler": "Debian GCC 14.2.0",
+      "architecture": "x86-64 Linux",
+      "configuration": "Debug; AddressSanitizer and UndefinedBehaviorSanitizer",
+      "unit_tests": {
+        "core": "passed: 73 checks",
+        "imp_contract": "passed: offline SDK doubles; no hardware"
+      }
+    }
+  ],
+  "integration_runs": [
+    {
+      "name": "host Release",
+      "passed": true,
+      "tls": "certificate verified against generated test CA",
+      "protocol_tests": {
+        "rtsp": 6,
+        "http_onvif": 7,
+        "ws_discovery_unicast": 4
+      },
+      "additional_checks": [
+        "CLI input override and ready status",
+        "FFmpeg decoded channel0 via tcp",
+        "FFmpeg decoded channel3 via udp",
+        "replay PTZ deadman, presets and light control",
+        "recording rotation, authenticated download and FFmpeg decode",
+        "credential persistence, old-password rejection, CLI overrides retained on reload"
+      ],
+      "daemon_exit": 0,
+      "local_receipt": "build/verification/host-tls.json"
+    },
+    {
+      "name": "host AddressSanitizer and UndefinedBehaviorSanitizer",
+      "passed": true,
+      "tls": "certificate verified against generated test CA",
+      "protocol_tests": {
+        "rtsp": 6,
+        "http_onvif": 7,
+        "ws_discovery_unicast": 4
+      },
+      "additional_checks": [
+        "CLI input override and ready status",
+        "FFmpeg decoded channel0 via tcp",
+        "FFmpeg decoded channel3 via udp",
+        "replay PTZ deadman, presets and light control",
+        "recording rotation, authenticated download and FFmpeg decode",
+        "credential persistence, old-password rejection, CLI overrides retained on reload"
+      ],
+      "daemon_exit": 0,
+      "local_receipt": "build/verification/host-asan-tls.json"
+    },
+    {
+      "name": "MIPS/uClibc under QEMU userspace",
+      "passed": true,
+      "tls": "certificate verified against generated test CA",
+      "protocol_tests": {
+        "rtsp": 6,
+        "http_onvif": 7,
+        "ws_discovery_unicast": 4
+      },
+      "additional_checks": [
+        "CLI input override and ready status",
+        "FFmpeg decoded channel0 via tcp",
+        "FFmpeg decoded channel3 via udp",
+        "replay PTZ deadman, presets and light control",
+        "recording rotation, authenticated download and FFmpeg decode",
+        "credential persistence, old-password rejection, CLI overrides retained on reload"
+      ],
+      "daemon_exit": 0,
+      "local_receipt": "build/verification/mips-qemu-tls.json"
+    }
+  ],
+  "tools": {
+    "cmake": "3.31.6",
+    "qemu_mipsel": "10.0.11",
+    "ffmpeg": "7.1.5"
+  },
+  "physical_camera_qualification": {
+    "attempted": false,
+    "passed": false,
+    "external_libimp_loaded": false,
+    "remaining": [
+      "compatible external libimp ABI and OEM module interoperability",
+      "fresh native video from both sensors and JPEG decoding",
+      "microphone, speaker, ISP, motor and GPIO operation",
+      "native startup/teardown and resource ownership",
+      "LAN multicast and real NVR interoperability"
+    ]
+  },
+  "limits": [
+    "QEMU validates rebuilt userspace with generated H.264 input; it does not emulate the ISP, VPU, sensors or motor.",
+    "Replay controls are simulations, replay audio is PCMA silence, and replay has no JPEG/speaker backend.",
+    "This is a local-services implementation, not complete OEM feature parity. See README.md for unsupported features.",
+    "The SDK tests intentionally inject a cleanup failure; the corresponding error log is expected.",
+    "The old uClibc loader can warn about the host ld.so.cache format under QEMU; test processes still exit successfully."
+  ],
+  "staged_binaries": [
+    {
+      "path": "build/stage/usr/bin/jooanipc-open",
+      "bytes": 1056040,
+      "sha256": "87ecb4c28a30072f5d45680773e0ea7303bca439878554f30877103600f6dca5",
+      "stripped": true,
+      "version_check": "passed"
+    },
+    {
+      "path": "build/stage-mips/usr/bin/jooanipc-open",
+      "bytes": 911536,
+      "sha256": "45fbabacfd612fabcb4ba1fdf8c1657c2f3824433ec798b3b0a6f126424d2e84",
+      "stripped": true,
+      "version_check": "passed"
+    }
+  ],
+  "packaging": {
+    "install_checks": "passed for host and MIPS staging trees",
+    "files_per_package": 14,
+    "contains_external_sdk": false,
+    "contains_private_credentials": false,
+    "installs_dependency_development_files": false
+  },
+  "source_commit": "56571bd"
+}

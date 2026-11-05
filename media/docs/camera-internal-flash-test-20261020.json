@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "test_date": "2026-10-20",
+  "status": "Passed: internal appfs installed, physical power cycle with no SD, guarded handoff qualified, native watchdog and both Frigate recordings verified",
+  "board": "JA-A12 / T23N / CV2005 + CV2005S1",
+  "runtime_release": "/mnt/mtd/jooanipc-open/releases/a507d3cb-904d60a6",
+  "runtime_sha256": {
+    "jooanipc-open": "a507d3cb3a06d6b4583c543aa5b544d9f01fb2c3ee84b318abc8e9e2c5260218",
+    "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+    "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb"
+  },
+  "flash": {
+    "type": "8 MiB SPI NOR",
+    "modified_partition": "appfs (mtd4)",
+    "partition_bytes": 3211264,
+    "squashfs_image_bytes": 3166208,
+    "remaining_bytes": 45056,
+    "installed_partition_md5": "dcff03a0f8d942a7846df9376b66a7c5",
+    "compression": "xz",
+    "block_size_bytes": 1048576,
+    "pruned": "voice prompts and unrelated SC sensor files",
+    "retained": "exact OEM executable and linked libraries, CV2005 tuning/drivers including false-sensor fallback, ISP/motor modules, OEM bootstrap"
+  },
+  "kernel_probes": {
+    "one_mib_data_blocks": "passed",
+    "multiple_fragment_blocks": "passed"
+  },
+  "startup": {
+    "sd_detected": false,
+    "sd_mount_present": false,
+    "release_mount": "/dev/mtdblock4 /mnt/mtd squashfs ro",
+    "physical_power_cycle": true,
+    "handoff_log": "boot handoff qualified; network controller, SSH and native watchdog retained",
+    "boot_trial_cleared": true,
+    "native_watchdog_owned": true,
+    "private_presets_unchanged": true,
+    "opt_free_kib": 100,
+    "native_uptime_seconds_observed": 194.095971,
+    "backend_error": "",
+    "camera_recording": false,
+    "record_dir": "/run/jooanipc-open/recordings"
+  },
+  "video": {
+    "primary": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 15
+    },
+    "fixed": {
+      "width": 640,
+      "height": 360,
+      "fps": 15
+    },
+    "capture_frames_observed": {
+      "0": 2854,
+      "1": 2854,
+      "2": 2856,
+      "3": 2856
+    },
+    "frigate_detection_fps": [
+      5.0,
+      5.0
+    ],
+    "frigate_connection_quality": [
+      "excellent",
+      "excellent"
+    ],
+    "recordings": [
+      {
+        "view": "primary",
+        "probe": {
+          "programs": [],
+          "streams": [
+            {
+              "codec_name": "h264",
+              "width": 1920,
+              "height": 1080,
+              "r_frame_rate": "15/1"
+            }
+          ],
+          "format": {
+            "duration": "10.000000"
+          }
+        },
+        "first_30_frames_decode": "passed"
+      },
+      {
+        "view": "fixed",
+        "probe": {
+          "programs": [],
+          "streams": [
+            {
+              "codec_name": "h264",
+              "width": 640,
+              "height": 360,
+              "r_frame_rate": "15/1"
+            }
+          ],
+          "format": {
+            "duration": "9.997000"
+          }
+        },
+        "first_30_frames_decode": "passed"
+      }
+    ],
+    "current_images": "both inspected; no decode corruption"
+  },
+  "source_validation": [
+    "boot-calibration CTest passed",
+    "boot-release-storage CTest passed",
+    "ShellCheck and POSIX/BusyBox shell syntax passed",
+    "independent source and installer reviews passed"
+  ],
+  "qualification_limits": [
+    "OEM bootstrap remains responsible for Wi-Fi and motor homing",
+    "pruned application image is specific to the verified dual-CV2005 board",
+    "firmware images, factory data, configuration backups and raw camera captures are private artifacts"
+  ]
+}

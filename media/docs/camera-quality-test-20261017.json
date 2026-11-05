@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "checked_utc": "2026-10-17T23:39:15.583359+00:00",
+  "board": "JA-A12 / T23N / CV2005 + CV2005S1",
+  "kernel": "retained OEM Linux3.10.14",
+  "runtime_verified_before_reboot": {
+    "release": "/mnt/sd_card/jooanipc-open/releases/02030090-904d60a6",
+    "sha256": {
+      "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+      "jooanipc-open": "020300909d72bf5212d96e437ceeaad9530321ec67885a152330e175747f1c47",
+      "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb",
+      "test-platform-presets": "52ac3732b68019e6b393a63f9f6154ec68c9ea910404aae998825fb5e2f86a8a",
+      "test-platform-motor": "0688268ce82cd6cdd1463c704878707756fdb56db368d71788a77f88b9b3adca"
+    },
+    "md5": {
+      "libimp.so": "a75aefacd864367689ab051cb10372f8",
+      "jooanipc-open": "613fc84b623b88ed4ac71044f84fb8d1",
+      "libatomic.so.1": "450d78debc4274f9e672543ed9bfe007",
+      "test-platform-presets": "dda9fb8374df60f08fe3537a7678a4fe",
+      "test-platform-motor": "6fa299b803c248cdc426a31c0f03c93f"
+    }
+  },
+  "status": "Passed: final build deployed; power-cycle recovery and automatic reboot qualified",
+  "profile": {
+    "main_resolution": [
+      1280,
+      720
+    ],
+    "secondary_main_resolution": [
+      1280,
+      720
+    ],
+    "sub_resolution": [
+      320,
+      240
+    ],
+    "fps": 15,
+    "main_bitrate_kbps": [
+      2048,
+      1536
+    ],
+    "sub_bitrate_kbps": 256,
+    "gop_frames": 15,
+    "audio": false,
+    "onvif_nudge_ms": 350,
+    "nudge_speed": 540
+  },
+  "memory": {
+    "rmem_total_kib": 21988,
+    "rmem_peak_kib": 18140,
+    "remaining_kib": 3848
+  },
+  "video": [
+    {
+      "profile": "High",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "15/1",
+      "channel": 0,
+      "packets": 47,
+      "max_packet": 184355,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 1280,
+      "height": 720,
+      "r_frame_rate": "15/1",
+      "channel": 2,
+      "packets": 47,
+      "max_packet": 123286,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 320,
+      "height": 240,
+      "r_frame_rate": "15000/1001",
+      "channel": 1,
+      "packets": 46,
+      "max_packet": 24428,
+      "strict_decode_30_frames": true
+    },
+    {
+      "profile": "High",
+      "width": 320,
+      "height": 240,
+      "r_frame_rate": "179/12",
+      "channel": 3,
+      "packets": 47,
+      "max_packet": 21904,
+      "strict_decode_30_frames": true
+    }
+  ],
+  "visual_inspection": {
+    "both_720_mains": "clean",
+    "asymmetric_1080_primary_360_secondary": "rejected: repeated/misaligned regions despite valid H264",
+    "original_2304x1296": "not restored; current four-stream full-frame path modeled 5000KiB over reserved arena"
+  },
+  "motor": [
+    {
+      "case": "single",
+      "clicks": 1,
+      "steps": 194,
+      "movement_span_s": 0.33,
+      "stationary_after_s": 9.56,
+      "runs": [
+        {
+          "start": 596.82,
+          "speed": 540,
+          "end": 597.15
+        }
+      ],
+      "speeds": [
+        540
+      ]
+    },
+    {
+      "case": "burst",
+      "clicks": 3,
+      "steps": 585,
+      "movement_span_s": 1.24,
+      "stationary_after_s": 8.66,
+      "runs": [
+        {
+          "start": 608.01,
+          "speed": 540,
+          "end": 608.78
+        },
+        {
+          "start": 608.85,
+          "speed": 540,
+          "end": 609.25
+        }
+      ],
+      "speeds": [
+        540
+      ]
+    }
+  ],
+  "original_presets": {
+    "count": 4,
+    "raw_coordinates_preserved": true,
+    "all_four_recalled_through_frigate": true,
+    "catalog": "private presets.v2.json",
+    "previous_v1_backed_up": true,
+    "reboot_persistence": "Passed: catalog byte-exact after automatic reboot; all four recalls passed after power cycle; PRESET B and PRESET C recalled again after final automatic boot"
+  },
+  "control_latency_from_nvr": {
+    "connect_tls_ms": 402.95,
+    "requests": [
+      {
+        "path": "/health",
+        "ms": 5.16
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 6.68
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 4.27
+      },
+      {
+        "path": "/health",
+        "ms": 5.81
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 3.72
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 7.52
+      },
+      {
+        "path": "/health",
+        "ms": 2.43
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 3.67
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 6.48
+      },
+      {
+        "path": "/health",
+        "ms": 2.34
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 3.2
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 3.64
+      }
+    ],
+    "median_warm_ms": 4.0
+  },
+  "tests": {
+    "host_ctest": 7,
+    "http_onvif_tls": 11,
+    "rtsp_protocol": 6,
+    "discovery": 4,
+    "target_motor_and_preset_contracts": "passed",
+    "deployed_target_named_preset_roundtrip": "Passed on the camera and under MIPS QEMU"
+  },
+  "limitations": [
+    "Browser display latency was not directly measured.",
+    "A fresh TLS connection still incurs handshake cost.",
+    "JPEG transactions still serialize SDK calls and may pause H264 briefly.",
+    "Higher asymmetric resolutions are rejected after visual corruption in the hardware test."
+  ],
+  "reboot": {
+    "passed": true,
+    "daemon_pid": 5827,
+    "automatic_handoff": true,
+    "watchdog_qualification_seconds": 185,
+    "kernel_taint": 4096,
+    "taint_die": false,
+    "preset_catalog_byte_exact": true,
+    "final_preset": "PRESET C",
+    "wifi_frequency_mhz": 5180,
+    "optional_ap_pin_disabled": true,
+    "network_recovery_note": "Earlier boots lost IP access after a forced switch from working 5GHz to 2.4GHz. The private deployment manifest now leaves the optional AP pin empty; the retained controller association and automatic native startup passed on 5GHz.",
+    "previous_failed_reboot": "Camera Wi-Fi/IP access lost during boot; gateway observed 5GHz DHCP followed by forced2.4GHz association; root cause not yet confirmed."
+  },
+  "source_commit": "85fd603",
+  "passed": true,
+  "deployed_release": {
+    "release": "/mnt/sd_card/jooanipc-open/releases/f8942749-904d60a6",
+    "sha256": {
+      "libimp.so": "904d60a63e817cfed97797bef283974d23f75e0ff0b81285d04ef020cc70eb34",
+      "jooanipc-open": "f8942749f17ebf8bcbbba55f632b95a76213a8db7edb9592d02cecf7c10977d0",
+      "libatomic.so.1": "8e8b6260e50d39e7a1abbe4638c13f54216a45ccfc7973e3b2b287eb55c2a1fb",
+      "test-platform-presets": "9a8d29f2c371ff228cf1de46492e2048522feca73eb7f2706946d78108db242d",
+      "test-platform-motor": "cef480cb4aab8df63d5e94c7eb8aad441784200375fa85236e7972f0a3639c78"
+    },
+    "md5": {
+      "libimp.so": "a75aefacd864367689ab051cb10372f8",
+      "jooanipc-open": "83ae33eb17503657b65bccb4eb3482c2",
+      "libatomic.so.1": "450d78debc4274f9e672543ed9bfe007",
+      "test-platform-presets": "241bf110841bd0a750fb432a80d809dd",
+      "test-platform-motor": "503221eeafc64cb067c79cd77ab57a45"
+    }
+  },
+  "deployed_app_sha256": "f8942749f17ebf8bcbbba55f632b95a76213a8db7edb9592d02cecf7c10977d0",
+  "control_latency_before_network_recovery": {
+    "connect_tls_ms": 722.9,
+    "requests": [
+      {
+        "path": "/health",
+        "ms": 116.95
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 104.72
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 73.85
+      },
+      {
+        "path": "/health",
+        "ms": 23.46
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 33.73
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 5.5
+      },
+      {
+        "path": "/health",
+        "ms": 16.34
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 36.32
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 8.86
+      },
+      {
+        "path": "/health",
+        "ms": 10.63
+      },
+      {
+        "path": "/api/v1/status",
+        "ms": 29.78
+      },
+      {
+        "path": "/onvif/ptz_service",
+        "ms": 37.91
+      }
+    ],
+    "median_warm_ms": 31.75
+  },
+  "frigate": {
+    "checked_epoch": 1792280221.676259,
+    "ptz": {
+      "name": "jooan_main",
+      "features": [
+        "pt"
+      ],
+      "presets": [
+        "preset a",
+        "preset b",
+        "preset c",
+        "preset d"
+      ],
+      "profiles": [
+        {
+          "name": "Sensor 0 main",
+          "token": "main0"
+        },
+        {
+          "name": "Sensor 0 sub",
+          "token": "sub0"
+        }
+      ]
+    },
+    "cameras": {
+      "jooan_main": {
+        "camera_fps": 5.1,
+        "process_fps": 5.1,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "connection_quality": "excellent",
+        "expected_fps": 5,
+        "reconnects_last_hour": 0,
+        "stalls_last_hour": 2
+      },
+      "jooan_sub": {
+        "camera_fps": 5.0,
+        "process_fps": 5.0,
+        "skipped_fps": 0.0,
+        "detection_fps": 0.0,
+        "connection_quality": "excellent",
+        "expected_fps": 5,
+        "reconnects_last_hour": 0,
+        "stalls_last_hour": 3
+      }
+    },
+    "recordings": [
+      {
+        "camera": "jooan_main",
+        "start_time": 1792280198,
+        "end_time": 1792280207.989323,
+        "duration": 9.989322916666666,
+        "size_mb": 2.18,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "576000/38359",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.02
+        },
+        "strict_decode_15_frames": true
+      },
+      {
+        "camera": "jooan_sub",
+        "start_time": 1792280209,
+        "end_time": 1792280218.996094,
+        "duration": 9.99609375,
+        "size_mb": 1.52,
+        "video": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "15/1",
+          "avg_frame_rate": "12800/853",
+          "nb_read_packets": "150",
+          "observed_frames_per_second": 15.01
+        },
+        "strict_decode_15_frames": true
+      }
+    ],
+    "processing_limit": "Shared CPU detector can temporarily fill the two-frame processing queue during scene motion; measured inference 106–124ms. Idle processing recovered to 5fps per view. SHM use was 12.3MiB of 128MiB, with no exhaustion observed."
+  },
+  "final_service": {
+    "ready": true,
+    "backend_error": "",
+    "all_four_streams_have_parameters": true,
+    "native_uptime_seconds": 328.094544
+  }
+}
