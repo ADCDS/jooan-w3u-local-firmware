@@ -74,7 +74,8 @@ static int build_records(const char *password, int warning,
     if(joan_random(salt,12))return-1;
     joan_hex(salt,12,hk);
     n=snprintf(rtsp,320,"%s\n",hk);memset(hk,0,sizeof(hk));memset(salt,0,sizeof(salt));
-    if(n<=0||n>=320)return-1;*rtsp_len=(size_t)n;
+    if(n<=0||n>=320)return-1;
+    *rtsp_len=(size_t)n;
     return 0;
 }
 
