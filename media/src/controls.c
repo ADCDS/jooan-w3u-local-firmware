@@ -893,7 +893,7 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity)
                 c->trigger_until && now < c->trigger_until ? (double)((c->trigger_until - now + 999999u) / 1000000u) : 0);
             cJSON_AddNumberToObject(live, "local_minutes", local_minutes(&c->s));
             cJSON_AddStringToObject(live, "zone", c->zone_valid ? "camera" : "browser");
-            cJSON_AddBoolToObject(live, "privacy", c->active_privacy == 1);
+            cJSON_AddBoolToObject(live, "privacy", atomic_load(&c->app->privacy_on)); /* true from before video starts */
             cJSON *patrol = cJSON_AddObjectToObject(live, "patrol");
             if (patrol) {
                 cJSON_AddStringToObject(patrol, "state", c->patrol_state ? c->patrol_state : "off");

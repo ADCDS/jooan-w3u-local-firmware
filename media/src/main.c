@@ -188,7 +188,7 @@ int main(int argc, char **argv)
         atomic_init(&app->stop, 0); atomic_init(&app->restart, 0);
         pthread_mutex_init(&app->config_mutex, NULL); pthread_mutex_init(&app->control_mutex, NULL);
         atomic_init(&app->backend_ready, 0); atomic_init(&app->control_waiters, 0);
-        atomic_init(&app->privacy_on, 0); atomic_init(&app->privacy_hold, 0);
+        atomic_init(&app->privacy_on, 0); atomic_init(&app->privacy_hold, 0); atomic_init(&app->privacy_wait_key, 0);
         if (jipc_mkdirs(config.state_dir, 0700) || jipc_streams_init(app)) { free(app); return 1; }
         jipc_controls_preload(app);
         if (jipc_ntp_start(app) || jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {

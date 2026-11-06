@@ -26,10 +26,11 @@ enum { MOTOR_STOP = 1, MOTOR_RESET = 2, MOTOR_POSITION = 4, MOTOR_SPEED = 5,
  * ResetSpeed. See docs/platform.md. */
 enum { HOME_PAN_STEPS = 4080, HOME_TILT_STEPS = 1200, HOME_TILT_RESET = 200, HOME_SPEED = 450 };
 /* Half the pan/tilt lens's field of view in motor steps, measured on camera1
- * from how far the picture shifts: 1.68 px per pan step and 1.84 per tilt step
- * at 1920x1080, so about 92 by 43 degrees. An ONVIF FOV-relative move of 1 brings
- * the frame's edge to its centre, which is how Frigate's autotracker aims. */
-enum { FOV_HALF_PAN = 571, FOV_HALF_TILT = 293 };
+ * from how far the picture shifts at 1920x1080 in moves that run to completion:
+ * 2.37 px per pan step and 2.45 per tilt step, after a dead band of about 25 steps
+ * whenever a direction reverses (gear backlash). An ONVIF FOV-relative move of 1
+ * brings the frame's edge to its centre, which is how Frigate's autotracker aims. */
+enum { FOV_HALF_PAN = 405, FOV_HALF_TILT = 220 };
 #define MANUAL_LEASE_US UINT64_C(1200000)
 #define NUDGE_US UINT64_C(350000)
 #define PRESET_LIMIT_US UINT64_C(45000000)

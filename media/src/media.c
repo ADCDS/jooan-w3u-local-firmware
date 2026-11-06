@@ -91,6 +91,31 @@ void jipc_streams_destroy(jipc_app *app)
     }
 }
 
+/* Say whether an access unit has an IDR, and keep its SPS and PPS for a stream
+ * if one is given (with that stream's mutex held). */
+static int stream_parameters(jipc_stream *stream, const unsigned char *copy, size_t bytes)
+{
+    int idr = 0;
+    size_t payload, start = annexb_next(copy, bytes, 0, &payload);
+    while (start < bytes && payload < bytes) {
+        size_t next_payload, next = annexb_next(copy, bytes, payload, &next_payload);
+        size_t nal_bytes = next - payload;
+        while (nal_bytes && !copy[payload + nal_bytes - 1]) --nal_bytes;
+        unsigned type = copy[payload] & 31;
+        if (type == 5) idr = 1;
+        if (stream && type == 7 && nal_bytes <= sizeof stream->sps) {
+            memcpy(stream->sps, copy + payload, nal_bytes);
+            stream->sps_size = nal_bytes;
+        } else if (stream && type == 8 && nal_bytes <= sizeof stream->pps) {
+            memcpy(stream->pps, copy + payload, nal_bytes);
+            stream->pps_size = nal_bytes;
+        }
+        start = next;
+        payload = next_payload;
+    }
+    return idr;
+}
+
 int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes,
                  uint64_t pts_us, int keyframe, enum jipc_codec codec)
 {
@@ -104,25 +129,7 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     if (!stream->capacity) { free(copy); return -1; }
     pthread_mutex_lock(&stream->mutex);
     if (channel == JIPC_AUDIO_STREAM && codec == JIPC_PCMA) jipc_audio_meter_add(app, copy, bytes, jipc_now_us());
-    if (codec == JIPC_H264) {
-        size_t payload, start = annexb_next(copy, bytes, 0, &payload);
-        while (start < bytes && payload < bytes) {
-            size_t next_payload, next = annexb_next(copy, bytes, payload, &next_payload);
-            size_t nal_bytes = next - payload;
-            while (nal_bytes && !copy[payload + nal_bytes - 1]) --nal_bytes;
-            unsigned type = copy[payload] & 31;
-            if (type == 5) keyframe = 1;
-            if (type == 7 && nal_bytes <= sizeof stream->sps) {
-                memcpy(stream->sps, copy + payload, nal_bytes);
-                stream->sps_size = nal_bytes;
-            } else if (type == 8 && nal_bytes <= sizeof stream->pps) {
-                memcpy(stream->pps, copy + payload, nal_bytes);
-                stream->pps_size = nal_bytes;
-            }
-            start = next;
-            payload = next_payload;
-        }
-    }
+    if (codec == JIPC_H264 && stream_parameters(stream, copy, bytes)) keyframe = 1;
     uint64_t sequence = ++stream->sequence;
     jipc_frame *frame = &stream->slots[(sequence - 1) % stream->capacity];
     free(frame->data);
@@ -137,7 +144,26 @@ int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
                        const void *data, size_t bytes, uint64_t pts_us, int keyframe)
 {
     if (source >= JIPC_VIDEO_STREAMS || (main_only && (source & 1))) return -1;
-    if (atomic_load(&app->privacy_hold)) return 0;
+    /* Held for privacy: no picture reaches anyone, but the parameter sets do. They
+     * show nothing, and RTSP and the startup check need them. Afterwards a stream
+     * restarts at a keyframe: P-frames would decode onto the last picture before
+     * the hold. */
+    unsigned bit = 1u << source;
+    if (atomic_load(&app->privacy_hold)) {
+        atomic_fetch_or(&app->privacy_wait_key, bit);
+        for (unsigned ch = source; ch <= source + (main_only ? 1u : 0u); ++ch) {
+            jipc_stream *stream = &app->streams[ch];
+            if (!stream->capacity) continue;
+            pthread_mutex_lock(&stream->mutex);
+            (void)stream_parameters(stream, data, bytes);
+            pthread_mutex_unlock(&stream->mutex);
+        }
+        return 0;
+    }
+    if (atomic_load(&app->privacy_wait_key) & bit) {
+        if (!stream_parameters(NULL, data, bytes)) return 0;
+        atomic_fetch_and(&app->privacy_wait_key, ~bit);
+    }
     if (jipc_publish(app,source,data,bytes,pts_us,keyframe,JIPC_H264)) return -1;
     return main_only ? jipc_publish(app,source+1,data,bytes,pts_us,keyframe,JIPC_H264) : 0;
 }

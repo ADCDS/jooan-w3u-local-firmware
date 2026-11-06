@@ -1031,6 +1031,29 @@ def main():
             wait_ready()
             assert (config.stat().st_mode & 0o777) == 0o600
             result["checks"].append("credential persistence, old-password rejection, CLI overrides retained on reload")
+            # A start with privacy mode already on: frames are held from before video
+            # starts, which must not stop the daemon coming up. On the camera this took
+            # the board down: the startup check waits for parameter sets from the frames.
+            assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+            saved = root / "state" / "controls.json"
+            end = time.time() + 8
+            while time.time() < end and not (saved.exists() and json.loads(saved.read_text())["privacy"]["on"]):
+                time.sleep(0.2)
+            assert json.loads(saved.read_text())["privacy"]["on"] is True
+            process.send_signal(signal.SIGHUP)
+            time.sleep(0.5)
+            wait_ready()
+            assert process.poll() is None, "the daemon must come up with privacy mode on"
+            live = json.loads(request("GET", "/api/v1/controls")[1])["live"]
+            assert live["privacy"] is True and "privacy" not in live["error"], live
+            first = json.loads(request("GET", "/api/v1/status")[1])["streams"][0]["frames"]
+            end = time.time() + 6
+            while time.time() < end and json.loads(request("GET", "/api/v1/status")[1])["streams"][0]["frames"] <= first:
+                time.sleep(0.2)
+            assert json.loads(request("GET", "/api/v1/status")[1])["streams"][0]["frames"] > first, \
+                "frames resume once the black-out is applied"
+            assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+            result["checks"].append("a start with privacy mode on comes up and resumes frames at a keyframe")
             # Last: this locks 127.0.0.1 out for a minute. Earlier negative
             # tests may already have counted, so the block can come sooner.
             statuses = [request("GET", "/api/v1/status", password="not-" + secret)[0] for _ in range(10)]
