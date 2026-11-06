@@ -79,7 +79,9 @@
 		lens = 0,
 		lastOk = 0, // when the camera last answered anything
 		upx = null, // the platform upload in flight
-		spw = null; // the stream password, fetched only when shown or copied
+		spw = null, // the stream password, fetched only when shown or copied
+		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
+		tzAt = 0; // after saving the time zone: the camera takes up to a minute to follow
 	const S = {},
 		age = k => Date.now() - (S[k + '@'] || 0);
 	const p2 = n => String(n).padStart(2, '0'),
@@ -229,7 +231,7 @@
 			throw new Fail('The camera is not answering.', 'off');
 		}
 		if (e0 != ep && !o.login) throw new Fail('', 'auth');
-		if (off) setOn();
+		if (off && Date.now() > holdOff) setOn();
 		const { r, d } = x;
 		if (r.ok) return d;
 		const e = d && d.error,
@@ -243,7 +245,7 @@
 			await new Promise(z => setTimeout(z, 800));
 			return api(p, { ...o, bz: 1 });
 		}
-		throw new Fail(say(r.status, code, raw), 'http', r.status, raw);
+		throw Object.assign(new Fail(say(r.status, code, raw), 'http', r.status, raw), { d });
 	}
 	const ctl = (operation, value = 0, value2 = 0, name) =>
 		api(M + 'control', { method: 'POST', json: { operation, value, value2, name } });
@@ -268,14 +270,17 @@
 		routes = src('r', J + 'network/routes', rRoutes, { timeout: 2e4 }),
 		keys = src('k', J + 'ssh/authorized-keys', rKeys, { timeout: 2e4 }),
 		clock = src('t', J + 'time', rTime),
-		controls = src('x', M + 'controls', rControls);
+		controls = src('x', M + 'controls', rControls),
+		wifiState = src('w', J + 'network/wifi', rWifi, { quiet: 1, timeout: 8e3 }),
+		restartAt = src('y', J + 'system/restart-schedule', rRestart, { timeout: 2e4 });
 	const guess = /^[\d.]+$|[:[]/.test(location.hostname) ? 'Camera' : location.hostname.split('.')[0],
 		name = () => S.n?.hostname || guess,
 		rel = () => (/\/releases\/([0-9a-f]{8})/.exec(S.c?.libimp || '') || [])[1];
-	function goOff() {
+	function goOff(why) {
 		if (!csrf || off) return;
 		off = 1;
 		retry = Date.now() + 1e4;
+		tx('bn-why', why || 'It may be restarting (about 90 s) or off the network. You are still signed in.');
 		tx('bn-last', lastOk ? ' Last answer ' + hm(new Date(lastOk)) + '.' : '');
 		ptzEnd(1);
 		talkStop();
@@ -289,9 +294,11 @@
 		shell();
 		ov();
 		load(route);
+		W && !W.end && wifiState().catch(wifiLost);
 	}
 	async function probe() {
 		retry = Date.now() + 1e4;
+		if (Date.now() < holdOff) return;
 		const e0 = ep,
 			x = await req(J + 'session', { timeout: 6e3 });
 		if (e0 != ep || !x) return;
@@ -353,7 +360,9 @@
 		const u = $('si-user').value.trim(),
 			p = $('si-pass').value;
 		if (!u || !p) return err($('si-pass'), 'Enter the user name and the password.');
-		run($('si-go'), () => signIn({ username: u, password: p }), $('si-pass'));
+		/* "Stay signed in" is the camera's 30-day cookie; the password is never kept here. */
+		const c = { username: u, password: p, ...($('si-stay').checked ? { remember: true } : {}) };
+		run($('si-go'), () => signIn(c), $('si-pass'));
 	};
 	function out(m) {
 		++ep;
@@ -385,6 +394,10 @@
 		[config, mdns, media, joan].forEach(f => f().catch(noop));
 		route = '';
 		go(1);
+		/* A trial started anywhere needs an answer in time: bring its countdown up on any device. */
+		wifiState()
+			.then(() => W && !W.end && route != 'network' && (location.hash = '#network'))
+			.catch(wifiLost);
 	}
 	const TI = {
 			overview: 'Overview',
@@ -438,8 +451,8 @@
 		image: [media, config, [controls, 'im-nst']],
 		audio: [media, config],
 		streams: [config, mdns, media, controls],
-		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes']],
-		system: [joan, media, config, [clock, 'sy-nh'], [keys, 'sy-keys']],
+		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes'], wifiState],
+		system: [joan, media, config, controls, [clock, 'sy-nh'], [restartAt, 'sy-rsn'], [keys, 'sy-keys']],
 		settings: [joan, media, quality]
 	};
 	function load(r) {
@@ -609,17 +622,22 @@
 	const fld = (l, i) => h('div', { class: 'f' }, h('label', { for: i.id, text: l }), i);
 	function shell() {
 		const m = S.m,
+			bm = m?.system?.boot_mode,
 			st = off
 				? ['crit', 'Not answering']
-				: !m
-					? ['off', 'Connecting']
-					: m.ready
-						? ['ok', 'Online']
-						: ['warn', 'Starting'],
+				: W && !W.end
+					? ['warn', 'Testing a new network']
+					: !m
+						? ['off', 'Connecting']
+						: m.ready
+							? ['ok', 'Online']
+							: ['warn', 'Starting'],
+			/* the side nav also names the boot mode; a phone header has room for the state only */
+			long = st[1] == 'Online' && (bm == 'native' || bm == 'handoff') ? `Online · ${bm} boot` : st[1],
 			a = S.c?.bind || location.hostname;
 		$$('.cam-name').forEach(e => (e.textContent = name()));
 		$$('.cam-addr').forEach(e => (e.textContent = a));
-		$$('.state').forEach(e => e.replaceChildren(pill(...st)));
+		$$('.state').forEach(e => e.replaceChildren(pill(st[0], e.classList.contains('bare') ? st[1] : long)));
 		tx('sy-cmd', `ssh ${user}@${a}`);
 		tx('se-ver', `JOOAN W3-U · platform ${S.j?.version || '…'} · media ${rel() || m?.version || '…'}`);
 		title();
@@ -671,18 +689,21 @@
 				: ['Not synced'];
 	}
 	/* Status rows [tone, label, value]. `sys`: the System page's health list, which adds the
-	   watchdog and leaves audio and Wi-Fi to their own pages. */
+	   watchdog and the board's state and leaves audio and Wi-Fi to their own pages. A missing
+	   status.system (older firmware) hides the rows that need it. */
 	function hl(sys) {
 		const m = S.m,
 			j = S.j,
 			w = S.q?.wifi,
 			L = [],
-			a = (t, k, v) => L.push([t, k, v]);
+			a = (t, k, v) => L.push([t, k, v]),
+			kb = n => bytes(n * 1024);
 		if (m) {
 			const p = m.platform || {},
 				A = m.audio || {},
 				mc = A.microphone || {},
-				sp = A.speaker || {};
+				sp = A.speaker || {},
+				y = m.system || {};
 			a(
 				m.ready ? 'ok' : m.backend_error ? 'crit' : 'warn',
 				'Media service',
@@ -695,6 +716,21 @@
 				p.homing ? 'Calibrating' : p.last_error || (p.position_known ? 'Ready' : 'Position unknown')
 			);
 			sys && S.c && a(S.c.watchdog ? 'ok' : 'off', 'Watchdog', S.c.watchdog ? 'Active' : 'Not used');
+			if (sys) {
+				y.boot_mode && y.boot_mode != 'unknown' && a('ok', 'Boot mode', cap(y.boot_mode));
+				y.memfree_kb != null && a(y.memfree_kb < 1024 ? 'warn' : 'ok', 'Memory free', kb(y.memfree_kb));
+				if (y.state_free_kb != null) {
+					const low = y.state_free_kb < 32; // the settings partition is 384 KB
+					a(low ? 'warn' : 'ok', 'Flash free', kb(y.state_free_kb) + (low ? ', low' : ''));
+				}
+			} else if (y.uptime_s != null) {
+				const since = new Date(Date.now() - y.uptime_s * 1e3);
+				a(
+					'ok',
+					'Uptime',
+					`${dur(y.uptime_s)} · since ${since.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}`
+				);
+			}
 			if (sys) {
 				/* audio has its own page */
 			} else if (!A.enabled) a('off', 'Audio', 'Off');
@@ -718,7 +754,8 @@
 				'Wi-Fi',
 				w.associated
 					? (sig(w.signal_dbm) || 'Connected') +
-							(w.signal_dbm != null ? ' · ' + mi(w.signal_dbm) + ' dBm' : '')
+							(w.signal_dbm != null ? ' · ' + mi(w.signal_dbm) + ' dBm' : '') +
+							(w.band ? ' · ' + w.band : '')
 					: 'Not connected'
 			);
 		if (j) {
@@ -770,7 +807,10 @@
 	/* Camera controls (GET/POST /api/v1/controls): night mode, infrared, white light and
 	   picture, kept by the camera across restarts. POST takes any subset and answers with
 	   the full state; the engine applies it within a second, so the page reads it again. */
-	const tz = () => ({ utc_offset_min: -new Date().getTimezoneOffset() }),
+	/* Schedules run in the camera's own time zone (System, Time zone) when it has one
+	   (live.zone "camera"); otherwise in the offset the browser sends with a schedule. */
+	const camZone = () => S.x?.live.zone == 'camera',
+		tz = () => (camZone() ? {} : { utc_offset_min: -new Date().getTimezoneOffset() }),
 		utc = m => 'UTC' + (m < 0 ? '−' : '+') + p2((Math.abs(m) / 60) | 0) + ':' + p2(Math.abs(m) % 60),
 		num = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' '),
 		mins = t => +t.slice(0, 2) * 60 + +t.slice(3),
@@ -797,16 +837,21 @@
 			other = now == 'night' ? 'day' : 'night';
 		if (now == 'unknown') return 'Starting…';
 		let t = cap(now) + ' now' + (L.since_s ? `, for ${dur(L.since_s + age('x') / 1e3)}` : '') + '.';
-		if (n.mode == 'auto')
+		if (n.mode == 'auto') {
+			const stays = `if it stays ${now == 'night' ? 'light' : 'dark'}`,
+				wait = left(n.wait_s - L.pending_s),
+				hold = left(L.hold_left_s || 0);
 			t +=
 				L.level == null
 					? ' No darkness reading yet; it stays as it is.'
-					: L.pending_s > 0
-						? ` Switching to ${other} ${(r => (r ? 'in ' + dur(r) : 'now'))(left(n.wait_s - L.pending_s))} if it stays ${now == 'night' ? 'light' : 'dark'}.`
-						: now == 'night'
+					: !L.pending_s
+						? now == 'night'
 							? ` Back to day when the level falls to ${num(n.day_ev)}.`
-							: ` Night when the level reaches ${num(n.night_ev)}.`;
-		else if (n.mode == 'schedule') t += ` Night from ${n.from} until ${n.until}, camera time.`;
+							: ` Night when the level reaches ${num(n.night_ev)}.`
+						: hold > wait
+							? ` Switching to ${other} in ${dur(hold)} ${stays}: at least 5 minutes pass between automatic switches.`
+							: ` Switching to ${other} ${wait ? 'in ' + dur(wait) : 'now'} ${stays}.`;
+		} else if (n.mode == 'schedule') t += ` Night from ${n.from} until ${n.until}, camera time.`;
 		else t += ' It stays so until you change it.';
 		return t + (L.error ? ' The camera reports: ' + L.error + '.' : '');
 	}
@@ -834,9 +879,9 @@
 		return (
 			(a == b
 				? 'From and until are the same, so the light never turns on.'
-				: `Every day, camera time (${utc(x.utc_offset_min)}). ` +
+				: `Every day, camera time (${utc(x.utc_offset_min)}${camZone() ? ', set under System' : ''}). ` +
 					(inside ? `On now, off ${day} at ${s.until}.` : `Next: ${day} ${s.from}.`)) +
-			(x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '')
+			(dz != null && x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '')
 		);
 	}
 	function lights() {
@@ -892,6 +937,7 @@
 		setIn($('im-de'), num(n.day_ev).replace(/ /g, ' '));
 		setIn($('im-nf'), n.from);
 		setIn($('im-nu'), n.until);
+		evWarn();
 		durs($('im-wait'), [10, 30, 60, 120, 300, 600], n.wait_s);
 		busy($('im-ir')) || pick($('im-ir'), n.ir);
 		busy($('im-wlm')) || pick($('im-wlm'), wm);
@@ -905,6 +951,8 @@
 		const pic = x.picture[lens];
 		pic && PIC.forEach(op => setSl('im-' + op, pic[op]));
 		S.c && ha(S.c);
+		syncZone(x);
+		S.y && rRestart(S.y);
 	}
 	function rCount() {
 		const x = S.x,
@@ -937,8 +985,23 @@
 	/* Darkness levels: whole numbers, spaces allowed ("75 000"); day must stay below night. */
 	const lvl = v => ((v = v.replace(/[\s,.'_]/g, '')), /^\d{1,8}$/.test(v) && v >= 1 && v <= 1e7 ? +v : null),
 		evIn = [$('im-ne'), $('im-de')];
+	/* A soft warning, not a refusal: with the filter open the level reads about 3.6x lower at
+	   twilight, so a higher day level reads dark again right after the switch and it flips back. */
+	function evWarn() {
+		const [ne, de] = evIn.map(e => lvl(e.value)),
+			high = ne != null && de != null && de < ne && de > ne / 3.6;
+		$('im-evw').hidden = !high;
+		high &&
+			tx(
+				'im-evt',
+				`A day level of ${num(de)} may make it flip back and forth at dusk and dawn. For a night level of ${num(ne)}, try ${num(Math.floor(ne / 3.6))} or lower.`
+			);
+	}
 	evIn.forEach(i => {
-		i.addEventListener('input', () => (i.dataset.d = 1));
+		i.addEventListener('input', () => {
+			i.dataset.d = 1;
+			evWarn();
+		});
 		i.onchange = () => {
 			const [ne, de] = evIn.map(e => lvl(e.value));
 			evIn.forEach(e => {
@@ -1954,27 +2017,25 @@
 			d = w.signal_dbm,
 			r = w.rate_mbps;
 		$('nw-now').replaceChildren(
-			h('span', { class: 'ico ' + (w.associated ? 'ok' : 'warn') }, ico(w.associated ? 'ok' : 'warn')),
+			w.associated ? sigIcon(d) : h('span', { class: 'ico warn' }, ico('warn')),
 			h(
 				'span',
 				null,
 				h('b', { text: w.associated ? 'Connected to ' + (w.ssid || 'Wi-Fi') : 'Not connected to Wi-Fi' }),
 				h('small', {
-					text: [
-						d != null && mi(d) + ' dBm, ' + sig(d).toLowerCase(),
-						r != null && +r + ' Mb/s',
-						S.c && 'address ' + S.c.bind
-					]
+					text: [w.band, d != null && mi(d) + ' dBm, ' + sig(d).toLowerCase(), r != null && +r + ' Mb/s']
 						.filter(Boolean)
 						.join(' · ')
 				})
 			)
 		);
+		tx('nw-ad', S.c?.bind || location.hostname);
+		tx('nw-gw', w.gateway || '—');
 		const st = (k, v, s) =>
 			h('div', null, h('dt', { text: k }), h('dd', { text: v }), s && h('small', { text: s }));
 		$('nw-st').replaceChildren(
 			st('Signal', d != null ? mi(d) + ' dBm' : '—', sig(d)),
-			st('Link rate', r != null ? +r + ' Mb/s' : '—'),
+			st('Link rate', r != null ? +r + ' Mb/s' : '—', w.band),
 			st('Sent', bytes(w.tx_bytes), 'Video to your NVR'),
 			st('Received', bytes(w.rx_bytes), 'Requests and control'),
 			st(
@@ -1990,30 +2051,152 @@
 				? `${w.ssid || 'Wi-Fi'} · ${d != null ? sig(d).toLowerCase() + ' signal' : 'connected'}`
 				: 'Not connected to Wi-Fi'
 		);
-
-		joining ||
-			tx(
-				'nw-help',
-				`The camera leaves ${w.ssid || 'its network'} for the new one. Confirm within 90 s from a device that reaches it there, or it goes back and restarts.`
-			);
+		joinHelp();
 		ov();
 	}
 	$('nw-qa').onclick = act(() => quality());
+	/* Signal bars: the same steps as sig()'s words. */
+	const BARS = ['M2 20h3v-4H2z', 'M7 20h3v-8H7z', 'M12 20h3V8h-3z', 'M17 20h3V4h-3z'];
+	function sigIcon(d) {
+		const s = ico('off'),
+			n = d == null ? 0 : d >= -50 ? 4 : d >= -60 ? 3 : d >= -70 ? 2 : 1;
+		s.setAttribute('class', 'sig');
+		s.innerHTML = BARS.map((p, i) => `<path d="${p}"${i < n ? '' : ' class="off"'}/>`).join('');
+		return s;
+	}
+	/* Nearby networks: scanned when asked, since a scan takes 3-4 s. Hidden networks are not
+	   listed, so a name can still be typed. The camera only joins networks with a password. */
+	let nets = null,
+		joinOpen = 0,
+		joinName = null;
+	const bandOf = f => (f ? (f >= 4900 ? '5 GHz' : '2.4 GHz') : '');
+	$('nw-sb').onclick = act(async () => {
+		tx('nw-sh', 'Looking for networks; this takes a few seconds.');
+		try {
+			nets = await api(J + 'network/wifi/scan', { timeout: 2e4 });
+		} catch (e) {
+			tx('nw-sh', '');
+			throw e;
+		}
+		const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		tx('nw-sc', 'Networks nearby · scanned ' + at);
+		$('nw-sb').querySelector('span').textContent = 'Scan again';
+		$('nw-sb').setAttribute('aria-label', 'Scan for networks again');
+		rNets();
+	}, $('nw-scan'));
+	function rNets() {
+		const L = Array.isArray(nets) ? nets : [],
+			chosen = joinOpen && joinName;
+		$('nw-scan').after($('nw-join'));
+		$('nw-sc').hidden = !L.length;
+		tx('nw-sh', L.length ? '' : 'No networks found. A hidden network can still be joined by name.');
+		$('nw-nets').hidden = !L.length;
+		$('nw-nets').replaceChildren(
+			...L.map(n => {
+				const usable = n.secure && !n.in_use,
+					li = h(
+						'li',
+						null,
+						h(
+							'button',
+							{
+								type: 'button',
+								class: 'net',
+								disabled: !usable,
+								'aria-expanded': usable ? 'false' : null,
+								onclick: () => joinForm(n.ssid, li)
+							},
+							sigIcon(n.signal_dbm),
+							h(
+								'span',
+								null,
+								h('b', { text: n.ssid }),
+								h('small', {
+									text: [
+										bandOf(n.frequency_mhz),
+										sig(n.signal_dbm).toLowerCase(),
+										!n.secure && 'no password, so the camera can’t join it'
+									]
+										.filter(Boolean)
+										.join(' · ')
+								})
+							),
+							n.in_use && pill('ok', 'In use'),
+							n.secure && ico('lock')
+						)
+					);
+				if (chosen == n.ssid && usable) joinForm(n.ssid, li, 1);
+				return li;
+			})
+		);
+		if (chosen && !L.some(n => n.ssid == chosen && n.secure && !n.in_use)) joinClose();
+	}
+	/* The join form opens under the chosen network, or below the list for a typed name. A name
+	   with a "?" may hide characters the scan cannot show, so it stays editable. */
+	function joinForm(id, li, quiet) {
+		const f = $('nw-join');
+		if (!quiet && joinOpen && joinName == id && id != null) return joinClose();
+		joinClose();
+		joinOpen = 1;
+		joinName = id;
+		const typed = id == null || id.includes('?');
+		$('nw-ssid').value = id || '';
+		$('nw-sf').hidden = !typed;
+		tx('nw-pl', id ? 'Password for ' + id : 'Password');
+		joinHelp();
+		if (li) {
+			li.classList.add('open');
+			li.firstChild.setAttribute('aria-expanded', 'true');
+			li.append(f);
+		}
+		f.hidden = false;
+		quiet || (typed ? $('nw-ssid') : $('nw-psk')).focus();
+	}
+	function joinClose() {
+		const f = $('nw-join');
+		joinOpen = 0;
+		joinName = null;
+		f.hidden = true;
+		$('nw-psk').value = '';
+		clr($('nw-psk'));
+		clr($('nw-ssid'));
+		$$('.nets .open').forEach(li => {
+			li.classList.remove('open');
+			li.firstChild.setAttribute('aria-expanded', 'false');
+		});
+		$('nw-scan').after(f);
+	}
+	$('nw-hid').onclick = () => joinForm(null);
+	$('nw-jc').onclick = () => {
+		joinClose();
+		$('nw-hid').focus();
+	};
+	function joinHelp() {
+		if (joining) return;
+		const cur = S.q?.wifi?.ssid || 'its network',
+			to = joinName || $('nw-ssid').value.trim() || 'the new one';
+		tx(
+			'nw-help',
+			`The camera leaves ${cur} and tries ${to}. You then have 90 seconds to confirm from a device that can reach it there. If nobody confirms, it goes back to ${cur} and restarts.`
+		);
+	}
+	$('nw-ssid').addEventListener('input', joinHelp);
 	$('nw-join').onsubmit = e => {
 		e.preventDefault();
 		const s = $('nw-ssid'),
 			p = $('nw-psk'),
 			id = s.value,
 			k = p.value,
+			safe = v => /^[ !#-[\]-~]*$/.test(v), // what the camera's Wi-Fi setup takes: plain ASCII, no " or \
 			bad = (el, m) => {
 				el.setAttribute('aria-invalid', 'true');
 				err(el, m);
 				el.focus();
 			};
-		if (!id.trim() || new TextEncoder().encode(id).length > 32)
-			return bad(s, 'Enter the network name, up to 32 characters.');
-		if (!((k.length > 7 && k.length < 64) || /^[0-9a-f]{64}$/i.test(k)))
-			return bad(p, 'Wi-Fi passwords have 8 to 63 characters.');
+		if (!id.trim() || id.length > 32) return bad(s, 'Enter the network name, up to 32 characters.');
+		if (!safe(id)) return bad(s, 'The camera can only use plain letters, digits and symbols here, without " or \\.');
+		if (k.length < 8 || k.length > 63) return bad(p, 'Wi-Fi passwords have 8 to 63 characters.');
+		if (!safe(k)) return bad(p, 'The camera can only use plain letters, digits and symbols here, without " or \\.');
 		run(
 			sb(e),
 			async () => {
@@ -2030,37 +2213,89 @@
 						quiet: 1
 					});
 				} catch (x) {
-					if (x.kind != 'off') throw x;
+					if (x.kind != 'off') {
+						/* refused: any countdown picked up meanwhile is over */
+						W = null;
+						ls.set(WIFI);
+						wifi();
+						shell();
+						throw x;
+					}
 				} finally {
 					joining = 0;
 				}
+				/* The camera's own countdown takes over at the next read; until then, from the request. */
 				const sec = d && (d.deadline_seconds ?? d.seconds_left);
 				W = {
-					id: d?.id || '',
+					...(W && !W.end ? W : {}),
+					id: d?.id || W?.id || '',
 					ssid: id,
 					prev,
-					deadline: sec > 0 ? Date.now() + sec * 1e3 : t0 + 9e4,
+					deadline: sec > 0 ? Date.now() + sec * 1e3 : W && !W.end ? W.deadline : t0 + 9e4,
 					lost: !d
 				};
 				ls.set(WIFI, W);
-				p.value = '';
+				joinClose();
 				wifi();
+				shell();
 				$('wc-h').focus();
-				d || goOff();
+				d ? wifiState().catch(wifiLost) : goOff();
 			},
 			p
 		);
 	};
+	/* GET network/wifi: the camera's view of a trial, so any device can see and answer it. */
+	function rWifi(d) {
+		if (d?.pending) {
+			const fresh = !W || W.end;
+			if (fresh) W = { id: '', ssid: d.ssid || 'the new network', prev: '' };
+			W.joined = d.joined;
+			W.addr = d.address;
+			W.lost = false;
+			if (d.seconds_left != null) {
+				const dl = Date.now() + d.seconds_left * 1e3;
+				if (!W.deadline || Math.abs(dl - W.deadline) > 2e3) W.deadline = dl;
+			} else W.deadline = W.deadline || Date.now() + 9e4;
+			ls.set(WIFI, W);
+			joining || joinClose(); // if the request is refused, its form comes back with the reason
+			wifi();
+			place();
+			shell();
+		} else if (W && !W.end && !joining) {
+			const pv = W.prev || 'the previous network',
+				n = name();
+			d?.last == 'committed'
+				? wend(`${n} stays on ${W.ssid}`, 'If the camera’s address changed, update your NVR.')
+				: d?.last == 'rolled_back'
+					? wend(
+							`${n} went back to ${pv}`,
+							`Nobody confirmed ${W.ssid} in time, so the camera went back and restarted.`
+						)
+					: wend('The test is over', `${n} is no longer testing ${W.ssid}.`);
+			quality().catch(noop);
+		}
+	}
+	/* The camera can't be asked: fall back to counting here, from the request or the last answer. */
+	function wifiLost(e) {
+		if (e?.kind == 'off' && W && !W.end && !joining) {
+			W.lost = true;
+			wifi();
+		}
+	}
+	const trialId = () => W.id || 'current'; // the camera wants an id but acts on the one running trial
 	function wifi() {
 		$('p-network').classList.toggle('wc', !!W);
-		$('nw-join').hidden = !!W;
+		$('nw-scan').hidden = $('nw-sb').hidden = !!W;
+		$('nw-join').hidden = !!W || !joinOpen;
 		$('nw-count').hidden = !W;
 		if (!W) return;
 		const L = Math.max(0, W.deadline - Date.now()),
 			s = Math.ceil(L / 1e3),
 			pv = W.prev || 'the previous network',
 			n = name(),
-			E = W.end;
+			E = W.end,
+			was = S.c?.bind && S.c.bind != '0.0.0.0' ? S.c.bind : location.hostname,
+			u = W.addr && `https://${W.addr}${location.port ? ':' + location.port : ''}/`;
 		if (!E && !L) return wend('Time is up', `${n} goes back to ${pv} and restarts (about 90 s).`);
 		tx('wc-h', E ? W.eT : `Keep ${W.ssid}?`);
 		tx('wc-n', ((s / 60) | 0) + ':' + p2(s % 60));
@@ -2072,28 +2307,66 @@
 			E
 				? W.eP
 				: W.lost
-					? `The camera left this device’s network. To keep ${W.ssid}, open this page from a device on it in time; otherwise it goes back to ${pv} and restarts.`
-					: `${n} is trying ${W.ssid}. If nobody confirms, it goes back to ${pv} and restarts.`
+					? `The camera can’t be reached from this device. To keep ${W.ssid}, open this page from a device on it in time; otherwise it goes back to ${pv} and restarts.`
+					: W.joined
+						? `${n} is answering on ${W.ssid}. If you do nothing, it goes back to ${pv} and restarts when the timer ends.`
+						: `${n} is trying ${W.ssid}. If nobody confirms, it goes back to ${pv} and restarts.`
 		);
+		/* the steps, from the camera's own answer */
+		const q = S.q?.wifi,
+			steps =
+				E || W.joined == null
+					? []
+					: [
+							[
+								W.joined ? 'ok' : 'wait',
+								(W.joined ? 'Joined ' : 'Joining ') + W.ssid,
+								W.joined && q?.ssid == W.ssid
+									? [q.band, q.signal_dbm != null && mi(q.signal_dbm) + ' dBm'].filter(Boolean).join(' · ')
+									: ''
+							],
+							[W.addr ? 'ok' : 'off', W.addr ? 'Got an address' : 'Waiting for an address', W.addr || ''],
+							...(W.joined && W.addr ? [['wait', 'Waiting for you', '']] : [])
+						],
+			sk = JSON.stringify(steps);
+		$('wc-st').hidden = !steps.length;
+		if ($('wc-st').dataset.k != sk) {
+			$('wc-st').dataset.k = sk;
+			$('wc-st').replaceChildren(...hlist(steps));
+		}
+		const nk = [W.addr, was, !!E].join();
+		if ($('wc-nt').dataset.k != nk) {
+			$('wc-nt').dataset.k = nk;
+			W.addr && W.addr != was
+				? $('wc-nt').replaceChildren(
+						'The address changes to ',
+						h('a', { href: u, class: 'mono', text: W.addr }),
+						`. Your NVR still points at ${was}, so update it after you keep this network.`
+					)
+				: tx('wc-nt', 'If the address changes, update your NVR after keeping the new network.');
+		}
 		tx('wc-keep', E ? 'Done' : 'Keep ' + W.ssid);
 		tx('wc-back', `Go back to ${pv} now`);
-		$('wc-keep').hidden = !E && !W.id;
-		$('wc-back').hidden = !!E || !W.id;
+		/* Nothing to answer while the camera is still joining, or from a device that can't reach it. */
+		$('wc-keep').hidden = !E && (!!W.lost || !!joining || W.joined === false);
+		$('wc-back').hidden = !!E || !!W.lost || !!joining;
 	}
 	function wend(t, p) {
 		Object.assign(W, { end: 1, eT: t, eP: p });
 		ls.set(WIFI);
 		wifi();
+		shell();
 	}
 	$('wc-keep').onclick = e => {
 		if (W.end) {
 			W = null;
 			wifi();
 			place();
+			shell();
 			return $('nw-hw').focus();
 		}
 		run(e.currentTarget, async () => {
-			await api(J + 'network/wifi', { method: 'PUT', json: { id: W.id }, timeout: 2e4 });
+			await api(J + 'network/wifi', { method: 'PUT', json: { id: trialId() }, timeout: 2e4 });
 			wend(`${name()} stays on ${W.ssid}`, 'If the camera’s address changed, update your NVR.');
 			quality().catch(noop);
 		});
@@ -2107,7 +2380,7 @@
 			danger: 1,
 			icon: 'network',
 			run: async () => {
-				await api(J + 'network/wifi', { method: 'DELETE', json: { id: W.id }, timeout: 2e4 });
+				await api(J + 'network/wifi', { method: 'DELETE', json: { id: trialId() }, timeout: 2e4 });
 				wend('Going back to ' + pv, 'The camera is restarting; this page reconnects by itself.');
 			}
 		});
@@ -2217,6 +2490,16 @@
 		)
 	);
 	$('sy-tz').onchange = () => (tzd = 1);
+	/* With a time zone of its own, the camera's is what the list shows, not this device's. */
+	function syncZone(x) {
+		if (x.live.zone != 'camera' || tzd || Date.now() < tzAt) return;
+		const m = x.utc_offset_min,
+			v = 'GMT' + (m < 0 ? '-' : '+') + hh(m),
+			el = $('sy-tz');
+		[...el.options].some(o => o.value == v) ||
+			el.append(h('option', { value: v }, 'UTC' + (m < 0 ? '−' : '+') + hh(m)));
+		el.value = v;
+	}
 	function seed() {
 		$('sy-man').value = new Date(Date.now() - new Date().getTimezoneOffset() * 6e4)
 			.toISOString()
@@ -2260,9 +2543,10 @@
 	}
 	const putT = json => api(J + 'time', { method: 'PUT', json, timeout: 15e3 }),
 		putZ = () =>
-			api(J + 'timezone', { method: 'PUT', json: { gmt_tz: $('sy-tz').value }, timeout: 15e3 }).then(
-				() => (tzd = 0)
-			);
+			api(J + 'timezone', { method: 'PUT', json: { gmt_tz: $('sy-tz').value }, timeout: 15e3 }).then(() => {
+				tzd = 0;
+				tzAt = Date.now() + 7e4;
+			});
 	/* "gateway", an IPv4 address with an optional port, or empty (off). */
 	const ntpOk = v =>
 		v == '' ||
@@ -2301,6 +2585,87 @@
 		toast('Camera clock set');
 		await clock();
 	}, $('sy-man'));
+	/* Restart now: refused during an update or a trial; afterwards the offline banner waits for it. */
+	const RESTART_NO = {
+		update: 'An update is being installed. Try again when it has finished.',
+		'wifi-trial': 'A new Wi-Fi network is being tested. Keep it or go back first.',
+		'boot-trial': 'A new release is still being tried out after an update. Try again in a few minutes.'
+	};
+	$('sy-rs').onclick = () =>
+		sheet({
+			title: 'Restart the camera?',
+			text: 'It is offline for about 90 seconds. Your NVR reconnects by itself and this page comes back on its own.',
+			ok: 'Restart now',
+			danger: 1,
+			icon: 'system',
+			run: async () => {
+				try {
+					await api(J + 'system/restart', { method: 'POST', json: {}, quiet: 1, timeout: 15e3 });
+				} catch (x) {
+					if (x.st == 409) no(RESTART_NO[x.d?.reason] || 'The camera can’t restart right now.');
+					if (x.kind != 'off') throw x;
+				}
+				holdOff = Date.now() + 8e3; // it answers for a moment before it goes down
+				goOff('Restarting: this takes about 90 seconds, and this page comes back on its own.');
+			}
+		});
+	/* Scheduled restart: daily, in the camera's time zone (UTC when it has none). */
+	function restartNext(t) {
+		const m = camZone() ? S.x.utc_offset_min : 0,
+			now = (S.t ? S.t.epoch * 1e3 + age('t') : Date.now()) + m * 6e4,
+			d = new Date(now),
+			wait = (mins(t) - d.getUTCHours() * 60 - d.getUTCMinutes() + 1440) % 1440 || 1440,
+			at = new Date(now + wait * 6e4);
+		return (
+			at.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) +
+			', ' +
+			t
+		);
+	}
+	function rRestart(d) {
+		const b = $('sy-rss'),
+			i = $('sy-rst');
+		busy(b) || sw(b, d.enabled);
+		$('sy-rsf').hidden = !d.enabled;
+		d.time && setIn(i, d.time);
+		tx('sy-rsn', d.enabled ? 'Next: ' + restartNext(d.time) : 'Off');
+		tx(
+			'sy-rsz',
+			camZone()
+				? `Every day, in the camera’s time zone (${utc(S.x.utc_offset_min)}).`
+				: 'Every day, in UTC: the camera has no time zone set yet.'
+		);
+	}
+	const putRestart = async time => {
+		const d = await api(J + 'system/restart-schedule', { method: 'PUT', json: { time }, timeout: 2e4 });
+		S.y = d;
+		S['y@'] = Date.now();
+		rRestart(d);
+		return d;
+	};
+	$('sy-rss').onclick = e => {
+		const b = e.currentTarget,
+			on = b.getAttribute('aria-checked') != 'true';
+		run(b, async () => {
+			const d = await putRestart(on ? $('sy-rst').value || '04:00' : '');
+			sw(b, d.enabled);
+			toast(d.enabled ? 'Restarts every day at ' + d.time : 'Scheduled restart off');
+		});
+	};
+	$('sy-rst').addEventListener('input', e => (e.target.dataset.d = 1));
+	$('sy-rst').onchange = e => {
+		const i = e.target;
+		if (!i.value) return bad(i, 'Enter a time.');
+		run(
+			i,
+			async () => {
+				await putRestart(i.value);
+				delete i.dataset.d;
+				toast('Restarts every day at ' + i.value);
+			},
+			i
+		);
+	};
 	function pwSheet() {
 		const o = pwf('Current password', 'current-password'),
 			n = pwf('New password', 'new-password'),
@@ -2388,35 +2753,49 @@
 			return false;
 		}
 	}
-	function rKeys(d) {
-		const it = String(d?.authorized_keys || '')
+	/* The list is raw text, one key per line; a key's id is its 1-based line, up to 8 keys. */
+	const keyLines = d =>
+		String(d?.authorized_keys || '')
 			.split('\n')
 			.filter(l => l.trim())
-			.map(l => {
-				const [t, b, ...c] = l.trim().split(/\s+/),
-					nm = c.join(' ') || t,
-					fp = h('small', { class: 'mono fp', text: t.slice(4) });
-				fingerprint(b || '').then(f => (fp.textContent = t.slice(4) + ' · ' + f));
-				return h(
-					'li',
-					null,
-					h('span', null, h('b', { text: nm }), fp),
-					h('button', { class: 'btn dz', 'aria-label': 'Remove the key ' + nm, onclick: rmKey }, 'Remove…')
-				);
-			});
+			.map(l => l.trim().split(/\s+/));
+	function rKeys(d) {
+		const it = keyLines(d).map(([t, b, ...c]) => {
+			const nm = c.join(' ') || t,
+				fp = h('small', { class: 'mono fp', text: t.slice(4) });
+			fingerprint(b || '').then(f => (fp.textContent = t.slice(4) + ' · ' + f));
+			return h(
+				'li',
+				null,
+				ico('key'),
+				h('span', null, h('b', { text: nm }), fp),
+				h(
+					'button',
+					{ class: 'btn dz', 'aria-label': 'Remove the key for ' + nm, onclick: () => rmKey(b, nm) },
+					'Remove…'
+				)
+			);
+		});
 		$('sy-keys').replaceChildren(
-			...(it.length ? it : [h('li', { class: 'none', text: 'No key. SSH uses the admin password.' })])
+			...(it.length ? it : [h('li', { class: 'none', text: 'No keys. SSH uses the admin password.' })])
 		);
 	}
-	const rmKey = () =>
+	const rmKey = (blob, nm) =>
 		sheet({
-			title: 'Remove the SSH key?',
-			text: 'SSH then accepts only the admin password.',
+			title: `Remove the key for ${nm}?`,
+			text: 'SSH from that computer then needs the admin password or another key.',
 			ok: 'Remove',
 			danger: 1,
 			icon: 'lock',
 			run: async () => {
-				await api(J + 'ssh/authorized-keys', { method: 'DELETE', json: { id: 'all' }, timeout: 2e4 });
+				/* Line numbers shift when keys change: find this key's line in a fresh list. */
+				const i = keyLines(await keys()).findIndex(k => k[1] == blob);
+				if (i >= 0)
+					await api(J + 'ssh/authorized-keys', {
+						method: 'DELETE',
+						json: { id: String(i + 1) },
+						timeout: 2e4
+					});
 				toast('SSH key removed');
 				await keys();
 			}
@@ -2428,22 +2807,25 @@
 		if (!v.startsWith('ssh-ed25519 ') || v.split('ssh-ed25519 ').length > 2)
 			return bad(t, 'Paste one key starting with ssh-ed25519.');
 		if (!edKey(v)) return bad(t, 'That key is incomplete: copy the whole line from your .pub file.');
-		const add = async () => {
-			await api(J + 'ssh/authorized-keys', { method: 'POST', body: v, type: 'text/plain', timeout: 2e4 });
-			t.value = '';
-			toast('SSH key added');
-			await keys();
-		};
-		S.k?.authorized_keys?.trim()
-			? sheet({
-					title: 'Replace the SSH key?',
-					text: 'The camera keeps one key, so the current key stops working.',
-					ok: 'Replace key',
-					danger: 1,
-					icon: 'lock',
-					run: add
-				})
-			: run(sb(e), add, t);
+		const L = keyLines(S.k),
+			dup = L.some(k => k[1] == v.split(' ')[1]),
+			FULL = 'The camera keeps at most 8 keys. Remove one first.';
+		if (!dup && L.length >= 8) return bad(t, FULL);
+		run(
+			sb(e),
+			async () => {
+				try {
+					await api(J + 'ssh/authorized-keys', { method: 'POST', body: v, type: 'text/plain', timeout: 2e4 });
+				} catch (x) {
+					if (x.st == 502) no(FULL); // the list filled up meanwhile
+					throw x;
+				}
+				t.value = '';
+				toast(dup ? 'That key is already on the camera' : 'SSH key added');
+				await keys();
+			},
+			t
+		);
 	};
 	/* Upload stages: 0 idle, 1 uploading (can cancel), 2 checking, 3 staged, 4 installing. */
 	function fwUI(st, m) {
@@ -2600,6 +2982,8 @@
 			media().catch(noop);
 		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
 		if (age('x') > (route == 'image' ? 2e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
+		/* A Wi-Fi trial: every 3 s while one runs; otherwise now and then on Network. */
+		if (age('w') > (joining || (W && !W.end) ? 3e3 : route == 'network' ? 2e4 : 1 / 0)) wifiState().catch(wifiLost);
 		if ((route == 'overview' || route == 'system') && age('j') > 6e4) joan().catch(noop);
 		if (['overview', 'network', 'settings'].includes(route) && age('q') > 3e4) quality().catch(noop);
 		if (age('ka') > 24e4) {

@@ -332,24 +332,32 @@ def controls_checks(request, root, connection=None, secret=None):
     assert controls()["live"]["night"] == "day" and platform()["night"] == 0
     set_ev(40000)  # darker than the night level: night after the wait
     wait_for(lambda: controls()["live"]["night"] == "night" and platform()["night"] == 1, 12, "auto to night")
+    assert controls()["live"]["hold_left_s"] > 0, controls()["live"]  # no flapping right after a switch
     set_ev(20000)  # between the levels: stays night (hysteresis)
     time.sleep(6.5)
     assert controls()["live"]["night"] == "night"
     set_ev(9000)
-    wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 12, "auto to day")
+    wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 20, "auto to day")
     # Validation leaves everything as it was.
     for bad in ({"night": {"night_ev": 100, "day_ev": 200}}, {"night": {"from": "25:00"}},
                 {"night": {"mode": "dusk"}}, {"picture": [{"denoise": 300}]}, {"anti_flicker": "40"}, [1]):
         assert request("POST", "/api/v1/controls", bad)[0] == 400, bad
     assert controls()["night"]["mode"] == "auto"
-    # Schedule, in UTC minutes (utc_offset_min 0): the current minute is inside.
+    # The camera's zone (vendor config, GMT-03:00) wins over the browser's offset (0).
+    assert controls()["live"]["zone"] == "camera", controls()["live"]
     now = time.gmtime()
-    start = (now.tm_hour * 60 + now.tm_min - 1) % 1440
+    start = (now.tm_hour * 60 + now.tm_min - 180 - 1) % 1440
     end = (start + 4) % 1440
     status, _ = request("POST", "/api/v1/controls", {"utc_offset_min": 0, "night": {
         "mode": "schedule", "from": f"{start // 60:02d}:{start % 60:02d}", "until": f"{end // 60:02d}:{end % 60:02d}"}})
     assert status == 200
     wait_for(lambda: controls()["live"]["night"] == "night", 5, "schedule night")
+    assert controls()["utc_offset_min"] == -180 and \
+        controls()["live"]["local_minutes"] == (int(time.time()) // 60 - 180) % 1440, controls()["live"]
+    # The board's health for the admin UI.
+    system = json.loads(request("GET", "/api/v1/status")[1])["system"]
+    assert system["boot_mode"] == "native" and system["uptime_s"] > 0 and system["memfree_kb"] > 0 and \
+        system["state_free_kb"] > 0, system
     # The legacy control still works and becomes the choice.
     assert request("POST", "/api/v1/control", {"operation": "night", "value": 0, "value2": 0})[0] == 200
     assert controls()["night"]["mode"] == "day" and platform()["night"] == 0
@@ -641,7 +649,11 @@ def main():
                                     "JIPC_REPLAY_TONE": "1",
                                     "JIPC_JOAN_PORT": str(platform_server.server_address[1]),
                                     "JIPC_HTTPS_UI_PORT": str(ui_port),
-                                    "JIPC_ISP_PROC": str(root / "isp-m0")}
+                                    "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12",
+                                    "JIPC_OEM_CONFIG": str(root / "oem-config.json"),
+                                    "JIPC_BOOT_LOG_DIR": str(root)}
+        (root / "oem-config.json").write_text('{"IpcParam":{"TimeZomeCfg":{\n "GmtTz":\t"GMT-03:00"\n}}}\n')
+        (root / "jipc-native.log").write_text("249.68 jipc-native: native boot qualified; OEM application never started\n")
         (root / "isp-m0").write_text(ISP_PROC.format(ev0=10000, ev1=5000))
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=root, env=environment)
 

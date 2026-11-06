@@ -32,6 +32,9 @@
 <path id="i-out" d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10"/>
 <path id="i-plus" d="M12 5v14M5 12h14"/>
 <path id="i-more" d="M5 11.5v1M12 11.5v1M19 11.5v1" stroke-width="3.2"/>
+<path id="i-scan" d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>
+<path id="i-key" d="M14.5 9.5a4 4 0 1 0-3.9 3.1L4 19.2V21h3v-2h2v-2h2l1.6-1.6"/>
+<path id="i-wait" d="M12 7v5l3 2"/>
 </svg>
 
 <div id="signin" class="signin" hidden>
@@ -41,6 +44,7 @@
 <p id="si-note" role="status" hidden></p>
 <div class="f"><label for="si-user">User name</label><input id="si-user" class="raw" autocomplete="username" value="admin"></div>
 <div class="f"><label for="si-pass">Password</label><div class="pw"><input id="si-pass" type="password" autocomplete="current-password"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
+<label class="chk" for="si-stay"><input id="si-stay" type="checkbox" checked><span>Stay signed in on this device for 30 days</span></label>
 <button class="btn pri" id="si-go">Sign in</button>
 </form>
 <p class="ic muted"><svg><use href="#i-lock"/></svg><span>Encrypted connection. The camera makes its own certificate, so the first visit may warn; check the address is <span class="mono ink host"></span>.</span></p>
@@ -66,7 +70,7 @@
 <header id="top"><a class="back" href="#settings"><svg class="lt"><use href="#i-chev"/></svg>Settings</a><span class="brand"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><span class="state bare"></span></span></span></header>
 
 <main>
-<div id="banner" class="banner crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b><span class="cam-name">Camera</span> isn’t answering</b><p>It may be restarting (about 90 s) or off the network. You are still signed in. Retrying in <b class="mono" id="bn-s">10 s</b>.<span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
+<div id="banner" class="banner crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b><span class="cam-name">Camera</span> isn’t answering</b><p><span id="bn-why"></span> Retrying in <b class="mono" id="bn-s">10 s</b>.<span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
 
 <section class="page ov" id="p-overview" hidden>
 <header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Live video plays in your NVR (Frigate).</p></div></header>
@@ -109,7 +113,8 @@
 <div class="dark" id="im-dm" role="img"><i></i><b></b><b></b><span>day below</span><span>night above</span></div></div>
 <div class="g2"><div class="f"><label for="im-ne">Switch to night above</label><input id="im-ne" class="mono raw" inputmode="numeric"></div>
 <div class="f"><label for="im-de">Back to day below</label><input id="im-de" class="mono raw" inputmode="numeric"></div></div>
-<small>The level is the pan/tilt lens’s exposure: higher is darker. Watch it at dusk and dawn to pick the two levels.</small>
+<small>The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.</small>
+<p class="banner" id="im-evw" role="status" hidden><svg><use href="#i-warn"/></svg><span id="im-evt"></span></p>
 <div class="row"><label for="im-wait">Wait before switching</label><select id="im-wait"></select></div></div>
 <div class="g2 two" id="im-sch" hidden><div class="f"><label for="im-nf">Night from</label><input id="im-nf" type="time"></div>
 <div class="f"><label for="im-nu">Until</label><input id="im-nu" type="time"></div></div>
@@ -173,17 +178,20 @@
 <section class="page" id="p-network" hidden>
 <header class="ph"><div><h1 tabindex="-1">Network</h1><p>The camera uses Wi-Fi and never gets internet access.</p></div></header>
 <div class="cols">
-<div class="card w2"><h2 id="nw-hw" tabindex="-1">Wi-Fi</h2><div class="now" id="nw-now"></div>
-<form id="nw-join" class="stack s" novalidate><h3>Join another network</h3>
-<div class="f"><label for="nw-ssid">Network name</label><input id="nw-ssid" class="raw" maxlength="32"></div>
-<div class="f"><label for="nw-psk">Password</label><div class="pw"><input id="nw-psk" type="password" autocomplete="new-password" maxlength="64"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
-<small id="nw-help"></small><div class="acts"><button class="btn pri">Join and test</button></div>
-<small>A list of nearby networks is not available in this firmware yet.</small></form>
+<div class="card w2"><div class="bar nw"><h2 id="nw-hw" tabindex="-1">Wi-Fi</h2><button class="btn" id="nw-sb" aria-label="Scan for networks"><svg><use href="#i-scan"/></svg><span class="dsk">Scan for networks</span></button></div><div class="now" id="nw-now"></div>
+<div class="f" id="nw-scan"><span class="cap" id="nw-sc" hidden></span><small id="nw-sh" role="status">Scan to list the networks nearby, or join a hidden network by name.</small><ul class="nets" id="nw-nets" hidden></ul><button type="button" class="btn q start" id="nw-hid">Join a hidden network…</button></div>
+<form id="nw-join" class="stack s" novalidate hidden>
+<div class="f" id="nw-sf"><label for="nw-ssid">Network name</label><input id="nw-ssid" class="raw" maxlength="32"></div>
+<div class="f"><label for="nw-psk" id="nw-pl">Password</label><div class="pw"><input id="nw-psk" type="password" autocomplete="new-password" maxlength="64"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
+<small id="nw-help"></small><div class="acts"><button class="btn pri">Join and test</button><button type="button" class="btn" id="nw-jc">Cancel</button></div></form>
 <div id="nw-count" class="count" hidden><h3 tabindex="-1" id="wc-h"></h3>
 <div class="ring" role="timer" id="wc-t"><svg viewBox="0 0 164 164"><circle cx="82" cy="82" r="72"/><circle cx="82" cy="82" r="72" id="wc-arc"/></svg><span><b class="mono" id="wc-n"></b><small>left to decide</small></span></div>
-<p class="muted" id="wc-p"></p><div class="acts col"><button class="btn pri" id="wc-keep"></button><button class="btn" id="wc-back"></button></div>
-<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span>If the address changes, update your NVR after keeping the new network.</span></p></div></div>
+<p class="muted" id="wc-p"></p><ul class="health steps" id="wc-st" hidden></ul><div class="acts col"><button class="btn pri" id="wc-keep"></button><button class="btn" id="wc-back"></button></div>
+<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span id="wc-nt"></span></p></div></div>
 <div class="stack">
+<div class="card"><h2>IP address</h2>
+<dl class="kv"><div><dt>Address</dt><dd class="mono" id="nw-ad">—</dd></div><div><dt>Gateway</dt><dd class="mono" id="nw-gw">—</dd></div></dl>
+<small>The router assigns this address. A static address is not available in this firmware yet; to keep this one, reserve it in the router.</small></div>
 <div class="card"><h2>Local name</h2>
 <form id="nw-name" class="stack s" novalidate><div class="f"><label for="nw-host">Name on this network</label><div class="suffix"><input id="nw-host" class="raw" maxlength="63" aria-describedby="nw-hh"><span class="mono">.local</span></div><small id="nw-hh">Letters, digits and hyphens. Applies after the next restart.</small></div>
 <div class="acts"><button class="btn">Save name</button></div><small id="nw-res" role="status"></small></form></div>
@@ -196,15 +204,20 @@
 </section>
 
 <section class="page" id="p-system" hidden>
-<header class="ph"><div><h1 tabindex="-1">System</h1><p>Clock, updates, passwords and health.</p></div></header>
+<header class="ph"><div><h1 tabindex="-1">System</h1><p>Clock, restarts, updates, sign-in and health.</p></div></header>
 <div class="banner" id="sy-sync" hidden><svg><use href="#i-warn"/></svg><div><span>SSH does not accept the admin password yet; changing it once fixes that.</span><div class="acts"><button class="btn" id="sy-syncb">Change admin password</button></div></div></div>
 <div class="cols">
 <div class="card w2"><h2>Time</h2>
 <dl class="kv"><div><dt>Camera clock</dt><dd class="mono" id="sy-cam">—</dd></div><div><dt>This device</dt><dd><span class="mono" id="sy-dev"></span><span id="sy-match"></span></dd></div></dl>
-<div class="g2"><div class="f"><label for="sy-tz">Time zone</label><select id="sy-tz" aria-describedby="sy-tzh"></select><small id="sy-tzh">Only the vendor app’s overlay uses this offset.</small></div>
+<div class="g2"><div class="f"><label for="sy-tz">Time zone</label><select id="sy-tz" aria-describedby="sy-tzh"></select><small id="sy-tzh">Schedules use this zone. It is an offset, not a region: change it by hand when clocks change.</small></div>
 <div class="f"><label for="sy-ntp">Network time server</label><input id="sy-ntp" class="mono raw" aria-describedby="sy-nh"><small id="sy-nh"></small></div></div>
 <div class="acts"><button class="btn pri" id="sy-save">Save</button><button class="btn" id="sy-now">Set clock from this device</button></div>
 <details><summary>Set a specific time</summary><div class="f"><label for="sy-man">Date and time, in this device’s time zone</label><input id="sy-man" type="datetime-local" step="1"></div><div class="acts"><button class="btn" id="sy-set">Set this time</button></div></details></div>
+<div class="card"><h2>Restart</h2><p class="muted">The camera is offline for about 90 seconds. Your NVR reconnects by itself and this page comes back on its own.</p>
+<div class="acts"><button class="btn dz" id="sy-rs">Restart now…</button></div>
+<div class="row"><span><b id="sy-rsl">Scheduled restart</b><small id="sy-rsn"></small></span><button class="sw" id="sy-rss" aria-labelledby="sy-rsl"></button></div>
+<div class="f" id="sy-rsf" hidden><label for="sy-rst">At</label><input id="sy-rst" type="time"><small id="sy-rsz"></small></div></div>
+</div>
 <div class="card"><div><h2>Updates</h2><small>The camera checks the signature and refuses older releases. Installing restarts it.</small></div>
 <div class="cols"><form id="sy-up" class="stack s" novalidate><div><h3>Platform</h3><small class="mono" id="sy-pv"></small></div>
 <div class="f"><label for="sy-file">Platform package (JOOAN_FW_PKG)</label><input id="sy-file" type="file"></div>
@@ -212,15 +225,14 @@
 <small id="sy-ust" role="status"></small>
 <div class="acts"><button class="btn" id="sy-stage">Upload and check</button><button type="button" class="btn pri" id="sy-apply" disabled>Install (upload first)</button></div></form>
 <div class="f"><h3>Media</h3><small class="mono" id="sy-mv"></small><small>Media updates from the browser are not available in this firmware yet.</small></div></div></div>
-</div>
 <div class="cols">
 <div class="card"><h2>Passwords</h2>
 <div class="row"><span><b>Admin password</b><small id="sy-pws">This page and SSH.</small></span><button class="btn" id="sy-pwa">Change…</button></div>
 <div class="row"><span><b>Stream password</b><small>RTSP and ONVIF, for your NVR and Home Assistant.</small></span><button class="btn" id="sy-pwm">Change…</button></div>
 <small>Changing the stream password disconnects the NVR until you update it there too.</small></div>
-<div class="card w2"><div class="bar"><h2>SSH key</h2><code id="sy-cmd"></code></div><ul class="list" id="sy-keys"></ul>
-<form id="sy-add" class="f" novalidate><label for="sy-key">Add a public key</label><textarea id="sy-key" class="mono raw" rows="3" placeholder="ssh-ed25519 AAAA… name@computer"></textarea>
-<div class="bar"><small>Ed25519 only; adding replaces the current key.</small><button class="btn">Add key</button></div></form></div>
+<div class="card w2"><div class="bar"><h2>SSH keys</h2><code id="sy-cmd"></code></div><ul class="list" id="sy-keys"></ul>
+<form id="sy-add" class="f" novalidate><label for="sy-key">Add a public key</label><textarea id="sy-key" class="mono raw" rows="2" placeholder="ssh-ed25519 AAAA… name@computer"></textarea>
+<div class="bar"><small>Ed25519 keys only, up to 8. Password sign-in keeps working.</small><button class="btn">Add key</button></div></form></div>
 </div>
 <div class="cols">
 <div class="card w2"><div class="bar"><h2>Health</h2><small id="sy-hc"></small></div><ul class="health" id="sy-stats"></ul></div>

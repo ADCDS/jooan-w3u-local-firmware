@@ -17,3 +17,4 @@ make -C "$root/src/daemon" -j2 CFLAGS='-Os -Wall -Wextra -Werror' \
 python3 "$root/tools/tests/test_ntp.py"
 python3 "$root/tools/tests/test_host.py"
 python3 "$root/tools/tests/test_media_ui_redirect.py"
+python3 "$root/tools/tests/test_sessions.py"

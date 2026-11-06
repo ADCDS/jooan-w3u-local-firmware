@@ -168,10 +168,15 @@ daemon reads lens 0's `ISP EV value` from the kernel's
 `/proc/jz/isp/isp-m0` every 5 s (higher is darker). It switches to night
 when the level stays at or above `night_ev` for `wait_s`, and back to day
 when it stays at or below `day_ev` (lower, for hysteresis) for `wait_s`.
-Under infrared the scene is lit, so `day_ev` must sit below the level seen at
-night with the LEDs on. The defaults (30000/15000, 60 s) are provisional: on
-camera1, under a street light, night reads about 41,000 in day mode and
-37,000 with the infrared on.
+At least 5 minutes pass between automatic switches, because a switch changes
+the reading itself. With the IR-cut filter open the level reads lower for the
+same light: about 3.6x at twilight, when the sky has plenty of infrared
+(measured at dawn on camera1, under a street light; deep night reads about
+41,000 in day mode and 37,000 with the infrared on). So `day_ev` must stay
+under `night_ev` / 3.6, or the switch to day reads dark again and flaps. The
+defaults are 30000 and 5000, with a 60 s wait. Schedules use the camera's time
+zone (`GmtTz` in the vendor config, set by `PUT /api/v1/timezone`) when it has
+one, otherwise `utc_offset_min`.
 
 `ir_mode` (`night.ir`): 0 `night` turns the infrared LEDs on with night
 mode; 1 `off` keeps them off (night mode still opens the IR-cut filter and

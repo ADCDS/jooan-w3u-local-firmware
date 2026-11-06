@@ -16,7 +16,15 @@
 #define BUCKETS 16
 #define DEFAULT_PASSWORD "admin"
 
+#define REMEMBERED 8
+#define REMEMBER_SECONDS (30L * 24 * 3600)
 typedef struct { int used; char token[65], csrf[65]; time_t expires; int must_change; } Session;
+/* "Stay signed in": at most 8 sign-ins kept 30 days across restarts, stored
+ * as SHA-256 of the cookie (never the cookie itself), dated by wall clock. */
+typedef struct { int used; char hash[65], csrf[65]; long long until; int must_change; } Remembered;
+static Remembered remembered[REMEMBERED];
+static int remembered_loaded;
+static const JoanConfig *auth_config; /* set by joan_auth_init; the daemon's config lives for its lifetime */
 typedef struct { char remote[64]; time_t since; unsigned failures; } Bucket;
 static Session sessions[SESSIONS];
 static Bucket buckets[BUCKETS];
@@ -30,6 +38,49 @@ static time_t auth_now(void)
 }
 
 static void auth_path(const JoanConfig *cfg, char out[512]) { snprintf(out, 512, "%s/auth.db", cfg->state_dir); }
+static void remembered_path(const JoanConfig *cfg, char out[512]) { snprintf(out, 512, "%s/sessions.db", cfg->state_dir); }
+
+static void token_hash(const char *token, char out[65])
+{
+    unsigned char digest[32];
+    joan_sha256(token, 64, digest);
+    joan_hex(digest, sizeof(digest), out);
+}
+
+/* Called with lock held. */
+static void remembered_load(const JoanConfig *cfg)
+{
+    char path[512]; unsigned char *raw = NULL; size_t n = 0, i = 0;
+    if (remembered_loaded) return;
+    remembered_loaded = 1;
+    remembered_path(cfg, path);
+    if (joan_read_file(path, &raw, &n, 4096)) return;
+    char *line = (char *)raw, *end = (char *)raw + n;
+    while (line < end && i < REMEMBERED) {
+        char *next = memchr(line, '\n', (size_t)(end - line)); if (!next) next = end; *next = 0;
+        Remembered r = {0}; int must = 0;
+        if (sscanf(line, "%64s %lld %64s %d", r.hash, &r.until, r.csrf, &must) == 4 &&
+            strlen(r.hash) == 64 && strlen(r.csrf) == 64) { r.used = 1; r.must_change = must; remembered[i++] = r; }
+        line = next + 1;
+    }
+    memset(raw, 0, n); free(raw);
+}
+
+/* Called with lock held. */
+static void remembered_save(const JoanConfig *cfg)
+{
+    char path[512], text[REMEMBERED * 160]; size_t used = 0; long long now = (long long)time(NULL);
+    for (unsigned i = 0; i < REMEMBERED; ++i) {
+        if (!remembered[i].used || remembered[i].until < now) { memset(&remembered[i], 0, sizeof(remembered[i])); continue; }
+        int n = snprintf(text + used, sizeof(text) - used, "%s %lld %s %d\n", remembered[i].hash,
+                         remembered[i].until, remembered[i].csrf, remembered[i].must_change);
+        if (n < 0 || (size_t)n >= sizeof(text) - used) break;
+        used += (size_t)n;
+    }
+    remembered_path(cfg, path);
+    if (!used) unlink(path); else joan_write_atomic(path, text, used, 0600);
+    memset(text, 0, sizeof(text));
+}
 
 static int ssh_password_path(const JoanConfig *cfg, char out[512])
 {
@@ -155,6 +206,7 @@ int joan_auth_init(const JoanConfig *cfg)
 {
     char path[512],ssh_path[512];
     FILE *f;
+    auth_config = cfg;
     if (joan_mkdir_p(cfg->state_dir, 0700)) return -1;
     auth_path(cfg, path);
     f = fopen(path, "r");
@@ -236,6 +288,7 @@ int joan_auth_login(const JoanConfig *cfg, const char *remote,
 {
     Bucket *b; Session *s = NULL; unsigned i; time_t now = auth_now(); int must = 0;
     unsigned char random[32];
+    int remember_request = out->remember;
     memset(out, 0, sizeof(*out));
     if (joan_auth_throttled(remote)) return -2;
     if (strcmp(user, "admin") || !verify(cfg, password, &must)) {
@@ -252,6 +305,20 @@ int joan_auth_login(const JoanConfig *cfg, const char *remote,
     joan_hex(random, sizeof(random), s->csrf);
     out->authenticated = 1; out->must_change = must;
     memcpy(out->token, s->token, sizeof(out->token)); memcpy(out->csrf, s->csrf, sizeof(out->csrf));
+    if (out->remember || remember_request) {
+        remembered_load(cfg);
+        unsigned slot = 0; long long oldest = -1;
+        for (i = 0; i < REMEMBERED; ++i) {
+            if (!remembered[i].used) { slot = i; oldest = -2; break; }
+            if (oldest == -1 || remembered[i].until < oldest) { oldest = remembered[i].until; slot = i; }
+        }
+        Remembered *r = &remembered[slot];
+        memset(r, 0, sizeof(*r)); r->used = 1; r->must_change = must;
+        r->until = (long long)time(NULL) + REMEMBER_SECONDS;
+        token_hash(s->token, r->hash); memcpy(r->csrf, s->csrf, sizeof(r->csrf));
+        remembered_save(cfg);
+        out->remember = 1;
+    }
     b = bucket_for(remote, now); b->failures = 0;
     pthread_mutex_unlock(&lock); memset(random, 0, sizeof(random)); return 0;
 }
@@ -289,6 +356,29 @@ int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out)
             pthread_mutex_unlock(&lock); return 0;
         }
     }
+    /* Not in memory (expired idle or the daemon restarted): a remembered
+     * sign-in comes back as a fresh in-memory session. */
+    if (!live_without_csrf && auth_config) {
+        long long wall = (long long)time(NULL);
+        remembered_load(auth_config);
+        at = start;
+        while (!cookie_token(&at, start, token)) {
+            char hash[65]; token_hash(token, hash);
+            for (i = 0; i < REMEMBERED; ++i) {
+                Remembered *r = &remembered[i];
+                if (!r->used || r->until < wall || !joan_ct_equal(hash, r->hash, 64)) continue;
+                if (require_csrf && (!req->csrf[0] || !joan_ct_equal(req->csrf, r->csrf, 64))) { live_without_csrf = 1; break; }
+                Session *s = NULL;
+                for (unsigned j = 0; j < SESSIONS; ++j) if (!sessions[j].used || sessions[j].expires < now) { s = &sessions[j]; break; }
+                if (!s) s = &sessions[0];
+                memset(s, 0, sizeof(*s)); s->used = 1; s->expires = now + SESSION_SECONDS; s->must_change = r->must_change;
+                memcpy(s->token, token, 65); memcpy(s->csrf, r->csrf, 65);
+                out->authenticated = 1; out->must_change = s->must_change; out->remember = 1;
+                memcpy(out->token, s->token, sizeof(out->token)); memcpy(out->csrf, s->csrf, sizeof(out->csrf));
+                pthread_mutex_unlock(&lock); return 0;
+            }
+        }
+    }
     pthread_mutex_unlock(&lock);
     return live_without_csrf ? -2 : -1;
 }
@@ -308,12 +398,26 @@ int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
         save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
     pthread_mutex_lock(&lock);
     for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
+    /* A new password signs out everywhere, remembered sign-ins included. */
+    remembered_load(cfg);
+    memset(remembered, 0, sizeof(remembered)); remembered_save(cfg);
     pthread_mutex_unlock(&lock); return 0;
 }
 
-void joan_auth_logout(const JoanAuthz *auth)
+void joan_auth_logout(const JoanConfig *cfg, const JoanAuthz *auth)
+{
+    unsigned i; char hash[65]; int changed = 0; pthread_mutex_lock(&lock);
+    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) memset(&sessions[i], 0, sizeof(sessions[i]));
+    remembered_load(cfg); token_hash(auth->token, hash);
+    for (i = 0; i < REMEMBERED; ++i) if (remembered[i].used && joan_ct_equal(hash, remembered[i].hash, 64)) { memset(&remembered[i], 0, sizeof(remembered[i])); changed = 1; }
+    if (changed) remembered_save(cfg);
+    pthread_mutex_unlock(&lock);
+}
+
+void joan_auth_forget_all(const JoanConfig *cfg)
 {
     unsigned i; pthread_mutex_lock(&lock);
-    for (i = 0; i < SESSIONS; ++i) if (sessions[i].used && joan_ct_equal(auth->token, sessions[i].token, 64)) memset(&sessions[i], 0, sizeof(sessions[i]));
+    for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
+    remembered_load(cfg); memset(remembered, 0, sizeof(remembered)); remembered_save(cfg);
     pthread_mutex_unlock(&lock);
 }

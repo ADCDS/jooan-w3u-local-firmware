@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.24, release sequence 58) has a supported tag until the
+current one is 0.2.28, release sequence 62) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -29,7 +29,14 @@ administrator session (`401 authentication_required`). State-changing HTTP
 requests require the session's CSRF token in `X-CSRF-Token`
 (`403 csrf_rejected`), and an `Origin` header, when present, must be
 `http://<Host>` (`403 origin_rejected`). Sessions expire after 30 minutes
-without a request.
+without a request, unless the sign-in asked to be remembered.
+
+`POST /api/v1/session` with `"remember":true` adds `Max-Age=2592000` to the
+cookie and answers `"remember":true`. Such a sign-in lasts 30 days and survives
+camera restarts. At most 8 are kept (the oldest is replaced), as SHA-256 of the
+cookie, in `sessions.db` in the platform's state directory, which is written
+only at sign-in and sign-out. Signing out ends that one; changing the password
+ends them all.
 
 ## Authentication
 
@@ -78,13 +85,16 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/setup/password` | `POST` | Rotate the shared administrator password |
 | `/api/v1/session` | `POST`, `GET`, `DELETE` | Create, inspect, or end a session |
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, network-time, and helper status |
-| `/api/v1/network/wifi` | `POST`, `PUT`, `DELETE` | Stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
+| `/api/v1/network/wifi/scan` | `GET` | Nearby networks, strongest first (takes 3 to 4 seconds). See [Local networking](#local-networking-and-dns-sd) |
+| `/api/v1/network/wifi` | `GET`, `POST`, `PUT`, `DELETE` | Read the state of a Wi-Fi trial; stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
-| `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, Ethernet link/speed and cumulative interface counters |
+| `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, band and gateway, Ethernet link/speed and cumulative interface counters |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
 | `/api/v1/time` | `GET`, `PUT` | Read the clock and network-time state; configure network time, or set the clock from the client (UTC epoch seconds, as a JSON string). See [Camera time](#camera-time) |
-| `/api/v1/timezone` | `PUT` | Set the time zone stored in the OEM configuration (`gmt_tz`, a `"GMT-03:00"`-style offset). Only the OEM application's burned-in OSD uses it, on its next start (fallback modes); the media daemon draws no overlay. |
-| `/api/v1/ssh/authorized-keys` | `GET`, `POST`, `DELETE` | Inspect, add, or remove optional Ed25519 keys |
+| `/api/v1/timezone` | `PUT` | Set the time zone stored in the OEM configuration (`gmt_tz`, a `"GMT-03:00"`-style offset). Scheduled restarts and the media daemon's day/night and white-light schedules follow it; the OEM application's burned-in OSD also uses it, on its next start (fallback modes). |
+| `/api/v1/ssh/authorized-keys` | `GET`, `POST`, `DELETE` | Inspect, add, or remove optional Ed25519 keys (up to 8). `GET` lists one key per line; `POST` adds one, and a key already present changes nothing; `DELETE` takes `{"id":"<line number>"}` or `{"id":"all"}` |
+| `/api/v1/system/restart` | `POST` | Restart the camera. See [Restarting](#restarting) |
+| `/api/v1/system/restart-schedule` | `GET`, `PUT` | Read or set a daily restart. See [Restarting](#restarting) |
 | `/api/v1/update` | `POST`, `PUT` | Stage then apply an authenticated release |
 
 Clients must ignore unknown response fields.
@@ -142,6 +152,22 @@ mode, stratum, NTP-era and timing checks; SNTP is otherwise unauthenticated, so
 use a server on the camera's own network (see
 [Network security](NETWORK-SECURITY.md#network-time)).
 
+## Restarting
+
+`POST /api/v1/system/restart` answers `200 {"ok":true}` and restarts the camera
+about 2 seconds later. It refuses with `409 {"ok":false,"reason":"..."}` while
+a restart would do harm: `update` (an update or a media install holds the state
+lock), `wifi-trial` (a Wi-Fi change is waiting to be kept) or `boot-trial` (a
+new runtime is being qualified).
+
+`GET /api/v1/system/restart-schedule` returns `{"enabled":true,"time":"04:00"}`
+or `{"enabled":false,"time":null}`. `PUT` with `{"time":"04:00"}` sets a daily
+restart in the camera's time zone (`/api/v1/timezone`), and `{"time":""}` turns
+it off; a bad time is a 400 `invalid_time`. The boot supervisor checks it every
+few seconds. It skips the restart when the camera has been up for less than an
+hour, the clock has not been set, or one of the conditions above holds; a
+skipped restart waits for the next day.
+
 ## Local networking and DNS-SD
 
 The runtime removes IPv4 and IPv6 default routes and repeatedly prunes any that
@@ -164,22 +190,41 @@ reboots. The generic image contains no SSID or passphrase. The committed
 network is the only one a native boot uses, so native boot requires one; the
 OEM's stored Wi-Fi configuration is left on flash for the fallback modes.
 
+`GET /api/v1/network/wifi` reports a trial as
+`{"pending":true,"seconds_left":61,"ssid":"Family Room WiFi","joined":true,"address":"192.0.2.10"}`,
+and otherwise `{"pending":false,"last":"committed"}` (`last` is `committed`,
+`rolled_back` or `null`). `address` is `null` until the camera has one. `PUT` and
+`DELETE` need an `id` string, the one `POST` returned or any other, such as
+`"current"` from a device that did not start the trial: there is only one trial,
+and they act on it.
+
+`GET /api/v1/network/wifi/scan` asks the Wi-Fi driver for a fresh scan and lists
+up to 30 networks, each once at its strongest:
+
+```json
+[{"ssid":"Family Room WiFi","signal_dbm":-48,"frequency_mhz":5180,"secure":true,"in_use":true}]
+```
+
+Hidden networks are not listed. Names follow the same sanitizing as below.
+
 Authenticated `GET /api/v1/network/quality` is read-only and sampled on demand
 (the Network UI refreshes on entry or on pressing Refresh; there is no polling).
 Example response:
 
 ```json
-{"wifi":{"associated":true,"ssid":"Family Room WiFi","signal_dbm":-48,"rate_mbps":72.2,"rx_bytes":"123456","tx_bytes":"234567","rx_packets":"1400","tx_packets":"1500"},"ethernet":{"link":false,"speed_mbps":null,"rx_bytes":"0","tx_bytes":"0","rx_packets":"0","tx_packets":"0"}}
+{"wifi":{"associated":true,"ssid":"Family Room WiFi","signal_dbm":-48,"rate_mbps":72.2,"frequency_mhz":5180,"band":"5 GHz","gateway":"192.0.2.1","rx_bytes":"123456","tx_bytes":"234567","rx_packets":"1400","tx_packets":"1500"},"ethernet":{"link":false,"speed_mbps":null,"rx_bytes":"0","tx_bytes":"0","rx_packets":"0","tx_packets":"0"}}
 ```
 
 `associated` and `link` are booleans or `null` when status is unavailable.
 SSID is emitted only for a completed association, capped at 64 characters and
 sanitized to a limited printable subset (`?` substitutes unsupported bytes).
-`signal_dbm`, `rate_mbps` and `speed_mbps` are numbers or `null` if absent;
-Wi-Fi signal/rate are null when not associated, Ethernet speed is null when down.
+`signal_dbm`, `rate_mbps`, `frequency_mhz` and `speed_mbps` are numbers or `null`
+if absent; Wi-Fi signal/rate are null when not associated, Ethernet speed is null
+when down. `band` is `"5 GHz"`, `"2.4 GHz"` or `null`. `gateway` is the address
+the supervisor recorded when it pruned the default route, or `null`.
 Counters are decimal strings (to avoid JavaScript integer precision loss), or
 `null` when unreadable; they are cumulative since boot and can wrap/reset.
-Only fixed `wlan0` and `eth0` are inspected. No BSSID/MAC, IP, gateway,
+Only fixed `wlan0` and `eth0` are inspected. No BSSID/MAC, the camera's own IP,
 passphrase, PSK, account credentials, or unfiltered tool output is returned.
 The endpoint requires an administrator session and responds with 502
 `integration_failed` if its integration helper fails.
