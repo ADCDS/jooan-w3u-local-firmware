@@ -957,19 +957,20 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
     return sdk_result(setter((unsigned char)value), operation, error, capacity);
 }
 
-int jipc_imp_snapshot(void *state, unsigned channel, jipc_frame *frame,
-                      char *error, size_t capacity)
+int jipc_imp_snapshot(void *state, unsigned channel, pthread_mutex_t *control,
+                      jipc_frame *frame, char *error, size_t capacity)
 {
     imp_state *s = state;
     if (channel >= s->sensors * 2) return failure(error, capacity, "invalid snapshot channel");
-    if (s->main_only) return failure(error, capacity, "JPEG snapshots are unavailable in main_only mode; capture a frame from RTSP");
-    /* The recovered JPEG path is attached to each sensor's substream group.
-     * It shares that group's input with H.264, using encoder 2 or 3. */
+    /* The recovered JPEG path shares a group's input with H.264, using encoder 2
+     * or 3: each sensor's substream group, or in main_only the only group it has,
+     * so the still has the main stream's size. The core runs one job at a time, so
+     * a JPEG lands between two H.264 pictures. */
     unsigned sensor = channel / 2;
-    int encoder_channel = 2 + (int)sensor, group = 2 + (int)sensor;
+    int encoder_channel = 2 + (int)sensor, group = s->main_only ? (int)sensor : 2 + (int)sensor;
     jipc_imp_encoder_attr attribute = {{0}};
-    attribute.words[3] = s->sub_width;
-    attribute.words[4] = s->sub_height; /* payload enum zero is JPEG. */
+    attribute.words[3] = s->main_only ? s->width[sensor] : s->sub_width;
+    attribute.words[4] = s->main_only ? s->height[sensor] : s->sub_height; /* payload enum zero is JPEG. */
     int created = 0, registered = 0, receiving = 0, result = -1;
     if (sdk_result(s->enc_create(encoder_channel, &attribute), "JPEG IMP_Encoder_CreateChn", error, capacity)) goto done;
     created = 1;
@@ -981,7 +982,12 @@ int jipc_imp_snapshot(void *state, unsigned channel, jipc_frame *frame,
     if (fd < 0) { failure(error, capacity, "JPEG encoder fd is unavailable"); goto done; }
     struct pollfd pollfd = {fd, POLLIN, 0};
     int rc;
+    /* H.264 has to keep draining during the wait: undrained, a 1080p JPEG took up
+     * to 412 ms, not 45-106, and each such wait cost the video 0.4 s on both lenses.
+     * The state outlives the wait: the backend closes after the HTTP workers stop. */
+    if (control) pthread_mutex_unlock(control);
     do { rc = poll(&pollfd, 1, 2000); } while (rc < 0 && errno == EINTR);
+    if (control) pthread_mutex_lock(control);
     if (rc <= 0 || !(pollfd.revents & POLLIN)) { failure(error, capacity, "JPEG encoder timed out or failed"); goto done; }
     jipc_frame image = {0};
     if (copy_stream(s, encoder_channel, &image, error, capacity)) goto done;

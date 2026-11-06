@@ -25,6 +25,7 @@ the camera's relay, at most two /api/joan/ requests run at once (with
 """
 
 import argparse
+import base64
 import ipaddress
 import json
 import math
@@ -101,6 +102,30 @@ def perr(status, code, message): return ok({"error": {"code": code, "message": m
 def bare(status, message): return ok({"error": message}, status)  # the platform's few unstructured errors
 def integration(): return perr(502, "integration_failed", "local integration operation failed")
 def mok(o, status=200): return Reply(status, (js(o) + "\n").encode())
+# Two small synthetic gradients, a stand-in for each lens's still.
+STILLS = [base64.b64decode(x) for x in (
+    "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"
+    "AAAAA//Z")]
 def merr(status, message): return mok({"error": message}, status)
 def json_type(t): return t.lower()[:16] == "application/json" and t[16:17] in ("", ";")
 def clamp(v, lo=-100.0, hi=100.0): return max(lo, min(hi, v))
@@ -988,8 +1013,8 @@ class Mock:
             ch = t.partition("=")[2] if "?" in t else "0"
             if not ch.isdigit() or int(ch) >= 4: return merr(400, "Invalid snapshot channel")
             if int(ch) >= self.config["sensors"] * 2: return merr(503, "invalid snapshot channel")
-            return merr(503, "JPEG snapshots are unavailable in main_only mode; capture a frame from RTSP"
-                        if self.config["main_only"] else "Snapshot unavailable (mock)")
+            if self.privacy_active(time.time()): return merr(503, "privacy mode is on")
+            return Reply(200, STILLS[int(ch) // 2], "image/jpeg")
         if t == "/api/v1/talk" and m == "POST":
             return self.talk(h)
         return merr(404, "Endpoint not found")

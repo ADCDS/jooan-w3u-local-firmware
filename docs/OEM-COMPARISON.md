@@ -53,7 +53,7 @@ miss:
    talk (from Frigate's live view or the admin UI) work; they were checked on
    the test camera. There is no siren yet.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
-   2304×1296); the fixed lens streams only 640×360. No JPEG snapshots.
+   2304×1296); the fixed lens streams only 640×360.
 6. **No microSD recording or playback on the camera.** Recording happens on
    the NVR.
 7. **Wi-Fi only, and a technical install.** The Ethernet port is not used;
@@ -94,7 +94,7 @@ under [Sources](#sources):
 | Video codec | H.264[^off] | **Supported** (media) | H.264. |
 | Frame rate | 15 fps on the verified unit [cfg]; not stated publicly | **Supported** (media) | 15 fps. With the shipped video library the daemon refuses any other rate. |
 | Digital zoom | 5× in the app[^off] | **Missing** | Zoom in the NVR or player. ONVIF zoom requests are rejected. |
-| Still snapshots (JPEG) | App screenshots (`support_screenshot_3_million_pixels` = 1) [cfg] | **Missing** (media) | `GET /api/v1/snapshot` and ONVIF `GetSnapshotUri` are refused in the shipped profile. NVRs take stills from the RTSP video instead. Snapshots work only in the four-encoder mode. |
+| Still snapshots (JPEG) | App screenshots (`support_screenshot_3_million_pixels` = 1) [cfg] | **Supported** (media) | `GET /api/v1/snapshot?channel=0` and `2`, ONVIF `GetSnapshotUri`, and the admin UI: 1920×1080 from the pan/tilt lens and 640×360 from the fixed lens, in hardware. Refused during privacy mode. A still costs live video at most about one frame. |
 | Flip and mirror | Yes (`image_rollovers` = 1) [cfg] | **Supported** (media) | `flip`, `hflip` and `vflip` controls. Saved, and pan/tilt directions follow the image. |
 | Brightness, contrast, saturation, sharpness, noise reduction | Stored settings `Brightness`, `Contrast`, `Hue`, `Saturation`, `Sharpness`, `Denoise` [cfg]; whether the app shows them is unverified | **Supported** (media) | Per lens in the admin UI, `/api/v1/controls`, the REST controls and ONVIF imaging; remembered across restarts. Noise reduction (temporal + spatial) was measured on the camera. Hue is not possible: this camera's image-processor driver rejects it. |
 | Anti-flicker (50/60 Hz) | Stored setting `PowerFreq` [cfg] | **Supported** (media) | Off, 50 Hz or 60 Hz for both lenses, remembered; verified in the image processor's own readout. |
@@ -164,9 +164,9 @@ under [Sources](#sources):
 | Viewing away from home | Through the cloud with P2P[^ios] | **Not planned** | The camera has no Internet route. Use your own VPN into the camera's network; a VPN client on another private subnet needs its prefix added to the camera's route allowlist (`/api/v1/network/routes`). |
 | Sharing with family | Device sharing by QR code[^pp] | **Not planned** | Use the NVR's user accounts. |
 | Voice assistants | Alexa[^off]; Tmall Genie[^ios]; the app also links to Google Home [phone] | **Missing** | |
-| Web browser | Unverified | **Partial** (media) | One admin UI at `https://<camera>/` (port 443; the certificate is the camera's own, so the browser warns once), for phones and computers: status, pan/tilt and presets, night and white light, picture, microphone and speaker levels, talk from the browser, stream addresses and a Frigate snippet, Wi-Fi, local name, routes, time, SSH keys, password and platform updates. `http://<camera>/` redirects there. No video or stills in the page: watch in the NVR. |
+| Web browser | Unverified | **Partial** (media) | One admin UI at `https://<camera>/` (port 443; the certificate is the camera's own, so the browser warns once), for phones and computers: status, pan/tilt and presets, night and white light, picture, microphone and speaker levels, talk from the browser, stream addresses and a Frigate snippet, Wi-Fi, local name, routes, time, SSH keys, password and platform updates. `http://<camera>/` redirects there. Stills of both lenses refresh in the page; watch live video in the NVR. |
 | RTSP | Not on the product page; the app sets an RTSP "security password" for NVRs [phone] | **Supported** (media) | TCP/18554, Digest authentication, RTP over TCP or UDP, H.264, up to 8 clients in the default configuration. |
-| ONVIF | Supported[^off]. The stock application's ONVIF server also has events, imaging, absolute and relative moves, snapshots and recording search [app] | **Partial** (media) | An ONVIF subset on HTTPS port 18443: device information, profiles, stream addresses, pan/tilt and presets, and imaging (brightness, saturation, contrast, sharpness, IR-cut ON/OFF/AUTO). No events, snapshots (in the shipped profile), recording search or encoder changes. WS-Discovery is implemented but off in the default configuration, so add the camera by address. |
+| ONVIF | Supported[^off]. The stock application's ONVIF server also has events, imaging, absolute and relative moves, snapshots and recording search [app] | **Partial** (media) | An ONVIF subset on HTTPS port 18443: device information, profiles, stream addresses, pan/tilt and presets, and imaging (brightness, saturation, contrast, sharpness, IR-cut ON/OFF/AUTO). Still addresses too. No events, recording search or encoder changes. WS-Discovery is implemented but off in the default configuration, so add the camera by address. |
 
 ## Network and setup
 

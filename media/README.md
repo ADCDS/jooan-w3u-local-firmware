@@ -60,7 +60,7 @@ JA-A12 storage budget and required boot dependencies.
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights and night | White light (manual, schedule, timed trigger), day/night (manual, automatic from the ISP exposure, schedule), infrared mode, pilot LED; remembered across restarts |
 | Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
-| Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
+| Stills | Hardware JPEG of either lens over HTTPS and ONVIF, one at a time, refused during privacy mode |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
 Motion/person detection, autotracking (an NVR can do it through ONVIF),
@@ -70,10 +70,8 @@ no sensor/JPEG encoder or speaker; unavailable operations return errors. ONVIF
 is a documented subset, not a certification claim. RTSP is IPv4 and live-only;
 multicast, SRTP, tunneling and seeking are not supported. HTTPS connections
 are reused and idle connections park outside the request workers. Motor
-commands and readiness checks do not wait on encoder polling. JPEG snapshots
-in independent-substream mode still serialize their SDK transaction, so taking
-one can briefly pause video. The 1080p mode advertises no ONVIF snapshot support;
-clients can extract stills from RTSP. PTZ preset positions
+commands and readiness checks do not wait on encoder polling, or on a still
+being encoded. PTZ preset positions
 and custom labels persist; arbitrary movement timeouts are unsupported.
 
 ## Build on the workstation

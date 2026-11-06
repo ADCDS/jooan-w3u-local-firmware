@@ -90,7 +90,14 @@ flags=$(cat /sys/class/mtd/mtd4/flags)
 [ "$(hash /dev/mtdblock4)" = "$2" ] || die 'original appfs changed'
 grep -q '^/dev/mtdblock4 /mnt/mtd squashfs ro[, ]' /proc/mounts || die 'unexpected appfs mount'
 [ ! -e "$root/boot-trial" ] || die 'existing failed native boot trial'
-[ "$(df -k /opt | awk 'END {print $4}')" -ge 64 ] || die 'insufficient config space'
+# JFFS2 reclaims written-over blocks lazily, so a busy day can read low for a moment.
+tries=0
+until [ "$(df -k /opt | awk 'END {print $4}')" -ge 64 ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 30 ] || die 'insufficient config space'
+    sync
+    sleep 2
+done
 for name in boot-handoff.sh camera.ini deployment.env; do
     [ -s "$root/$name.next" ] || die "missing staged $name"
     cp "$root/$name" "$state/$name.before"

@@ -76,8 +76,8 @@ With 0.2.33 and its media layer:
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
   through the speaker from Frigate, the admin UI or the API).
 - **Missing:** a siren; motion and person detection; digital zoom; on-screen timestamp;
-  snapshots in the qualified profile; on-camera recording (off in the qualified profile: record with
-  the NVR) and SD-card management; any cloud or phone-app access.
+  on-camera recording (off in the qualified profile: record with the NVR) and SD-card
+  management; any cloud or phone-app access.
 
 [OEM comparison](docs/OEM-COMPARISON.md) compares this firmware with the
 vendor firmware item by item.

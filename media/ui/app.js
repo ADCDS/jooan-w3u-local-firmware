@@ -369,6 +369,13 @@
 		++ep;
 		csrf = '';
 		off = 0;
+		for (const s of Object.values(STL)) {
+			s.url && URL.revokeObjectURL(s.url);
+			delete s.url;
+			delete s.at;
+			delete s.tried;
+		}
+		$$('.still img').forEach(i => i.remove());
 		ptzEnd(1);
 		talkStop();
 		hidePw();
@@ -443,6 +450,8 @@
 				.focus();
 		scrollTo(0, 0);
 		load(r);
+		stShow();
+		stTick();
 	}
 	onhashchange = () => csrf && go(1);
 	wide.onchange = () => route == 'settings' && go();
@@ -807,6 +816,105 @@
 					: ''
 		);
 	}
+	/* Stills: a JPEG of each lens, one request at a time and only as often as the page on
+	   screen wants them, since each one takes the video encoder a moment. */
+	const STL = { 0: {}, 2: {} },
+		lensCh = () => 2 * lens;
+	let stPaused = 0,
+		stBusy = 0,
+		stT;
+	const stWants = () =>
+		(route == 'overview'
+			? stPaused
+				? []
+				: [[0, 5e3], [2, 5e3]]
+			: route == 'pantilt'
+				? [[0, fast > Date.now() || S.m?.platform?.moving ? 2e3 : 3e4]]
+				: route == 'image'
+					? [[lensCh(), 3e4]]
+					: []
+		).filter(([ch]) => S.m?.streams?.some(x => x.channel == ch));
+	function stShow() {
+		const now = Date.now(),
+			priv = S.m?.platform?.privacy;
+		for (const e of $$('.still[data-ch]')) {
+			if (e.closest('.page').hidden) continue;
+			const im = e.dataset.ch == 'im',
+				ch = im ? lensCh() : +e.dataset.ch,
+				s = STL[ch],
+				p = e.querySelector('p'),
+				at = e.querySelector('.at'),
+				t = s.at ? hm(new Date(s.at)) : '',
+				old = s.at && dur(Math.round((now - s.at) / 1e3));
+			let i = e.querySelector('img');
+			if (im) tx('im-pvl', ch ? 'Fixed lens' : 'Pan/tilt lens');
+			if (priv || !s.url) i?.remove();
+			else {
+				i ||= e.insertBefore(h('img', { alt: '' }), e.firstChild);
+				if (i.getAttribute('src') != s.url) i.src = s.url;
+				i.alt = `Latest still of the ${ch ? 'fixed' : 'pan/tilt'} lens, from ${t}`;
+			}
+			p.className = '';
+			if (priv) {
+				p.textContent = 'Privacy mode is on: no stills.';
+				at.textContent = '';
+			} else if (off && s.url) {
+				p.className = 'old';
+				p.replaceChildren(`Last still, ${old} old`, h('span', { class: 'mono', text: t }));
+				at.textContent = '';
+			} else {
+				p.textContent = s.url ? '' : s.err || (off ? 'No still yet.' : 'Getting a still…');
+				at.textContent = !t ? '' : e.dataset.at == 'ago' ? `${t} · ${old} ago` : e.dataset.at == 'mv' ? `${t} · every 2 s while moving` : t;
+			}
+		}
+		const last = Math.max(STL[0].at || 0, STL[2].at || 0);
+		tx('ov-at', last ? hm(new Date(last)) : '–');
+		$('ov-pz').disabled = !!(priv || off);
+	}
+	async function stGrab(ch) {
+		stBusy = 1;
+		const s = STL[ch],
+			ac = new AbortController(),
+			t = setTimeout(() => ac.abort(), 8e3);
+		s.tried = Date.now();
+		try {
+			const r = await fetch(M + 'snapshot?channel=' + ch, { signal: ac.signal, cache: 'no-store' });
+			if (r.ok) {
+				const old = s.url;
+				s.url = URL.createObjectURL(await r.blob());
+				s.at = Date.now();
+				s.err = '';
+				old && setTimeout(() => URL.revokeObjectURL(old), 1e4);
+			} else s.err = (await r.json().catch(() => null))?.error || 'No still right now.';
+		} catch (_) {
+			s.err = 'No still right now.';
+		}
+		clearTimeout(t);
+		stBusy = 0;
+		stShow();
+		stTick();
+	}
+	function stTick() {
+		if (stBusy || off || !csrf || document.hidden || S.m?.platform?.privacy) return;
+		const now = Date.now(),
+			w = stWants()
+				.filter(([ch, every]) => now - (STL[ch].tried || 0) >= every)
+				.sort((a, b) => (STL[a[0]].tried || 0) - (STL[b[0]].tried || 0));
+		w[0] && stGrab(w[0][0]);
+	}
+	/* The picture settings reach the sensor within a second. */
+	function stAfter() {
+		clearTimeout(stT);
+		stT = setTimeout(() => {
+			STL[lensCh()].tried = 0;
+			stTick();
+		}, 1500);
+	}
+	$('ov-pz').onclick = e => {
+		stPaused = !stPaused;
+		e.currentTarget.textContent = stPaused ? 'Resume stills' : 'Pause stills';
+		stTick();
+	};
 	/* Camera controls (GET/POST /api/v1/controls): night mode, infrared, white light and
 	   picture, kept by the camera across restarts. POST takes any subset and answers with
 	   the full state; the engine applies it within a second, so the page reads it again. */
@@ -826,6 +934,7 @@
 		rControls(d);
 		clearTimeout(xt);
 		xt = setTimeout(() => controls().catch(noop), 1200);
+		route == 'image' && stAfter();
 		return d;
 	}
 	/* Seconds still to go on a live countdown, counted on between reads. */
@@ -1116,6 +1225,8 @@
 		lens = +v;
 		pick($('im-lens'), v);
 		PIC.forEach(op => setSl('im-' + op, S.x?.picture[lens][op] ?? 128, 1));
+		stShow();
+		stTick();
 	});
 	$('im-reset').onclick = act(async () => {
 		const p = Object.fromEntries(PIC.map(op => [op, 128]));
@@ -1992,12 +2103,18 @@
 					{ class: 'f' },
 					h('span', { class: 'lbl', text: 'RTSP' }),
 					cf(`rtsp://${hs}:${rp}/live/ch${ch}`, nm.toLowerCase() + ' RTSP address')
+				),
+				h(
+					'div',
+					{ class: 'f' },
+					h('span', { class: 'lbl', text: 'Still' }),
+					cf(`https://${hs}:18443/api/v1/snapshot?channel=${ch}`, nm.toLowerCase() + ' still address')
 				)
 			);
 		$('st-lenses').replaceChildren(ln('Pan/tilt lens', 0), c.sensors > 1 && ln('Fixed lens', 2));
 		tx(
 			'st-vs',
-			`RTSP on port ${rp} with Digest sign-in, ONVIF on 18443 over HTTPS. No JPEG stills in this video profile.`
+			`RTSP on port ${rp} with Digest sign-in. Stills and ONVIF on port 18443 over HTTPS.`
 		);
 		$('st-onvif').replaceChildren(cf(`https://${hs}:18443/onvif/device_service`, 'ONVIF device address'));
 		tx(
@@ -3270,6 +3387,8 @@
 		tick();
 		W && !W.end && wifi();
 		if (!csrf || document.hidden) return;
+		stShow();
+		stTick();
 		if (off) {
 			tx('bn-s', Math.max(0, Math.ceil((retry - Date.now()) / 1e3)) + ' s');
 			Date.now() >= retry && probe();

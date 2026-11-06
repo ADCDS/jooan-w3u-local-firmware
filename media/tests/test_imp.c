@@ -428,6 +428,59 @@ static int pair_get_stream(int ch,jipc_imp_stream *stream,int block)
 static int pair_release_stream(int ch,jipc_imp_stream *stream)
 { CHECK(ch==0||ch==1);CHECK(stream->packs==(uint32_t)(uintptr_t)&pair_packs[ch]);++pair_release[ch];return 0; }
 static int pair_request_idr(int ch){pair_idr=ch;return 0;}
+/* A still in main_only: encoder 2 or 3 on that lens's only group, at its main size,
+ * alongside H.264, and every resource given back. */
+static int still_created,still_registered,still_group,still_started,still_stopped,still_unregistered,still_destroyed;
+static unsigned still_width,still_height;
+static int still_pipe[2];
+static jipc_imp_pack *still_pack;
+static int still_create(int ch,jipc_imp_encoder_attr *a){still_created=ch;still_width=a->words[3];still_height=a->words[4];CHECK(a->words[0]==0);return 0;}
+static int still_register(int group,int ch){still_group=group;still_registered=ch;return 0;}
+static int still_start(int ch){still_started=ch;CHECK(write(still_pipe[1],"x",1)==1);return 0;}
+static int still_stop(int ch){still_stopped=ch;return 0;}
+static int still_unregister(int ch){still_unregistered=ch;return 0;}
+static int still_destroy(int ch){still_destroyed=ch;return 0;}
+static int still_get_fd(int ch){(void)ch;return still_pipe[0];}
+static int still_get_stream(int ch,jipc_imp_stream *stream,int block)
+{ (void)ch;CHECK(block==0);char byte;CHECK(read(still_pipe[0],&byte,1)==1);*stream=(jipc_imp_stream){(uint32_t)(uintptr_t)still_pack,1,1,0};return 0; }
+static int still_release_stream(int ch,jipc_imp_stream *stream){(void)ch;(void)stream;return 0;}
+/* The picture only arrives once something else got the control lock. */
+static pthread_mutex_t still_control=PTHREAD_MUTEX_INITIALIZER;
+static int still_start_quiet(int ch){still_started=ch;return 0;}
+static void *still_needs_control(void *arg)
+{ (void)arg;pthread_mutex_lock(&still_control);CHECK(write(still_pipe[1],"x",1)==1);pthread_mutex_unlock(&still_control);return NULL; }
+static void test_main_only_still(void)
+{
+    static const unsigned char jpeg[]={0xff,0xd8,0xff,0xe0,0,0,0xff,0xd9};
+    unsigned char *memory=low_memory(4096);still_pack=(jipc_imp_pack*)memory;
+    memcpy(memory+128,jpeg,sizeof(jpeg));*still_pack=(jipc_imp_pack){.address=(uint32_t)(uintptr_t)(memory+128),.length=sizeof(jpeg)};
+    CHECK(!pipe(still_pipe));
+    imp_state s={.sensors=2,.main_only=1,.enc_create=still_create,.enc_register=still_register,.start=still_start,.stop=still_stop,
+                 .enc_unregister=still_unregister,.enc_destroy=still_destroy,.get_fd=still_get_fd,.get_stream=still_get_stream,.release_stream=still_release_stream};
+    s.width[0]=1920;s.height[0]=1080;s.width[1]=640;s.height[1]=360;s.frame=malloc(JIPC_MAX_FRAME);CHECK(s.frame);
+    char error[256];
+    for(unsigned ch=0;ch<4;++ch){
+        unsigned lens=ch/2;jipc_frame frame={0};
+        CHECK(!jipc_imp_snapshot(&s,ch,NULL,&frame,error,sizeof(error)));
+        CHECK(frame.codec==JIPC_JPEG&&frame.size==sizeof(jpeg)&&frame.data&&!memcmp(frame.data,jpeg,sizeof(jpeg)));
+        CHECK(still_created==(int)(2+lens)&&still_registered==(int)(2+lens)&&still_group==(int)lens);
+        CHECK(still_width==(lens?640u:1920u)&&still_height==(lens?360u:1080u));
+        CHECK(still_started==(int)(2+lens)&&still_stopped==(int)(2+lens)&&still_unregistered==(int)(2+lens)&&still_destroyed==(int)(2+lens));
+        jipc_frame_free(&frame);
+    }
+    jipc_frame none={0};CHECK(jipc_imp_snapshot(&s,4,NULL,&none,error,sizeof(error))<0&&!none.data);
+    /* Video keeps draining during the wait, and the caller gets its lock back. */
+    s.start=still_start_quiet;
+    pthread_t helper;jipc_frame frame={0};
+    pthread_mutex_lock(&still_control);
+    CHECK(!pthread_create(&helper,NULL,still_needs_control,NULL));
+    CHECK(!jipc_imp_snapshot(&s,0,&still_control,&frame,error,sizeof(error)));
+    CHECK(pthread_mutex_trylock(&still_control)==EBUSY);
+    pthread_mutex_unlock(&still_control);
+    CHECK(!pthread_join(helper,NULL));
+    jipc_frame_free(&frame);
+    free(s.frame);close(still_pipe[0]);close(still_pipe[1]);
+}
 static void test_main_only_delivery(void)
 {
     unsigned char *memory=low_memory(4096);pair_packs=(jipc_imp_pack*)memory;
@@ -463,7 +516,6 @@ static void test_main_only_delivery(void)
     }
     for(int ch=0;ch<4;++ch){CHECK(!jipc_imp_control(&s,"idr",ch,0,error,sizeof(error)));CHECK(pair_idr==ch/2);}
     CHECK(jipc_imp_control(&s,"idr",4,0,error,sizeof(error))<0);
-    for(unsigned ch=0;ch<4;++ch){jipc_frame frame={0};CHECK(jipc_imp_snapshot(&s,ch,&frame,error,sizeof(error))<0);CHECK(!frame.data);}
     s.last_video[2]=jipc_now_us()-16000000;CHECK(write(pair_pipe[0][1],"x",1)==1);
     CHECK(jipc_imp_poll(&app,&s,0,error,sizeof(error))<0&&strstr(error,"stream 2"));
     CHECK(app.produced[0]==2&&app.produced[1]==2&&app.produced[2]==1&&app.produced[3]==1);
@@ -518,7 +570,7 @@ static void test_provider(void)
 
 int main(void)
 {
-    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone(); test_main_only_graph(); test_main_only_delivery();
+    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone(); test_main_only_graph(); test_main_only_delivery(); test_main_only_still();
     puts("IMP offline adapter contracts passed");
     return 0;
 }

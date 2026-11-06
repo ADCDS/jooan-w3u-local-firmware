@@ -36,4 +36,14 @@ assert any("sequence 58" in p for p in problems(platform={"release_sequence": 58
 assert any("bundle expects" in p for p in problems({"appfs_md5": "b" * 32}, appfs=APPFS))
 assert any("did not qualify" in p for p in problems({"qualified": "0"}))
 assert any("64 KiB" in p for p in problems({"opt_free": "10"}))
+# A release with another libimp must bring the sums the boot checks it against.
+SAME = APPFS | {"release": "11111111-904d60a6"}
+NEW = APPFS | {"release": "22222222-8b374e7a"}
+FACTS = {"libimp_sha256": "904d60a6" + "0" * 56}
+assert problems(FACTS, appfs=SAME) == []
+assert any("changes libimp" in p for p in problems(FACTS, appfs=NEW))
+assert any("changes libimp" in p for p in problems(FACTS, appfs=NEW | {"imp_md5": "c" * 32}))
+assert any("changes libimp" in p for p in problems(
+    FACTS, appfs=NEW | {"imp_md5": "c" * 32, "imp_sha256": "904d60a6" + "0" * 56}))
+assert problems(FACTS, appfs=NEW | {"imp_md5": "c" * 32, "imp_sha256": "8b374e7a" + "0" * 56}) == []
 print("install-camera preflight: PASS")
