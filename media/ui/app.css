@@ -166,7 +166,7 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .aim:disabled{cursor:not-allowed}
 .fr,.tg{position:absolute;box-sizing:border-box;pointer-events:none}
 .fr{border:2px dashed #E4EBE9;border-radius:4px}
-.fr b{position:absolute;left:6px;bottom:4px;font-size:12px;font-weight:600;letter-spacing:.04em;font-style:normal;color:#E4EBE9;text-shadow:0 0 3px #000}
+.fr b{position:absolute;right:6px;top:4px;font-size:12px;font-weight:600;letter-spacing:.04em;font-style:normal;color:#E4EBE9;text-shadow:0 0 3px #000}
 .tg{width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;border:2px solid #5FE0BC;display:grid;place-items:center}
 .tg:before{content:"";width:6px;height:6px;border-radius:50%;background:#5FE0BC}
 .tg span{position:absolute;left:46px;top:6px;padding:4px 8px;border-radius:6px;background:#080E0FB8;color:#E4EBE9;font-size:13px;font-weight:600;font-style:normal;white-space:nowrap}
