@@ -100,6 +100,8 @@ typedef struct jipc_app {
 typedef struct { int pan, tilt, moving, night, white_light; double pan_norm, tilt_norm; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
 typedef struct { int moving, homing; long manual_age_s; } jipc_ptz_motion;
 enum { JIPC_MOVE_ABSOLUTE, JIPC_MOVE_RELATIVE, JIPC_MOVE_RELATIVE_FOV, JIPC_MOVE_STEPS };
+/* Half the pan/tilt lens's field of view, in motor steps. */
+enum { JIPC_FOV_HALF_PAN = 405, JIPC_FOV_HALF_TILT = 220 };
 
 uint64_t jipc_now_us(void);
 /* Failed-login throttle (src/authlimit.c), keyed by peer address. */
@@ -233,6 +235,12 @@ int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *er
 /* Boot homing when motor_home=1 (no OEM bootstrap); once per boot. */
 int jipc_platform_start(jipc_app *app);
 int jipc_platform_move(jipc_app *app, int kind, double x, double y, double speed, char *error, size_t capacity);
+/* Aiming from the fixed lens's picture (src/aim.c). u and v run from 0 to 1 across it. */
+typedef struct { double x[6], y[6]; } jipc_aim;
+void jipc_aim_steps(const jipc_aim *aim, double u, double v, double *x, double *y);
+int jipc_aim_where(const jipc_aim *aim, double x, double y, double *u, double *v);
+int jipc_aim_json(jipc_app *app, char *out, size_t capacity);
+int jipc_aim_post(jipc_app *app, const char *json, char *error, size_t capacity); /* returns an HTTP status */
 int jipc_platform_steps(jipc_app *app, int *x, int *y);
 int jipc_platform_patrol_goto(jipc_app *app, int slot, char *error, size_t capacity);
 int jipc_platform_motion(jipc_app *app, jipc_ptz_motion *motion);

@@ -384,6 +384,7 @@ class Mock:
         # media daemon
         self.config, self.media_password, self.recording = dict(MEDIA_CONFIG), args.password, False
         self.presets = {} if args.no_presets else {k: list(v) for k, v in PRESETS.items()}
+        self.aim_ok = not args.no_aim
         self.x, self.y = -14.0, 70.0
         self.controls = control_defaults()  # the daemon's state_dir/controls.json
         self.media_boot(now, args.homing, first=True)
@@ -1009,6 +1010,23 @@ class Mock:
             return mok({"ok": True})
         if t == "/api/v1/recordings" and m == "GET":
             return mok({"recordings": [], "truncated": False})
+        if t == "/api/v1/aim":
+            sx, sy = 2040 - self.x * 20.4, 615 - self.y * 6.15
+            if m == "GET":
+                if not self.aim_ok: return mok({"calibrated": False, "steps": [round(sx), round(sy)], "view": None, "x": [], "y": []})
+                # camera1's calibration, without its small curved terms, is enough for a mock
+                u, v = (sx - 2021) / -457, (sy - 385) / 220
+                return mok({"calibrated": True, "steps": [round(sx), round(sy)], "x": [2021, -457, 0, 0, 0, 0], "y": [385, 0, 220, 0, 0, 0],
+                            "view": {"u": (u + 1) / 2, "v": (v + 1) / 2, "w": 0.886, "h": 1.0}})
+            o = json.loads(h.body or b"null")
+            if not isinstance(o, dict) or not (0 <= o.get("u", -1) <= 1 and 0 <= o.get("v", -1) <= 1):
+                return merr(400, "Send u and v, steps, or a calibration")
+            if not self.aim_ok: return merr(409, "Aiming is not calibrated")
+            if self.privacy_active(time.time()): return merr(409, "privacy mode is on")
+            sx, sy = 2021 - 457 * (o["u"] * 2 - 1), 385 + 220 * (o["v"] * 2 - 1)
+            now = time.time()
+            self.goto = {"t0": now, "dur": 2.0, "x0": self.x, "y0": self.y, "x1": (2040 - sx) / 20.4, "y1": (615 - sy) / 6.15}
+            return mok({"ok": True})
         if (t == "/api/v1/snapshot" or t.startswith("/api/v1/snapshot?channel=")) and m == "GET":
             ch = t.partition("=")[2] if "?" in t else "0"
             if not ch.isdigit() or int(ch) >= 4: return merr(400, "Invalid snapshot channel")
@@ -1421,6 +1439,7 @@ def main():
     p.add_argument("--latency", type=int, default=0, metavar="MS", help="delay every API response")
     p.add_argument("--old-audio", action="store_true", help="status without microphone volume/gain/speaker_gain, audio.muted and audio.level")
     p.add_argument("--no-presets", action="store_true", help="start with no PTZ presets")
+    p.add_argument("--no-aim", action="store_true", help="aiming from the fixed lens is not calibrated")
     p.add_argument("--homing", type=float, default=0, metavar="SECONDS", help="pan/tilt homing after each boot")
     p.add_argument("--talk-busy", action="store_true", help="talk: another talker holds the speaker (409)")
     p.add_argument("--no-speaker", action="store_true", help="talk: speaker unavailable (503)")

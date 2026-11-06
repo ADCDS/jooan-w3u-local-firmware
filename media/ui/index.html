@@ -75,12 +75,12 @@
 <section class="page ov" id="p-overview" hidden>
 <header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Stills refresh every 5 seconds. Live video plays in your NVR (Frigate).</p></div><span class="inl"><small>Updated <span class="mono ink" id="ov-at">–</span></small><button class="btn" id="ov-pz">Pause stills</button></span></header>
 <div class="cols"><div class="stack w2">
-<div class="card o1"><div class="still" data-ch="0" data-at="ago"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><span class="tag b mono at"></span><p></p></div>
+<div class="card o1"><div class="still" data-ch="0" data-at="ago"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><span class="tag b mono at"></span><p class="m"></p></div>
 <div class="bar nw"><div><h2>Pan/tilt lens</h2><small class="mono" id="ov-s0"></small></div><span class="inl"><a class="btn" href="#pantilt"><svg><use href="#i-pantilt"/></svg>Steer</a><a class="btn dsk" href="/api/v1/snapshot?channel=0" target="_blank" rel="noopener">Full size</a></span></div></div>
 <div class="card o4" id="ov-st"><div class="bar"><h2>Status</h2><span id="ov-sum"></span></div><ul class="health" id="ov-stats"></ul></div>
 <div class="card o4" id="ov-last" hidden><h2>Last known status</h2><dl class="stats"><div><dt>Last answer</dt><dd class="mono" id="ov-la"></dd></div><div><dt>Wi-Fi then</dt><dd id="ov-lw"></dd></div></dl></div>
 </div><div class="stack">
-<div class="card o1 o2"><div class="still" data-ch="2"><span class="tag">Fixed lens</span><span class="tag b mono at"></span><p></p></div>
+<div class="card o1 o2"><div class="still" data-ch="2"><span class="tag">Fixed lens</span><span class="tag b mono at"></span><p class="m"></p></div>
 <div class="bar nw"><div><h2>Fixed lens</h2><small class="mono" id="ov-s1"></small></div><a class="btn dsk" href="/api/v1/snapshot?channel=2" target="_blank" rel="noopener">Full size</a></div></div>
 <div class="card o3"><h2>Quick actions</h2>
 <div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note"></small></div>
@@ -106,7 +106,10 @@
 </div>
 </div>
 <div class="stack w2">
-<div class="card o1 pt1"><div class="still" data-ch="0" data-at="mv"><span class="tag">Pan/tilt lens</span><span class="tag b mono at"></span><p></p></div></div>
+<div class="card o1 pt1"><div class="still" data-ch="0" data-at="mv"><span class="tag">Pan/tilt lens</span><span class="tag b mono at"></span><p class="m"></p></div></div>
+<div class="card pt4" id="pt-aim" hidden><div><h2>Aim from the fixed lens</h2><small>Click a point on it and the pan/tilt lens turns toward it. The dashed frame is what the pan/tilt lens sees now.</small></div>
+<button type="button" class="still aim" id="pt-aimb" data-ch="2" aria-label="Fixed lens still. Click a point to aim the pan/tilt lens there. With the keyboard, move the target with the arrow keys and press Enter."><span class="tag">Fixed lens</span><span class="tag b mono at"></span><span class="m"></span><i class="fr" id="pt-fr" hidden><b>NOW</b></i><i class="tg" id="pt-tg" hidden><span></span></i></button>
+<small id="pt-aimn" role="status"></small></div>
 <div class="card pt3"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
 <ul class="presets" id="pt-list"></ul><small class="mob" id="pt-free"></small>
 <div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div>
@@ -148,7 +151,7 @@
 </div>
 <div class="card">
 <div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
-<div class="still" data-ch="im"><span class="tag" id="im-pvl">Pan/tilt lens</span><span class="tag b mono at"></span><p></p></div>
+<div class="still" data-ch="im"><span class="tag" id="im-pvl">Pan/tilt lens</span><span class="tag b mono at"></span><p class="m"></p></div>
 <small>Preview still, refreshes after each change.</small>
 <div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
 <div class="stack s" id="im-sl"></div><small>Noise reduction: 0 leaves grain, 255 is very strong and may smear moving things.</small>

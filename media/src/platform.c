@@ -30,7 +30,6 @@ enum { HOME_PAN_STEPS = 4080, HOME_TILT_STEPS = 1200, HOME_TILT_RESET = 200, HOM
  * 2.37 px per pan step and 2.45 per tilt step, after a dead band of about 25 steps
  * whenever a direction reverses (gear backlash). An ONVIF FOV-relative move of 1
  * brings the frame's edge to its centre, which is how Frigate's autotracker aims. */
-enum { FOV_HALF_PAN = 405, FOV_HALF_TILT = 220 };
 #define MANUAL_LEASE_US UINT64_C(1200000)
 #define NUDGE_US UINT64_C(350000)
 #define PRESET_LIMIT_US UINT64_C(45000000)
@@ -814,8 +813,8 @@ int jipc_platform_move(jipc_app *app, int kind, double x, double y, double speed
         tx = (x * state->pan_sign + 1) / 2 * state->pan_max;
         ty = (y * state->tilt_sign + 1) / 2 * state->tilt_max;
     } else {
-        double half_x = kind == JIPC_MOVE_RELATIVE_FOV ? FOV_HALF_PAN : state->pan_max / 2.0;
-        double half_y = kind == JIPC_MOVE_RELATIVE_FOV ? FOV_HALF_TILT : state->tilt_max / 2.0;
+        double half_x = kind == JIPC_MOVE_RELATIVE_FOV ? JIPC_FOV_HALF_PAN : state->pan_max / 2.0;
+        double half_y = kind == JIPC_MOVE_RELATIVE_FOV ? JIPC_FOV_HALF_TILT : state->tilt_max / 2.0;
         tx = state->x + x * state->pan_sign * half_x;
         ty = state->y + y * state->tilt_sign * half_y;
     }

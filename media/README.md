@@ -239,6 +239,8 @@ Authenticated REST endpoints:
 | `POST /api/v1/recording` | `{ "enabled":true }` starts recording; false stops |
 | `GET /api/v1/recordings` | Bounded file listing; download a listed name under the same path |
 | `GET /api/v1/snapshot?channel=0` | Native JPEG when the backend can produce one |
+| `GET /api/v1/aim` | Whether aiming is calibrated, the motors' steps, and where the pan/tilt lens's view falls in the fixed lens's picture |
+| `POST /api/v1/aim` | `{"u":0.25,"v":0.75}` turns the pan/tilt lens to that point of the fixed lens's picture (0 to 1 across it); `{"steps":[x,y]}` to those motor steps; `{"x":[…6],"y":[…6]}` stores a calibration |
 | `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono, at most 8000 bytes (1 s) per request: `200` queued, `409` another talker or the 2 s queue is full, `503` speaker unavailable |
 
 `/health` and `/healthz` report readiness without credentials and are never

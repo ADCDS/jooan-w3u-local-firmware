@@ -100,10 +100,10 @@ static void moves(void)
     moving=dx=dy=swapped=0;driver_x=2000;driver_y=600;assert(!motor_read(&s));
     /* FOV-relative: 1 brings the frame's edge to the centre. */
     assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0,error,sizeof(error)));
-    assert(s.target_x==2000-FOV_HALF_PAN&&s.target_y==600-FOV_HALF_TILT&&s.goto_active&&!s.goto_rate);
-    RUN();assert(driver_x==2000-FOV_HALF_PAN&&driver_y==600-FOV_HALF_TILT);
+    assert(s.target_x==2000-JIPC_FOV_HALF_PAN&&s.target_y==600-JIPC_FOV_HALF_TILT&&s.goto_active&&!s.goto_rate);
+    RUN();assert(driver_x==2000-JIPC_FOV_HALF_PAN&&driver_y==600-JIPC_FOV_HALF_TILT);
     assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,-0.5,-0.5,1,error,sizeof(error)));
-    assert(s.goto_rate==900&&s.target_x==2000-FOV_HALF_PAN+203&&s.target_y==600-FOV_HALF_TILT+110);
+    assert(s.goto_rate==900&&s.target_x==2000-JIPC_FOV_HALF_PAN+203&&s.target_y==600-JIPC_FOV_HALF_TILT+110);
     RUN();assert(speed==900);
     /* Never past the travel. */
     assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0.01,error,sizeof(error)));assert(s.goto_rate==100);
