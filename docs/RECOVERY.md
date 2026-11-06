@@ -85,6 +85,23 @@ network. On the verified unit that is the vendor bench network `JOOANTEST`
    applies the committed network, and the native boot qualifies.
 4. Remove the temporary network.
 
+## A media change that stops native boot
+
+If the media daemon exits during a native boot, its armed watchdog resets the board.
+The next boot latches `native-failed` and takes the handoff, and a handoff that also
+fails latches `boot-trial` and leaves the guarded OEM application running. The
+platform and SSH still answer, and the HTTPS UI does not. To recover:
+
+1. Read why it failed in `/tmp/jooanipc-open.log`, or in a log mirrored off the camera
+   if the board has reset since. Grep for `startup failed` and `health check`.
+2. Undo the cause, if it is a saved setting. For example, in
+   `/opt/jooanipc-open/state/controls.json`.
+3. `cd /opt/jooanipc-open && rm -f native-failed native-trial boot-trial && sync`
+   and reboot. The boot goes native again, and the installer accepts the camera.
+
+This happened on the test camera on 2026-11-06, twice, with a release that could not
+start with privacy mode on. It was recovered this way in about 5 minutes each time.
+
 Signed uninstall is destructive removal, not restoration of predecessor state.
 It removes the Web UI, route pruning, the process guard, project SSH, and the
 compressed controller/runtime; the next boot returns to OEM/GoAhead behavior,
