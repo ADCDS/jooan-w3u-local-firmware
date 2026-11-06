@@ -3,7 +3,7 @@
 Native dual-sensor capture and native encoding now work on the physical target
 with the [OpenIMP OEM80 fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi).
 The current `main_only=1` profile encodes the movable view at 1920×1080 and
-the fixed view at 640×360, configured at 15 fps; audio is optional (`audio=1`). All four
+the fixed view at 1024×576, configured at 15 fps; audio is optional (`audio=1`). All four
 logical H.264 URLs decode: channels 1/3 share the corresponding main feed.
 Physical pan,
 tilt, deadman stop and repeated two-axis preset return passed. Frigate on NVR host
@@ -84,7 +84,7 @@ export OPENIMP_T23_ENCODER=native
 export OPENIMP_T23_NATIVE_FALLBACK=0
 ```
 
-Set `sensors=2`, `fps=15`, `flip0=3` and `flip1=3` (and `audio=0` or `1`) for the tested
+Set `sensors=2`, `fps=15` (or lower), `flip0=3` and `flip1=3` (and `audio=0` or `1`) for the tested
 profile. With `main_only=0`, one published sensor is also permitted, but both
 physical slots are registered and enumerated because `direct_mode=2` AE visits
 both. The current `main_only=1` mode requires two published sensors. Other FPS
@@ -111,10 +111,24 @@ asymmetric graph produced repeated image regions even though H.264 decoded;
 the new graph's actual images were inspected as well as decoded. No kernel
 patch or new OpenIMP library is required for this application-side workaround.
 
-The qualified settings are `width=1920`, `height=1080`, `width1=640`,
-`height1=360`, `bitrate=3072`, `bitrate1=768` and `gop_frames=15`. Reserved-memory
-peak is 18,884 KiB of 21,988 KiB, leaving 3,104 KiB. Both sensor drivers advertise
-1920×1080 input; the fixed output is intentionally scaled down. OEM evidence
+The qualified settings are `width=1920`, `height=1080`, `width1=1024`,
+`height1=576`, `bitrate=3072`, `bitrate1=1536` and `gop_frames=15`. Reserved-memory
+peak is 20,388 KiB of 21,988 KiB, or 20,596 KiB with the timestamp on, leaving
+1,392 KiB. Both sensor drivers advertise 1920×1080 input; the fixed output is
+scaled down from it, with the same framing at any size (a corner moved 0.5 px
+between 640×360 and 1024×576). `fps` may be anything up to 15: on camera1, 10 and 5
+gave exactly that many frames on both streams.
+
+What each stream costs in reserved memory, measured: one NV12 frame in its pool, plus
+about 222 KiB and 642 KiB per 640×360 worth of pixels in the encoder. So beside
+1920×1080, a fixed view of 1280×720 would need 2,980 KiB more than 640×360 and
+does not fit, and a real 640×360 substream on the pan/tilt lens would need about
+1,200 KiB, which leaves under 200 KiB once the fixed view is 1024×576 and the
+timestamp is on. Its URL keeps sharing the main feed: an NVR can scale that itself.
+
+A release from before these limits refuses these values at its boot check, so a bundle
+that rolls back past them must also set `width1=640`, `height1=360`, `bitrate1=768` and
+`fps=15` in `config.camera_ini`. OEM evidence
 shows 2304×1296 outputs with 1920×1080 sensor input, supporting ISP upscaling
 for that OEM mode. The full-frame native encoder still cannot fit that 3 MP
 profile with the fixed view in this reserved arena.
@@ -122,7 +136,7 @@ profile with the fixed view in this reserved arena.
 With `main_only=0`, logical 0/1 use FS1/2 and 2/3 use FS4/5. This older native
 layout retains independent substreams and requires matching main dimensions
 through 1280×720. The new mode requires two sensors and rejects a primary
-larger than 1920×1080 or a fixed view larger than 640×360. Independent substream
+larger than 1920×1080 or a fixed view larger than 1024×576. Independent substream
 settings are unused. Other layouts need separate memory and image qualification.
 To return to the earlier four-encoder profile, set `main_only=0`,
 `width=1280`, `height=720`, `width1=0`, `height1=0`, `bitrate=2048`,

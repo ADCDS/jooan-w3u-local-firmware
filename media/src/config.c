@@ -107,8 +107,8 @@ int jipc_native_video_validate(const jipc_config *c, char *error, size_t capacit
 {
     if (c->main_only) {
         if (c->sensors != 2 || c->width > 1920 || c->height > 1080 ||
-            jipc_video_width(c,2) > 640 || jipc_video_height(c,2) > 360)
-            return fail(error, capacity, "main_only requires two sensors, primary up to 1920x1080 and fixed view up to 640x360");
+            jipc_video_width(c,2) > 1024 || jipc_video_height(c,2) > 576)
+            return fail(error, capacity, "main_only requires two sensors, primary up to 1920x1080 and fixed view up to 1024x576");
     } else if (c->width > 1280 || c->height > 720 || (c->sensors == 2 &&
         (jipc_video_width(c,0) != jipc_video_width(c,2) || jipc_video_height(c,0) != jipc_video_height(c,2)))) {
         return fail(error, capacity, "independent native streams require matching main dimensions up to 1280x720");

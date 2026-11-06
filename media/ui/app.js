@@ -1127,6 +1127,7 @@
 	const ovName = () => name().replace(/[^ -~]/g, '').slice(0, 16);
 	function ovShow(o) {
 		$('im-ovc').hidden = !o;
+		document.body.classList.toggle('ov-tl', !!o?.enabled && o.position == 'top-left');
 		if (!o) return;
 		busy($('im-ovs')) || sw($('im-ovs'), o.enabled);
 		$('im-ovf').hidden = $('im-ovb').hidden = !o.enabled;

@@ -53,7 +53,7 @@ miss:
    talk (from Frigate's live view or the admin UI) work; they were checked on
    the test camera. There is no siren yet.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
-   2304×1296); the fixed lens streams only 640×360.
+   2304×1296); the fixed lens streams 1024×576.
 6. **No microSD recording or playback on the camera.** Recording happens on
    the NVR.
 7. **Wi-Fi only, and a technical install.** The Ethernet port is not used;
@@ -89,10 +89,10 @@ under [Sources](#sources):
 | --- | --- | --- | --- |
 | Live view of both lenses | Both lenses side by side in the app ("dual screen")[^off][^amz-us] | **Supported** (media) | Over RTSP, for an NVR or a player such as VLC: `/live/ch0` is the pan/tilt lens, `/live/ch2` the fixed lens. Neither the platform Web UI nor the media daemon's small web page shows video. |
 | Pan/tilt lens resolution | 3MP, 2304×1296, with a 640×360 substream[^off]. On the verified unit: 15 fps, 1024 kbit/s [cfg] | **Partial** (media) | 1920×1080 at 15 fps, 3072 kbit/s. The 2304×1296 output does not fit the reserved video memory with the current encoder setup. The project's [1080p test](../media/docs/camera-1080-test-20261018.json) notes that both sensor drivers report a 1080p input and that the stock 2304×1296 mode looks upscaled from it; the sensor's real maximum is not established. |
-| Fixed lens resolution | Marketed as two 3MP lenses[^amz-us]; the verified unit's settings give it the same 2304×1296 plus 640×360 [cfg] | **Partial** (media) | 640×360 only. The shipped profile (`main_only=1`) refuses anything larger. |
-| Separate low-resolution substreams | One 640×360 substream per lens[^off] [cfg] | **Partial** (media) | In the shipped profile `ch1` and `ch3` carry the same feed as `ch0` and `ch2`. A four-encoder mode has real substreams, but limits both main streams to 1280×720. |
+| Fixed lens resolution | Marketed as two 3MP lenses[^amz-us]; the verified unit's settings give it the same 2304×1296 plus 640×360 [cfg] | **Partial** (media) | 1024×576 at 15 fps, 1536 kbit/s. 1280×720 needs about 3 MB more reserved video memory than the 640×360 it used to be, and that does not fit beside 1920×1080. |
+| Separate low-resolution substreams | One 640×360 substream per lens[^off] [cfg] | **Partial** (media) | In the shipped profile `ch1` and `ch3` carry the same feed as `ch0` and `ch2`: a real substream on the pan/tilt lens would leave under 200 KiB of reserved video memory, and an NVR can scale the main stream itself. A four-encoder mode has real substreams, but limits both main streams to 1280×720. |
 | Video codec | H.264[^off] | **Supported** (media) | H.264. |
-| Frame rate | 15 fps on the verified unit [cfg]; not stated publicly | **Supported** (media) | 15 fps. With the shipped video library the daemon refuses any other rate. |
+| Frame rate | 15 fps on the verified unit [cfg]; not stated publicly | **Supported** (media) | 15 fps, or lower with `fps` in the configuration (10 and 5 checked on the camera). |
 | Digital zoom | 5× in the app[^off] | **Missing** | Zoom in the NVR or player. ONVIF zoom requests are rejected. |
 | Still snapshots (JPEG) | App screenshots (`support_screenshot_3_million_pixels` = 1) [cfg] | **Supported** (media) | `GET /api/v1/snapshot?channel=0` and `2`, ONVIF `GetSnapshotUri`, and the admin UI: 1920×1080 from the pan/tilt lens and 640×360 from the fixed lens, in hardware. Refused during privacy mode. A still costs live video at most about one frame. |
 | Flip and mirror | Yes (`image_rollovers` = 1) [cfg] | **Supported** (media) | `flip`, `hflip` and `vflip` controls. Saved, and pan/tilt directions follow the image. |

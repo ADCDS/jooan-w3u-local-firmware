@@ -157,6 +157,8 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .tag{position:absolute;left:12px;top:12px;padding:4px 8px;border-radius:6px;background:#080E0FB8;color:#E4EBE9;font-size:12px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
 .tag.r{left:auto;right:12px;font-size:13px;letter-spacing:0;text-transform:none}
 .tag.b{top:auto;bottom:12px;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none}
+.tag.br{left:auto;right:12px;top:auto;bottom:12px}
+.ov-tl .still>.tag:not(.b):not(.r):not(.br){top:calc(12px + 8%)}
 .still img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit}
 .still .m{position:relative}
 .still .m:empty{display:none}
