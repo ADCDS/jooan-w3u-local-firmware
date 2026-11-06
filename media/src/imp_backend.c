@@ -351,8 +351,8 @@ static int validate_provider(const char *version, const jipc_config *config,
             return failure(error, capacity, "OpenIMP requires OPENIMP_T23_DRIVER_ABI=oem80, OPENIMP_T23_ENCODER=native and OPENIMP_T23_NATIVE_FALLBACK=0");
         /* Audio: microphone and speaker over OpenIMP's /dev/dsp backend,
          * qualified in docs/camera-audio-test-*.json. */
-        if (config->fps != 15)
-            return failure(error, capacity, "OpenIMP OEM sensor activation is qualified at 15 fps");
+        if (config->fps > 15)
+            return failure(error, capacity, "OpenIMP OEM sensor activation is qualified up to 15 fps");
         if (jipc_native_video_validate(config,error,capacity)) return -1;
         return 0;
     }

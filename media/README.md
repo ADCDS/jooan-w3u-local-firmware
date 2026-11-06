@@ -12,11 +12,11 @@ kernel and drivers. It has no vendor cloud or TUTK/P2P client.
 
 **Native dual-sensor capture works on the physical T23N with our OpenIMP
 OEM80 fork:** the movable view runs at **1920×1080**, the fixed view at
-**640×360**, both at 15 fps. With `audio=1` the microphone streams on the
+**1024×576**, both at 15 fps. With `audio=1` the microphone streams on the
 main URLs and you can talk through the speaker (see [Audio and talk](#audio-and-talk);
 [hardware test](docs/camera-audio-test-20261105.json)). `main_only=1` creates two
 physical H.264 encoders; the four existing URLs remain available, with each
-substream URL sharing its lens's main feed. Bitrates are 3072/768 kbps with a
+substream URL sharing its lens's main feed. Bitrates are 3072/1536 kbps with a
 one-second GOP. Physical pan/tilt and persistent named presets work, and
 Frigate records both views. The new graph uses separate ISP scaler slots to
 avoid the shared-stride corruption from the previous asymmetric attempt.

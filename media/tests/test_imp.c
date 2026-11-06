@@ -614,7 +614,17 @@ static void test_provider(void)
     config.width1=640;config.width=2304;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
     config.width=1920;config.sensors=1;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
     config.sensors=2;
+    /* Rates up to the sensor's 15, and a fixed view up to 1024x576: more does not fit. */
+    config.fps = 5;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
     config.fps = 10;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    config.width1=1024;config.height1=576;
+    CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    config.width1=1056;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
+    config.width1=1024;config.height1=594;CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error)<0);
+    config.width1=640;config.height1=360;
+    config.fps = 20;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     unsetenv("OPENIMP_T23_DRIVER_ABI");
     unsetenv("OPENIMP_T23_ENCODER");

@@ -66,7 +66,7 @@ anything.
 
 With 0.2.33 and its media layer:
 
-- **Works:** RTSP for both lenses (1920×1080 and 640×360 at 15 fps, H.264);
+- **Works:** RTSP for both lenses (1920×1080 and 1024×576 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,
   manual night/IR-cut and white light; one admin UI at `https://<camera>/`
   for phones and computers (`http://<camera>/` redirects there); SSH; Wi-Fi with

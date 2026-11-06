@@ -205,7 +205,7 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Capability (OEM app · `jooanipc`) | Retrofit |
 |---|---|
 | **Video** | |
-| Live view, dual sensor (OEM: main 2304×1296 + sub 640×360) | → RTSP for an NVR such as Frigate; the qualified profile is 1920×1080 + 640×360. The platform Web UI is a maintenance console and plays no video |
+| Live view, dual sensor (OEM: main 2304×1296 + sub 640×360) | → RTSP for an NVR such as Frigate; the qualified profile is 1920×1080 + 1024×360. The platform Web UI is a maintenance console and plays no video |
 | Direct RTSP for NVR / VLC clients | → TCP/18554, Digest authentication |
 | JPEG snapshot | → ~ `GET /api/v1/snapshot` on TCP/18443, unavailable in the qualified `main_only=1` profile; the platform has no snapshot route |
 | Video flip / mirror | → `flip`, `hflip`, `vflip` controls |

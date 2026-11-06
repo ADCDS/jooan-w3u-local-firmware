@@ -26,7 +26,7 @@ import urllib.request
 import cv2
 import numpy as np
 
-SIZE = (640, 360)
+SIZE = (640, 360)  # both stills are compared at this size, whatever the streams are
 MIN_INLIERS = 40
 
 
@@ -80,6 +80,7 @@ def scan(camera, xs, ys):
 def locate(head, fixed, sift, matcher):
     """The pan/tilt picture's centre in the fixed lens's picture, if they match well."""
     head = cv2.resize(head, SIZE, interpolation=cv2.INTER_AREA)
+    fixed = cv2.resize(fixed, SIZE, interpolation=cv2.INTER_AREA)
     kh, dh = sift.detectAndCompute(head, None)
     kf, df = sift.detectAndCompute(fixed, None)
     if dh is None or df is None or len(kh) < 8 or len(kf) < 8:
