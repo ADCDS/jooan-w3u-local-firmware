@@ -140,6 +140,24 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     return 0;
 }
 
+/* Every stream has a recent frame. Frames held for privacy stop on purpose, and
+ * after a hold a stream only resumes at its next keyframe, so the check waits a
+ * little longer then; a held start has no frames at all until that point. An
+ * encoder that never resumes still fails here, once the grace has passed. */
+int jipc_video_healthy(jipc_app *app, unsigned streams, uint64_t now)
+{
+    if (atomic_load(&app->privacy_hold)) { app->video_grace_until = now + UINT64_C(15000000); return 1; }
+    int fresh = 1;
+    for (unsigned i = 0; i < streams; ++i) {
+        pthread_mutex_lock(&app->streams[i].mutex);
+        uint64_t sequence = app->streams[i].sequence;
+        uint64_t stamp = sequence ? app->streams[i].slots[(sequence - 1) % app->streams[i].capacity].pts_us : 0;
+        pthread_mutex_unlock(&app->streams[i].mutex);
+        if (!stamp || now < stamp || now - stamp > UINT64_C(15000000)) fresh = 0;
+    }
+    return fresh || now < app->video_grace_until;
+}
+
 int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
                        const void *data, size_t bytes, uint64_t pts_us, int keyframe)
 {

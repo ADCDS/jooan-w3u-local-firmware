@@ -4,8 +4,39 @@
 #include "../src/media.c"
 #include <assert.h>
 #include <unistd.h>
+/* Privacy's frame hold, as a camera that starts with it on goes through it. Both
+ * ways it took camera1 down were here: the startup check starves without parameter
+ * sets, and the watchdog's check fails between the hold and the first keyframe. */
+static void privacy_hold(void)
+{
+    static const unsigned char idr[]={0,0,0,1,0x67,0x42,0,0x1f,0,0,0,1,0x68,0xce,0x3c,0x80,0,0,0,1,0x65,0x88,0x84};
+    static const unsigned char p[]={0,0,0,1,0x41,0x9a,0x24};
+    jipc_app *v=calloc(1,sizeof(*v));assert(v);jipc_config_defaults(&v->config);v->config.sensors=1;v->config.main_only=1;
+    pthread_mutex_init(&v->config_mutex,NULL);
+    assert(!jipc_streams_init(v));
+    uint64_t t=jipc_now_us();
+    assert(!jipc_video_healthy(v,2,t));                       /* nothing yet: unhealthy */
+    v->privacy_hold=1;
+    assert(!jipc_publish_video(v,0,1,idr,sizeof(idr),t,0));
+    for(unsigned ch=0;ch<2;++ch)assert(!v->streams[ch].sequence&&v->streams[ch].sps_size==4&&v->streams[ch].pps_size==4);
+    assert(jipc_video_healthy(v,2,t));                        /* held on purpose */
+    v->privacy_hold=0;
+    assert(jipc_video_healthy(v,2,t+UINT64_C(14000000)));     /* waiting for a keyframe */
+    assert(!jipc_video_healthy(v,2,t+UINT64_C(16000000)));    /* an encoder that never resumes still fails */
+    /* It resumes at a keyframe, not on P-frames that decode onto the old picture. */
+    assert(!jipc_publish_video(v,0,1,p,sizeof(p),t,0));assert(!v->streams[0].sequence);
+    assert(!jipc_publish_video(v,0,1,idr,sizeof(idr),t,0));assert(v->streams[0].sequence==1&&v->streams[1].sequence==1);
+    assert(!jipc_publish_video(v,0,1,p,sizeof(p),t,0));assert(v->streams[0].sequence==2);
+    assert(jipc_video_healthy(v,2,t+UINT64_C(1000000)));
+    assert(!jipc_video_healthy(v,2,t+UINT64_C(16000000)));    /* and frames must keep coming */
+    /* Turned on later: stale stamps are fine while held. */
+    v->privacy_hold=1;assert(jipc_video_healthy(v,2,t+UINT64_C(40000000)));v->privacy_hold=0;
+    assert(jipc_video_healthy(v,2,t+UINT64_C(41000000)));
+    assert(!jipc_video_healthy(v,2,t+UINT64_C(60000000)));
+}
 int main(void)
 {
+    privacy_hold();
     char temporary[]="/tmp/jipc-flip-XXXXXX",error[256];
     assert(mkdtemp(temporary));
     jipc_app app={0};jipc_config_defaults(&app.config);
