@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.28, release sequence 62) has a supported tag until the
+current one is 0.2.29, release sequence 63) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -85,7 +85,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/setup/password` | `POST` | Rotate the shared administrator password |
 | `/api/v1/session` | `POST`, `GET`, `DELETE` | Create, inspect, or end a session |
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, network-time, and helper status |
-| `/api/v1/network/wifi/scan` | `GET` | Nearby networks, strongest first (takes 3 to 4 seconds). See [Local networking](#local-networking-and-dns-sd) |
+| `/api/v1/network/wifi/scan` | `GET` | Nearby networks, strongest first (takes 5 to 10 seconds). See [Local networking](#local-networking-and-dns-sd) |
 | `/api/v1/network/wifi` | `GET`, `POST`, `PUT`, `DELETE` | Read the state of a Wi-Fi trial; stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
 | `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, band and gateway, Ethernet link/speed and cumulative interface counters |
