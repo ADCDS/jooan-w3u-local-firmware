@@ -177,6 +177,7 @@ static int oem_media_running(void)
     closedir(proc);
     return found;
 }
+int joan_oem_media_running(void) { return oem_media_running(); }
 static int step_clock(int64_t offset_us, char *error, size_t cap)
 {
     struct timespec now; char epoch[24];

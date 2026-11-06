@@ -198,7 +198,9 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
     size_t got=0,head=0;memset(r,0,sizeof(*r));
     while(!head){
         if(got>=HTTP_HEADER_LIMIT)return 431;
-        ssize_t n=receive(c,buffer+got,HTTP_HEADER_LIMIT-got);if(n<=0)return 400;
+        /* Timed out or closed before asking anything: nothing to answer. A reply
+         * here would be read as the answer to the client's next request. */
+        ssize_t n=receive(c,buffer+got,HTTP_HEADER_LIMIT-got);if(n<=0)return got?400:-1;
         got+=(size_t)n;buffer[got]=0;
         char *end=strstr(buffer,"\r\n\r\n");if(end)head=(size_t)(end-buffer)+4;
         if(memchr(buffer,0,head?head:got))return 400;
@@ -464,12 +466,26 @@ static void connection_close(connection *c){
 static void wake_server(http_server *s){
     const char byte=0; ssize_t ignored=write(s->wake[1],&byte,1);(void)ignored;
 }
+/* A browser often opens a connection before it has a request for it. Give a
+ * client that is about to ask a moment, then wait in the idle list, not in one
+ * of the workers. */
+static int request_waiting(connection *c){
+#ifdef JIPC_WITH_MBEDTLS
+    if(c->server->secure&&mbedtls_ssl_check_pending(&c->ssl))return 1;
+#endif
+    struct pollfd p={c->fd,POLLIN,0};return poll(&p,1,100)>0;
+}
 static void handle(connection *c){
     c->deadline=jipc_now_us()+5000000;c->keepalive=0;c->failed=0;
-    if(!c->initialized){if(handshake(c))return;c->initialized=1;}
+    if(!c->initialized){
+        if(handshake(c))return;
+        c->initialized=1;
+        if(c->server->secure&&!request_waiting(c)){c->keepalive=1;return;}
+    }
     size_t capacity=HTTP_HEADER_LIMIT+JIPC_MAX_JSON+1;char *buffer=malloc(capacity);
     if(!buffer)return;
     request r;int status=parse_request(c,buffer,capacity,&r);
+    if(status<0){free(buffer);return;}
     c->deadline=jipc_now_us()+10000000;
     c->keepalive=!status&&r.keepalive&&++c->requests<256;
     if(status)error_response(c,status,reason(status));else dispatch(c,&r);

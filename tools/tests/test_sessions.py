@@ -35,15 +35,22 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
     helper = pathlib.Path(run, 'helper.sh')
     helper.write_text('#!/bin/sh\ncase "$1" in\n'
                       '  restart) cat "$FAKE_RESTART" ;;\n'
+                      '  factory-reset) : > "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART" ;;\n'
                       '  restart-schedule|restart-schedule-set) printf \'{"enabled":true,"time":"%s"}\\n\' "$3" ;;\n'
                       '  wifi-state) echo \'{"pending":false,"last":null}\' ;;\n'
                       '  wifi-scan) echo \'[{"ssid":"Home"}]\' ;;\n'
                       '  *) exit 0 ;;\nesac\n')
     helper.chmod(0o755)
     restart_reply = pathlib.Path(run, 'restart.json')
+    reset_called = pathlib.Path(run, 'reset-called')
+    gpio = pathlib.Path(run, 'gpio62')
+    gpio.mkdir()
+    button = gpio / 'value'
+    button.write_text('0\n')    # stuck pressed from the start
     env = os.environ | {'JOAN_STATE_DIR': state, 'JOAN_STAGING_DIR': staging, 'JOAN_RUN_DIR': run,
                         'JOAN_WEB_DIR': str(ROOT / 'web'), 'JOAN_INTEGRATION_HELPER': str(helper),
-                        'JOAN_MQTT_PORT': '0', 'JOAN_MDNS': '0', 'FAKE_RESTART': str(restart_reply)}
+                        'JOAN_MQTT_PORT': '0', 'JOAN_MDNS': '0', 'FAKE_RESTART': str(restart_reply),
+                        'FAKE_RESET_CALLED': str(reset_called), 'JOAN_BUTTON_GPIO_DIR': str(gpio)}
     password = 'admin'
 
     def start():
@@ -88,6 +95,29 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         assert status == 200 and json.loads(data)['time'] == 'off', data
         assert call('GET', '/api/v1/network/wifi', cookie=kept)[1].startswith(b'{"pending"')
         assert json.loads(call('GET', '/api/v1/network/wifi/scan', cookie=kept)[1])[0]['ssid'] == 'Home'
+        # Reset to defaults: typing the camera's name confirms it, with a restart's refusals.
+        label = json.loads(call('GET', '/api/v1/network/mdns', cookie=kept)[1])['hostname']
+        assert call('POST', '/api/v1/system/reset', {}, cookie=kept, csrf=kept_csrf)[0] == 400
+        status, data, _ = call('POST', '/api/v1/system/reset', {'confirm': label + 'x'}, cookie=kept, csrf=kept_csrf)
+        assert status == 400 and b'confirm_mismatch' in data, data
+        assert not reset_called.exists()
+        restart_reply.write_text('{"ok":false,"reason":"wifi-trial"}\n')
+        assert call('POST', '/api/v1/system/reset', {'confirm': label}, cookie=kept, csrf=kept_csrf)[0] == 409
+        reset_called.unlink()
+        restart_reply.write_text('{"ok":true}\n')
+        status, data, _ = call('POST', '/api/v1/system/reset', {'confirm': label}, cookie=kept, csrf=kept_csrf)
+        assert status == 200 and reset_called.exists(), data
+        reset_called.unlink()
+        # The button: stuck pressed since the start, it must never have fired, even
+        # after more than 5 s; a short press neither; 5 s after a release, yes.
+        time.sleep(5.5)
+        assert not reset_called.exists(), 'a button stuck from the start must not reset'
+        button.write_text('1\n'); time.sleep(0.6)
+        button.write_text('0\n'); time.sleep(2)
+        button.write_text('1\n'); time.sleep(0.6)
+        assert not reset_called.exists(), 'a short press must not reset'
+        button.write_text('0\n'); time.sleep(5.8)
+        assert reset_called.exists(), 'holding the button for 5 s must reset'
         # A second device has no trial id; the camera acts on the one running trial.
         assert call('PUT', '/api/v1/network/wifi', {'id': 'current'}, cookie=kept, csrf=kept_csrf)[0] == 200
         # Sign-out ends a remembered sign-in for good.

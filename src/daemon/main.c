@@ -47,6 +47,7 @@ int main(int argc,char**argv)
     /* Media (RTSP, ONVIF, PTZ, presets) belongs to the media daemon that
      * replaces jooanipc after boot; this daemon is the platform. */
     if(joan_ntp_start(&c))fprintf(stderr,"network time unavailable; the restored clock is kept\n");
+    if(joan_button_start(&c))fprintf(stderr,"reset button unavailable\n");
     fprintf(stderr,"joan-daemon %s listening on %s:%u (HTTP)\n",JOAN_VERSION,c.bind_addr,c.port);
     rc=joan_server_run(&c);
     joan_ntp_stop();

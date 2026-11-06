@@ -354,7 +354,13 @@ def controls_checks(request, root, connection=None, secret=None):
     wait_for(lambda: controls()["live"]["night"] == "night", 5, "schedule night")
     assert controls()["utc_offset_min"] == -180 and \
         controls()["live"]["local_minutes"] == (int(time.time()) // 60 - 180) % 1440, controls()["live"]
-    # The board's health for the admin UI.
+    # The board's health for the admin UI, native already while the boot qualifies.
+    qualified = (root / "jipc-native.log").read_text()
+    (root / "jipc-native.log").write_text("53.82 jipc-native: media daemon pid=1 ready; qualifying for 185 seconds\n")
+    assert json.loads(request("GET", "/api/v1/status")[1])["system"]["boot_mode"] == "native"
+    (root / "jipc-native.log").write_text("1.00 jipc-native: starting\n")
+    assert json.loads(request("GET", "/api/v1/status")[1])["system"]["boot_mode"] == "unknown"
+    (root / "jipc-native.log").write_text(qualified)
     system = json.loads(request("GET", "/api/v1/status")[1])["system"]
     assert system["boot_mode"] == "native" and system["uptime_s"] > 0 and system["memfree_kb"] > 0 and \
         system["state_free_kb"] > 0, system
@@ -465,6 +471,31 @@ def wave_a_checks(request):
     for slot in (3, 4):
         assert request("POST", "/api/v1/control", {"operation": "preset_remove", "value": slot, "value2": 0})[0] == 200
     return {"tone": loud, "muted": muted["level"]}
+
+
+def idle_connection_checks(http_port, tls):
+    """A browser opens connections before it has a request for them. The server
+    must not speak first: an unsolicited reply would be read as the answer to the
+    client's next request. Over TLS the connection also stays usable."""
+    raw = socket.create_connection(("127.0.0.1", http_port), timeout=8)
+    if tls:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        raw = context.wrap_socket(raw)
+    raw.settimeout(6.5)
+    try:
+        data = raw.recv(64)
+        assert data == b"", f"the server spoke first: {data!r}"
+        assert not tls, "the idle TLS connection was closed too early"
+    except TimeoutError:
+        assert tls, "an idle plain connection must be closed by the worker's deadline"
+        raw.sendall(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        raw.settimeout(5)
+        reply = raw.recv(64)
+        assert reply.startswith(b"HTTP/1.1 200"), reply
+    finally:
+        raw.close()
 
 
 def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
@@ -744,6 +775,7 @@ def main():
             result["checks"].append("ONVIF profile children in schema order with audio enabled")
             ui_connection = (lambda: http.client.HTTPSConnection("127.0.0.1", ui_port, context=context, timeout=5)) \
                 if args.tls else None
+            idle_connection_checks(http_port, args.tls)
             result["ui"] = ui_checks(connection, "https" if args.tls else "http", http_port, secret, platform_seen,
                                      ui_connection)
             result["checks"].append("admin UI: public files with CSP, platform sign-in relay, session cookie "

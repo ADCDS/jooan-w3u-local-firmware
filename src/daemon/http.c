@@ -84,6 +84,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     else if(!strcmp(r->path,"/api/v1/network/wifi/scan"))snprintf(r->path,sizeof(r->path),"/api/wifi/scan");
     else if(!strcmp(r->path,"/api/v1/system/restart"))snprintf(r->path,sizeof(r->path),"/api/restart");
     else if(!strcmp(r->path,"/api/v1/system/restart-schedule"))snprintf(r->path,sizeof(r->path),"/api/restart-schedule");
+    else if(!strcmp(r->path,"/api/v1/system/reset"))snprintf(r->path,sizeof(r->path),"/api/reset");
     else if(!strcmp(r->path,"/api/v1/ssh/authorized-keys"))snprintf(r->path,sizeof(r->path),"/api/ssh/keys");
     else if(!strcmp(r->path,"/api/v1/update"))snprintf(r->path,sizeof(r->path),!strcmp(r->method,"POST")?"/api/firmware/stage":"/api/firmware/apply");
     if(!strcmp(r->path,"/api/v1/setup/status")){
@@ -134,6 +135,8 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/wifi/state")&&!strcmp(r->method,"GET"))return helper_passthrough(c,"wifi-state",NULL,NULL);
     /* Restart: the helper refuses during an update, a Wi-Fi trial or a boot trial. */
     if(!strcmp(r->path,"/api/restart")&&!strcmp(r->method,"POST"))return helper_result(c,"restart",NULL);
+    /* Reset to defaults: typing the camera's name confirms it; the same refusals as a restart. */
+    if(!strcmp(r->path,"/api/reset")&&!strcmp(r->method,"POST")){if(json_field(r->body,r->content_length,"confirm",x,sizeof(x)))return error_json(c,400,"invalid_json","confirm is required: the camera's name");joan_mdns_get_configured_hostname(&G,y);if(strcmp(x,y))return error_json(c,400,"confirm_mismatch","confirm must be the camera's name");return helper_result(c,"factory-reset",NULL);}
     if(!strcmp(r->path,"/api/restart-schedule")&&!strcmp(r->method,"GET"))return helper_passthrough(c,"restart-schedule",NULL,NULL);
     if(!strcmp(r->path,"/api/restart-schedule")&&!strcmp(r->method,"PUT")){char when[8];if(json_field(r->body,r->content_length,"time",when,sizeof(when)))return error_json(c,400,"invalid_json","time is required: HH:MM, or empty for no scheduled restart");if(when[0]&&!hhmm_ok(when))return error_json(c,400,"invalid_time","time must be HH:MM (00:00 to 23:59)");return helper_passthrough(c,"restart-schedule-set",NULL,when[0]?when:"off");}
     if(!strcmp(r->path,"/api/routes")&&!strcmp(r->method,"PUT")){char cidrs[1024],canonical[1200];if(json_field(r->body,r->content_length,"cidrs",cidrs,sizeof(cidrs))||private_routes(cidrs,canonical,sizeof(canonical)))return error_json(c,400,"invalid_routes","only RFC1918 and ULA CIDRs are allowed");if(joan_stage_blob(&G,"routes",canonical,strlen(canonical),id,path))return error_json(c,500,"stage_failed","could not stage routes");return helper_json(c,"routes-set",path,id);}

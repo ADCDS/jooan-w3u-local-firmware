@@ -10,7 +10,7 @@ toggles "camera not answering".
 
 Budget: the files are embedded in the daemon, which must fit the camera's
 appfs partition. `tools/check-size.py` (run by the full gate after `make mips`)
-caps the UI at 150,000 bytes raw and the whole stripped daemon at 349,324 bytes
+caps the UI at 200,000 bytes raw and the whole stripped daemon at 349,324 bytes
 xz, which keeps at least 48 KiB of the partition free.
 
 ## What the UI expects

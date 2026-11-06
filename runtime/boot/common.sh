@@ -511,6 +511,28 @@ jl_note_boot() {
       printf '%s pc=%s netdog=%s\n' "$(date +%s)" "${jl_fr_pc:--}" "${jl_fr_nd:-0}"; } > "$jl_fr.new" 2>/dev/null &&
         chmod 600 "$jl_fr.new" && mv -f "$jl_fr.new" "$jl_fr" || :
 }
+# Reset to defaults, requested through integration-helper.sh factory-reset.
+# Erased: both passwords (back to the initial value), SSH keys, remembered
+# sign-ins, the restart schedule, presets, and the picture, night, light and
+# audio controls. Kept, so the camera stays reachable the same way: Wi-Fi, local
+# name, allowed networks, network time, time zone, certificates and the installed
+# releases. Safe to repeat: the mark goes last, so a power cut resumes it.
+jl_apply_reset() {
+    [ -e "$JL_STATE/reset-pending" ] || return 0
+    jl_log 'reset to defaults'
+    rm -f "$JL_CONFIG/auth.db" "$JL_CONFIG/sessions.db" "$JL_CONFIG/restart-schedule" \
+        "$JL_CONFIG/ssh/passwd" "$JL_CONFIG/ssh/authorized_keys"
+    jl_ar_media=${JL_MEDIA_ROOT:-/opt/jooanipc-open}
+    rm -f "$jl_ar_media/state/controls.json" "$jl_ar_media/state/presets.v2.json"
+    if [ -f "$jl_ar_media/camera.ini" ]; then
+        sed 's/^password=.*/password=admin/' "$jl_ar_media/camera.ini" > "$jl_ar_media/camera.ini.new" && # hygiene: allow-public-bootstrap
+            chmod 600 "$jl_ar_media/camera.ini.new" && mv -f "$jl_ar_media/camera.ini.new" "$jl_ar_media/camera.ini" || return 0
+    fi
+    sync
+    rm -f "$JL_STATE/reset-pending"
+    sync
+}
+
 jl_net_loss_count=0
 jl_net_loss_armed=1
 jl_note_net_loss() {

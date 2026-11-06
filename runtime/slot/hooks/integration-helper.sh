@@ -195,6 +195,17 @@ case "$op" in
         # on timeout, so this survives the helper exiting.
         ( trap '' HUP; sleep 2; sync; reboot ) </dev/null >/dev/null 2>&1 &
         ;;
+    factory-reset)
+        # Reset to defaults, from the admin UI or the reset button: mark it and
+        # restart. The next boot erases, before anything owning those files runs
+        # (jl_apply_reset in common.sh), so a power cut cannot leave half of it.
+        blocker=$(restart_blocker)
+        if [ -n "$blocker" ]; then printf '{"ok":false,"reason":"%s"}\n' "$blocker"; exit 0; fi
+        : > "$root/state/reset-pending"
+        sync
+        printf '{"ok":true}\n'
+        ( trap '' HUP; sleep 2; sync; reboot ) </dev/null >/dev/null 2>&1 &
+        ;;
     restart-schedule)
         at=-
         [ ! -r "$root/config/restart-schedule" ] || IFS= read -r at < "$root/config/restart-schedule" || at=-

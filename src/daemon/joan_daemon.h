@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.29"
+#define JOAN_VERSION "0.2.30"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -106,6 +106,8 @@ int joan_tls_ensure_identity(const JoanConfig *cfg);
  * absent (off). Clock steps go through the privileged time-set helper,
  * which also persists last-time for the next boot. */
 int joan_ntp_start(const JoanConfig *cfg);
+int joan_oem_media_running(void);
+int joan_button_start(const JoanConfig *cfg);
 void joan_ntp_stop(void);
 int joan_ntp_configure(const char *server);
 void joan_ntp_status(char *out, size_t cap);

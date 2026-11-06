@@ -4,7 +4,7 @@ CPPFLAGS += -I.
 LDFLAGS ?=
 CRYPT_LIBS ?= -lcrypt
 TLS ?= 1
-SOURCES = main.c util.c crypto.c auth.c integrations.c mqtt_bridge.c mdns.c ntp.c tls.c http.c
+SOURCES = main.c util.c crypto.c auth.c integrations.c mqtt_bridge.c mdns.c ntp.c tls.c http.c button.c
 OBJECTS = $(SOURCES:.c=.o)
 
 ifeq ($(TLS),1)

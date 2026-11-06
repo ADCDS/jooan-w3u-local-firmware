@@ -2067,6 +2067,7 @@
 	/* Nearby networks: scanned when asked, since a scan takes 5-10 s. Hidden networks are not
 	   listed, so a name can still be typed. The camera only joins networks with a password. */
 	let nets = null,
+		netsAll = 0,
 		joinOpen = 0,
 		joinName = null;
 	const bandOf = f => (f ? (f >= 4900 ? '5 GHz' : '2.4 GHz') : '');
@@ -2085,8 +2086,10 @@
 		rNets();
 	}, $('nw-scan'));
 	function rNets() {
-		const L = Array.isArray(nets) ? nets : [],
-			chosen = joinOpen && joinName;
+		const A = Array.isArray(nets) ? nets : [],
+			chosen = joinOpen && joinName,
+			/* the strongest ten, the one in use and the chosen one; the rest on request */
+			L = netsAll ? A : A.filter((n, k) => k < 10 || n.in_use || n.ssid == chosen);
 		$('nw-scan').after($('nw-join'));
 		$('nw-sc').hidden = !L.length;
 		tx('nw-sh', L.length ? '' : 'No networks found. A hidden network can still be joined by name.');
@@ -2129,6 +2132,14 @@
 				return li;
 			})
 		);
+		A.length > L.length &&
+			$('nw-nets').append(
+				h(
+					'li',
+					null,
+					h('button', { type: 'button', class: 'lnk', onclick: () => ((netsAll = 1), rNets()) }, `Show ${A.length - L.length} more`)
+				)
+			);
 		if (chosen && !L.some(n => n.ssid == chosen && n.secure && !n.in_use)) joinClose();
 	}
 	/* The join form opens under the chosen network, or below the list for a typed name. A name
@@ -2609,6 +2620,37 @@
 				goOff('Restarting: this takes about 90 seconds, and this page comes back on its own.');
 			}
 		});
+	/* Reset to defaults: typing the camera's name confirms it. The camera checks the name too. */
+	$('sy-rd').onclick = () => {
+		const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' }),
+			L = (t, a) => h('div', { class: 'f' }, h('span', { class: 'cap', text: t }), h('ul', { class: 'rl' }, ...a.map(x => h('li', { text: x }))));
+		sheet({
+			title: `Reset ${name()} to defaults?`,
+			text: 'The camera restarts and is back in about 90 seconds. Your NVR stops receiving video until you give it the new stream password.',
+			body: h(
+				'div',
+				{ class: 'stack s' },
+				L('Erased', ['Picture, night, light and audio settings', 'Presets', 'SSH keys', 'Scheduled restart', 'Both passwords, back to initial values']),
+				L('Kept', ['Wi-Fi: ' + (S.q?.wifi?.ssid || 'the current network'), 'Local name and allowed networks', 'Time zone and network time', 'The installed firmware']),
+				fld(`Type ${name()} to confirm`, i)
+			),
+			ok: 'Reset to defaults',
+			danger: 1,
+			focus: i,
+			run: async () => {
+				const v = i.value.trim();
+				if (v != name()) no(`Type ${name()} exactly.`);
+				try {
+					await api(J + 'system/reset', { method: 'POST', json: { confirm: v }, quiet: 1, timeout: 15e3 });
+				} catch (x) {
+					if (x.st == 409) no(RESTART_NO[x.d?.reason] || 'The camera can’t reset right now.');
+					if (x.kind != 'off') throw x;
+				}
+				holdOff = Date.now() + 8e3;
+				goOff('Resetting: this takes about 90 seconds. Sign in again with the initial password.');
+			}
+		});
+	};
 	/* Scheduled restart: daily, in the camera's time zone (UTC when it has none). */
 	function restartNext(t) {
 		const m = camZone() ? S.x.utc_offset_min : 0,
