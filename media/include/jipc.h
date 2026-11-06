@@ -173,6 +173,9 @@ void jipc_controls_stop(jipc_app *app);
 void jipc_controls_note(jipc_app *app, const char *operation, int value, int value2);
 int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t capacity);
 int jipc_controls_trigger(jipc_app *app, int seconds, char *error, size_t capacity);
+int jipc_controls_siren(jipc_app *app, int on, int seconds, char *error, size_t capacity);
+int jipc_controls_siren_test(jipc_app *app, int sound, char *error, size_t capacity);
+int jipc_controls_strobe(jipc_app *app, int seconds, char *error, size_t capacity);
 int jipc_controls_json(jipc_app *app, char *out, size_t capacity);
 int jipc_controls_picture(jipc_app *app, unsigned lens, int values[4], int *night_mode);
 int jipc_backend_control(jipc_app *app, const char *operation, int value,
@@ -224,6 +227,15 @@ void jipc_talk_release(jipc_app *app, uint64_t owner);
 /* Nonzero while a talk session plays and for 300 ms after (half-duplex). */
 int jipc_talk_active(jipc_app *app);
 int jipc_speaker_set_volume(jipc_app *app, int volume, char *error, size_t capacity);
+/* The siren (src/siren.c, src/speaker.c): sounds through the speaker service, ahead of any talker. */
+enum { JIPC_SIREN_SOUNDS = 4, JIPC_SIREN_MAX_SECONDS = 300, JIPC_SIREN_TEST_SECONDS = 3 };
+typedef struct { unsigned sound; uint32_t t; uint16_t phase; } jipc_siren;
+const char *jipc_siren_name(unsigned sound);
+int jipc_siren_sound(const char *name);
+void jipc_siren_init(jipc_siren *siren, unsigned sound);
+void jipc_siren_fill(jipc_siren *siren, unsigned char *pcma, size_t samples);
+int jipc_siren_start(jipc_app *app, unsigned sound, unsigned seconds, int percent, char *error, size_t capacity);
+void jipc_siren_stop(jipc_app *app);
 int jipc_speaker_gate_open(jipc_app *app);
 int jipc_speaker_status_json(jipc_app *app, char *out, size_t capacity);
 int jipc_platform_control(jipc_app *app, const char *operation, int value,

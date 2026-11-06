@@ -60,6 +60,7 @@ JA-A12 storage budget and required boot dependencies.
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights and night | White light (manual, schedule, timed trigger), day/night (manual, automatic from the ISP exposure, schedule), infrared mode, pilot LED; remembered across restarts |
 | Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
+| Siren | Four generated sounds through the speaker service, ahead of any talker, with volume, length and a flashing white light; it always ends by itself |
 | Stills | Hardware JPEG of either lens over HTTPS and ONVIF, one at a time, refused during privacy mode |
 | Timestamp | Burned into both lenses' video and stills by an OSD stage, off by default: corner, date format, camera name |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
@@ -240,6 +241,7 @@ Authenticated REST endpoints:
 | `POST /api/v1/recording` | `{ "enabled":true }` starts recording; false stops |
 | `GET /api/v1/recordings` | Bounded file listing; download a listed name under the same path |
 | `GET /api/v1/snapshot?channel=0` | Native JPEG when the backend can produce one |
+| `POST /api/v1/control` `{"operation":"siren","value":1}` | Sounds the siren with its saved settings; `value2` gives another length, 1 to 300 seconds; `value` 0 stops it. `siren_test` with `value` 0 to 3 plays that sound for 3 s. `strobe` with `value` in seconds flashes the white light, 0 stops it. `privacy` with `value` 1 or 0 |
 | `GET /api/v1/aim` | Whether aiming is calibrated, the motors' steps, and where the pan/tilt lens's view falls in the fixed lens's picture |
 | `POST /api/v1/aim` | `{"u":0.25,"v":0.75}` turns the pan/tilt lens to that point of the fixed lens's picture (0 to 1 across it); `{"steps":[x,y]}` to those motor steps; `{"x":[…6],"y":[…6]}` stores a calibration |
 | `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono, at most 8000 bytes (1 s) per request: `200` queued, `409` another talker or the 2 s queue is full, `503` speaker unavailable |

@@ -75,7 +75,7 @@ With 0.2.33 and its media layer:
   optional network time from a local server; mDNS; signed updates.
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
   through the speaker from Frigate, the admin UI or the API).
-- **Missing:** a siren; motion and person detection; digital zoom; a logo on the picture;
+- **Missing:** motion and person detection; digital zoom; a logo on the picture;
   on-camera recording (off in the qualified profile: record with the NVR) and SD-card
   management; any cloud or phone-app access.
 

@@ -35,6 +35,7 @@
 <path id="i-scan" d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>
 <path id="i-key" d="M14.5 9.5a4 4 0 1 0-3.9 3.1L4 19.2V21h3v-2h2v-2h2l1.6-1.6"/>
 <path id="i-wait" d="M12 7v5l3 2"/>
+<path id="i-siren" d="M6 18h12M8 18v-6a4 4 0 0 1 8 0v6M12 3.5v2M4.5 7l1.5 1M19.5 7 18 8"/>
 </svg>
 
 <div id="signin" class="signin" hidden>
@@ -85,7 +86,9 @@
 <div class="card o3"><h2>Quick actions</h2>
 <div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note"></small></div>
 <div class="row"><span><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
-<div class="talk-box"></div></div>
+<div class="talk-box"></div>
+<button class="btn" id="ov-sir"><svg><use href="#i-siren"/></svg><span>Siren…</span></button>
+<small>Talk uses this browser’s microphone. Siren asks before it sounds.</small></div>
 </div></div>
 </section>
 
@@ -176,8 +179,14 @@
 <div class="f" id="au-lv" hidden><small id="au-lvn"></small></div></div>
 <div class="card"><div class="bar"><div><h2>Speaker</h2><small>Used for talk and the test tone.</small></div><span id="au-sst"></span></div><div class="stack s" id="au-ssl"></div><div class="f"><button class="btn start" id="au-tone"><svg><use href="#i-audio"/></svg>Play test tone</button></div></div>
 <small>Volume and gain last until a restart; the microphone switch is kept. Volume 60 is unity; a step is about 0.5 dB.</small>
-<div class="card"><div><h2>Talk through the camera</h2><small>Uses this browser’s microphone. The browser asks for permission the first time.</small></div><div class="talk-box"></div>
+<div class="card" id="au-talk"><div><h2>Talk through the camera</h2><small>Uses this browser’s microphone. The browser asks for permission the first time.</small></div><div class="talk-box"></div>
 <label class="chk"><input type="checkbox" id="au-latch"><span>Tap to start, tap to stop</span></label></div>
+<div class="card" id="au-sir"><div class="bar"><div><h2 id="au-sirh">Siren</h2><small>Pick the sound used by the Overview button and Home Assistant. Tests play through the camera at the siren volume.</small></div><button class="btn dzf" id="au-sirx" hidden>Stop</button></div>
+<div class="sirens" id="au-sirs" role="radiogroup" aria-labelledby="au-sirh"></div>
+<div class="stack s" id="au-sirl"></div>
+<div class="row"><label for="au-sird">Sounds for</label><select id="au-sird"></select></div>
+<label class="chk" for="au-sirf"><input id="au-sirf" type="checkbox"><span>Flash the white light while it sounds</span></label>
+<small id="au-sirn" role="status"></small></div>
 </div>
 </section>
 

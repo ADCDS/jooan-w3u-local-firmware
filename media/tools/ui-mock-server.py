@@ -239,6 +239,9 @@ PICTURE = ("brightness", "contrast", "saturation", "sharpness", "denoise")  # no
 EV_READ = 5.0  # in automatic mode the daemon reads the ISP exposure every 5 s
 
 
+SIREN_SOUNDS = ("alarm", "two_tone", "pulse", "chime")
+
+
 def control_defaults():
     return {"night": {"mode": "day", "ir": "night", "night_ev": 30000, "day_ev": 5000, "wait_s": 60,
                       "from": "18:30", "until": "06:00"},
@@ -247,6 +250,7 @@ def control_defaults():
             "pilot_led": False, "mic_mute": False, "anti_flicker": "off", "utc_offset_min": 0,
             "picture": [dict.fromkeys(PICTURE, 128) for _ in range(2)],
             "patrol": {"enabled": False, "pause_s": 120, "stops": []},
+            "siren": {"sound": "alarm", "volume": 100, "seconds": 30, "strobe": False},
             "overlay": {"enabled": False, "position": "top-left", "format": "ymd", "name": ""},
             "privacy": {"on": False, "slot": 0, "schedule": {"enabled": False, "from": "22:00", "until": "06:00"}}}
 
@@ -332,6 +336,15 @@ def controls_patch(current, o):
                 whole(s, q, "dwell_s", 3, 3600)
                 stops.append(q)
             d["stops"] = stops
+    if "siren" in o:
+        v, d = o["siren"], nxt["siren"]
+        if not isinstance(v, dict): raise Invalid("siren must be an object")
+        if "sound" in v:
+            if v["sound"] not in SIREN_SOUNDS: raise Invalid("sound must be alarm, two_tone, pulse or chime")
+            d["sound"] = v["sound"]
+        whole(v, d, "volume", 1, 100)
+        whole(v, d, "seconds", 1, 300)
+        flag(v, d, "strobe")
     if "overlay" in o:
         v, d = o["overlay"], nxt["overlay"]
         if not isinstance(v, dict): raise Invalid("overlay must be an object")
@@ -410,6 +423,7 @@ class Mock:
         """(Re)start of the media daemon at t: runtime levels and lights reset, presets and position persist."""
         self.started = t - (2709.852889 if first and not homing else 0)
         self.homing_until, self.restart_at, self.motion, self.goto = t + homing, None, None, None
+        self.siren = None
         self.ctl = {"night": -1, "white_light": -1, "pilot_led": int(self.controls["pilot_led"]), "speaker_enable": 0}
         self.muted = self.controls["mic_mute"]
         # the controls engine's memory: what it applied, the exposure, timers
@@ -1076,7 +1090,10 @@ class Mock:
         if c["audio"]:
             mic = {"state": "running", **({} if self.args.old_audio else self.mic), "frames": int(up * 25),
                    "silence_fill": 0, "dropped": 0, "restarts": 0, "error": ""}
-            speaker = {"state": "talking" if s["session"] else "idle", "gate_released": not self.args.no_speaker,
+            if self.siren and now >= self.siren["until"]: self.siren = None
+            siren = {"sound": self.siren["sound"], "left_s": math.ceil(self.siren["until"] - now)} if self.siren else None
+            speaker = {"state": "siren" if siren else "talking" if s["session"] else "idle", "siren": siren,
+                       "gate_released": not self.args.no_speaker,
                        "volume": s["volume"], "half_duplex": True, "sessions": s["sessions"],
                        "played_ms": int(s["played"]), "dropped_ms": s["dropped"], "refused": s["refused"],
                        "faults": 0, "queued_ms": int(s["queued"] // 8), "error": ""}
@@ -1189,6 +1206,20 @@ class Mock:
         elif op == "ir_mode":
             if v not in (0, 1): raise Fail("ir_mode requires 0 (infrared at night) or 1 (always off)")
             self.controls_set({"night": {"ir": IR_MODES[v]}}, now)
+        elif op == "privacy":
+            if v not in (0, 1): raise Fail("privacy takes value 1 (on) or 0 (off)")
+            self.controls_set({"privacy": {"on": bool(v)}}, now)
+        elif op == "strobe":
+            if not 0 <= v <= 300: raise Fail("strobe takes 1 to 300 seconds, or 0 to stop")
+        elif op in ("siren", "siren_test"):
+            s = self.controls["siren"]
+            if op == "siren" and v not in (0, 1): raise Fail("siren takes value 1 (on) or 0 (off)")
+            if op == "siren" and not 0 <= v2 <= 300: raise Fail("the siren can sound for 1 to 300 seconds")
+            if op == "siren_test" and not 0 <= v <= 3: raise Fail("siren_test takes a sound from 0 to 3")
+            if op == "siren" and not v: self.siren = None
+            elif not audio: raise Fail("the speaker is unavailable (audio is disabled)")
+            elif op == "siren": self.siren = {"sound": s["sound"], "until": now + (v2 or s["seconds"])}
+            else: self.siren = {"sound": SIREN_SOUNDS[v], "until": now + 3}
         elif op == "white_light_trigger":  # on for v seconds (0: trigger_s), then back to the schedule or manual state
             if v and not 1 <= v <= 3600: raise Fail("the light can stay on for 1 to 3600 seconds")
             self.ce["trigger_until"] = now + (v or self.controls["white_light"]["trigger_s"])
