@@ -7,6 +7,7 @@
 #include <assert.h>
 static int driver_x=1400,driver_y=400,swapped,speed=450,moving,dx,dy;
 static unsigned commands,stops,resets;
+static pthread_mutex_t *worker_lock;
 static int32_t last_reset[4];
 static uint64_t clock_us,previous_us;
 static void advance(uint64_t now)
@@ -29,6 +30,8 @@ int __wrap_ioctl(int fd,unsigned long request,...)
         if(r[0]||r[1]||r[2]||r[3]){driver_x=r[2];driver_y=r[3];return 0;} /* declare position */
         /* The driver's own reset, as observed on the JA-A12: it logs
          * cx=4080,cy=1200 and ends idle at 2040,1199. */
+        /* It blocks for 20 s or more on the camera: nobody may be waiting on the lock. */
+        if(worker_lock){assert(!pthread_mutex_trylock(worker_lock));pthread_mutex_unlock(worker_lock);}
         driver_x=4080;driver_y=1199;dx=2040-4080;dy=0;swapped=0;moving=1;return 0;
     }
     assert(request==3||request==8);assert(!moving);
@@ -39,7 +42,12 @@ int __wrap_ioctl(int fd,unsigned long request,...)
 }
 static platform_state state_new(void)
 { return (platform_state){.motor_fd=19,.pan_max=4080,.tilt_max=1230,.rate=450}; }
-static void tick(platform_state *state,uint64_t now){advance(now);native_tick(state,now);}
+static void tick(platform_state *state,uint64_t now)
+{
+    advance(now);pthread_mutex_lock(&state->mutex);worker_lock=&state->mutex;
+    native_tick(state,now);
+    worker_lock=NULL;pthread_mutex_unlock(&state->mutex);
+}
 static void go(platform_state *state,int x,int y)
 {
     state->target_x=x;state->target_y=y;state->goto_active=1;state->goto_until=clock_us+PRESET_LIMIT_US;
@@ -146,6 +154,10 @@ static void moves(void)
     driver_x=1700;driver_y=500;assert(!motor_read(&s));s.saved_x=1;s.saved_y=1;
     assert(!platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error)));
     assert(s.homing==1&&s.saved_x==1700&&s.saved_y==500);
+    /* Saved on flash too: a restart during the run must not go back somewhere older. */
+    {FILE *pf=fopen(s.position_path,"r");int px=0,py=0;assert(pf&&fscanf(pf,"%d %d",&px,&py)==2);fclose(pf);assert(px==1700&&py==500);}
+    /* While the driver is busy, the status answers without asking it. */
+    {jipc_ptz_status busy;assert(!jipc_platform_status(&app,&busy,error,sizeof(error)));int gx,gy;assert(jipc_platform_steps(&app,&gx,&gy)<0);}
     assert(platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"homing"));
     SYNC();for(unsigned i=0;i<40000&&(s.homing||s.goto_active);++i)tick(&s,clock_us+10000);
     assert(s.homed&&s.homed_at&&driver_x==1700&&driver_y==500);
