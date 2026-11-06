@@ -178,6 +178,22 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=-601))[0], 401)
         self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=601))[0], 401)
 
+    def test_tokens_outlast_the_replay_table(self):
+        """Frigate polls GetStatus in a tight loop while the motor moves. More tokens
+        than the table holds must keep working, and replays must still be refused,
+        both of a token it remembers and of one it has forgotten."""
+        now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=self.settings.clock_offset)
+        def created(i):
+            return (now + datetime.timedelta(seconds=-200 + i * 0.4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        first = last = None
+        for i in range(1100):
+            last = self.wsse(created=created(i))
+            first = first or last
+            self.assertEqual(self.soap("GetProfiles", auth=False, header=last)[0], 200, i)
+        self.assertEqual(self.soap("GetProfiles", auth=False, header=first)[0], 401, "a forgotten token, by its age")
+        self.assertEqual(self.soap("GetProfiles", auth=False, header=last)[0], 401, "a remembered token")
+        self.assertEqual(self.soap("GetProfiles", auth=False, header=self.wsse(offset=245))[0], 200)
+
     def test_digest_timezone_offsets(self):
         for minutes in (0, 330, -180, 840, -840):
             with self.subTest(minutes=minutes):
