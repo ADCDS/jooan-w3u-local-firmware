@@ -185,8 +185,10 @@ static int created_time(const char *s, int64_t *value) {
     return 0;
 }
 /* The daemon owns one camera. Keep used tokens across SIGHUP/app recreation. */
-typedef struct { unsigned char nonce_hash[20]; time_t expires; } nonce_entry;
+typedef struct { unsigned char nonce_hash[20]; time_t expires;  int64_t created; } nonce_entry;
 static nonce_entry nonces[1024];
+static unsigned nonce_next;
+static int64_t nonce_floor;
 static pthread_mutex_t nonce_mutex=PTHREAD_MUTEX_INITIALIZER;
 int jipc_onvif_public_time(const char *body) {
     xml d; return parse_xml(body,&d)==0 && named(d.el[d.action].name,"GetSystemDateAndTime");
@@ -212,14 +214,19 @@ int jipc_onvif_authorize(jipc_app *app,const char *body) {
     if(jipc_base64(digest,sizeof(digest),expected,sizeof(expected))<0)return 0;
     int valid=jipc_equal(user,c.username)&jipc_equal(pass,expected); memset(c.password,0,sizeof(c.password));
     if(!valid)return 0;
-    pthread_mutex_lock(&nonce_mutex); unsigned slot=0;time_t oldest=nonces[0].expires;
-    for(unsigned i=0;i<1024;++i){
+    /* Replay protection. A token stays acceptable for 300 s, but Frigate polls
+     * GetStatus in a tight loop while the motor moves, so the table cannot hold them
+     * all, and refusing everyone once it is full takes PTZ down for minutes. It is a
+     * ring, then: a token too old to be in it may be a replay, so anything created no
+     * later than the newest one forgotten is refused, and fresh tokens always pass. */
+    pthread_mutex_lock(&nonce_mutex);
+    if(nonce_floor>(int64_t)now)nonce_floor=(int64_t)now-1; /* the clock stepped back */
+    if(stamp<=nonce_floor){pthread_mutex_unlock(&nonce_mutex);return 0;}
+    for(unsigned i=0;i<1024;++i)
         if(nonces[i].expires>=now&&!memcmp(nonces[i].nonce_hash,hash,20)){pthread_mutex_unlock(&nonce_mutex);return 0;}
-        if(nonces[i].expires<oldest){oldest=nonces[i].expires;slot=i;}
-    }
-    /* Never evict an unexpired token: replay protection must survive load. */
-    if(nonces[slot].expires>=now){pthread_mutex_unlock(&nonce_mutex);return 0;}
-    nonces[slot].expires=(time_t)(stamp+301);memcpy(nonces[slot].nonce_hash,hash,20);
+    nonce_entry *slot=&nonces[nonce_next];nonce_next=(nonce_next+1)%1024;
+    if(slot->expires>=now&&slot->created>nonce_floor)nonce_floor=slot->created;
+    slot->expires=(time_t)(stamp+301);slot->created=stamp;memcpy(slot->nonce_hash,hash,20);
     pthread_mutex_unlock(&nonce_mutex);return 1;
 }
 static int channel(const xml *d,const jipc_config *c,unsigned *out) {
