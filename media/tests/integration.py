@@ -576,18 +576,29 @@ def ptz_checks(request, connection, secret):
         return request("POST", "/api/v1/control", {"operation": operation, "value": value, "value2": 0})[0]
     light_before = platform()["white_light"]
     assert control("strobe", 301) != 200 and control("strobe", -1) != 200
+    started = time.monotonic()
     assert control("strobe", 3) == 200
     seen, deadline = set(), time.monotonic() + 2
     while time.monotonic() < deadline:
         seen.add(platform()["white_light"])
         time.sleep(0.05)
     assert seen >= {0, 1}, seen
-    wait_for(lambda: platform()["white_light"] == light_before, 3, "the flashing light ending")
-    time.sleep(0.8)
-    assert platform()["white_light"] == light_before
+    # An off phase of the flash looks like the end, so wait out its time before looking.
+    time.sleep(max(0, started + 3.8 - time.monotonic()))
+    settled = {platform()["white_light"]}
+    for _ in range(12):
+        time.sleep(0.1)
+        settled.add(platform()["white_light"])
+    assert settled == {light_before}, settled
     assert control("strobe", 60) == 200
+    time.sleep(0.2)
     assert control("strobe", 0) == 200
-    wait_for(lambda: platform()["white_light"] == light_before, 2, "the flashing light stopping")
+    time.sleep(0.6)  # the engine has seen it by now
+    settled = {platform()["white_light"]}
+    for _ in range(12):
+        time.sleep(0.1)
+        settled.add(platform()["white_light"])
+    assert settled == {light_before}, settled
     # Privacy mode, as an operation for Home Assistant.
     assert control("privacy", 2) != 200
     assert control("privacy", 1) == 200
