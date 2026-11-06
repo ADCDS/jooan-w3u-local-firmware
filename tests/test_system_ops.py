@@ -162,6 +162,46 @@ class SystemOpsTests(unittest.TestCase):
         self.env["FAKE_WPA_STATUS"] = "wpa_state=COMPLETED\nssid=Home\nfreq=2437"
         self.assertEqual(json.loads(self.helper("network-quality").stdout)["wifi"]["band"], "2.4 GHz")
 
+    def test_reset_to_defaults(self) -> None:
+        """The helper only marks and restarts; the boot erases exactly the list."""
+        media = Path(self.temporary.name) / "media"
+        erased = [self.root / "config/auth.db", self.root / "config/sessions.db", self.root / "config/restart-schedule",
+                  self.root / "config/ssh/passwd", self.root / "config/ssh/authorized_keys",
+                  media / "state/controls.json", media / "state/presets.v2.json"]
+        kept = [self.root / "config/wifi.json", self.root / "config/hostname", self.root / "config/routes.list",
+                self.root / "config/ntp-server", self.root / "config/tls-key.pem",
+                media / "state/position", media / "native", media / "enabled"]
+        (self.root / "config/ssh").mkdir()
+        (media / "state").mkdir(parents=True)
+        for path in erased + kept:
+            path.write_text("old\n")
+        (media / "camera.ini").write_text("bind=192.0.2.2\nusername=admin\npassword=changed\naudio=1\n")
+        mark = self.root / "state/reset-pending"
+        (self.root / "state/wifi-trial").mkdir()
+        result = self.helper("factory-reset")
+        self.assertEqual(json.loads(result.stdout), {"ok": False, "reason": "wifi-trial"}, result.stderr)
+        self.assertFalse(mark.exists())
+        (self.root / "state/wifi-trial").rmdir()
+        self.assertEqual(json.loads(self.helper("factory-reset").stdout), {"ok": True})
+        self.assertTrue(mark.exists())
+        self.assertTrue(all(path.exists() for path in erased), "the helper must not erase anything itself")
+        deadline = time.monotonic() + 6
+        while not self.rebooted.exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertTrue(self.rebooted.exists(), "the delayed reboot did not run")
+        result = self.common("jl_apply_reset", JL_MEDIA_ROOT=str(media))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([str(path) for path in erased if path.exists()], [])
+        self.assertEqual([str(path) for path in kept if not path.exists()], [])
+        self.assertEqual((media / "camera.ini").read_text(),
+                         "bind=192.0.2.2\nusername=admin\npassword=admin\naudio=1\n")
+        self.assertEqual(oct((media / "camera.ini").stat().st_mode & 0o777), "0o600")
+        self.assertFalse(mark.exists())
+        # With no mark it does nothing at all.
+        (media / "state/controls.json").write_text("new\n")
+        self.common("jl_apply_reset", JL_MEDIA_ROOT=str(media))
+        self.assertTrue((media / "state/controls.json").exists())
+
     def common(self, script: str, uptime: int = 7200, **env):
         """Run a snippet with the real runtime/boot/common.sh sourced.
 

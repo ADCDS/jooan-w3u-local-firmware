@@ -35,12 +35,15 @@ static void system_json(cJSON *o, const jipc_config *cfg)
     if (!statvfs(cfg->state_dir, &fs)) cJSON_AddNumberToObject(sys, "state_free_kb", (double)((unsigned long long)fs.f_bavail * fs.f_frsize / 1024u));
     const char *dir = getenv("JIPC_BOOT_LOG_DIR"), *mode = "unknown";
     char path[300], text[4096];
+    int native_trial = 0;
     for (int i = 0; i < 2 && !strcmp(mode, "unknown"); ++i) {
         snprintf(path, sizeof path, "%s/%s", dir ? dir : "/tmp", i ? "jipc-handoff.log" : "jipc-native.log");
         if (!(f = fopen(path, "re"))) continue;
         size_t n = fread(text, 1, sizeof text - 1, f); fclose(f); text[n] = 0;
         if (strstr(text, i ? "boot handoff qualified" : "native boot qualified")) mode = i ? "handoff" : "native";
+        else if (!i && strstr(text, "qualifying for")) native_trial = 1;
     }
+    if (native_trial && !strcmp(mode, "unknown")) mode = "native"; /* the first 185 s of a native boot */
     cJSON_AddStringToObject(sys, "boot_mode", mode);
 }
 

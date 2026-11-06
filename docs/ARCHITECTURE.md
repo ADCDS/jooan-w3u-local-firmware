@@ -245,6 +245,7 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Firmware update | ✓ signed, sequence-gated (platform); the media layer is updated by its installer |
 | Change password | ✓ (synchronized to SSH) |
 | Reboot | ✓ button and API, refused during an update or a trial; optional daily restart at a set time |
+| Reset to defaults | ✓ admin UI, API or a 5-second press of the reset button; keeps Wi-Fi |
 | Device info / UID | ~ version and state in `/api/v1/status` |
 
 Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
@@ -298,7 +299,8 @@ pulled both streams has reproduced this; stop the NVR during an update.
 `dmesg` does not survive a reboot, so the supervisor keeps two small files in
 its state directory. `reset-history` gets one line per boot (time, the reset
 address the kernel reports in `dmesg`, and the network watchdog's reboot count;
-last 20 boots). `net-loss.log` gets the clock, uptime, Wi-Fi state and the tail
+last 20 boots; the time is the restored clock, before network time corrects it).
+`net-loss.log` gets the clock, uptime, Wi-Fi state and the tail
 of `dmesg` when the gateway has been unreachable for 10 seconds, at most 3 times
 per boot.
 

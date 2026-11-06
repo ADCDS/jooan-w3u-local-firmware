@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.29, release sequence 63) has a supported tag until the
+current one is 0.2.30, release sequence 64) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -92,9 +92,10 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
 | `/api/v1/time` | `GET`, `PUT` | Read the clock and network-time state; configure network time, or set the clock from the client (UTC epoch seconds, as a JSON string). See [Camera time](#camera-time) |
 | `/api/v1/timezone` | `PUT` | Set the time zone stored in the OEM configuration (`gmt_tz`, a `"GMT-03:00"`-style offset). Scheduled restarts and the media daemon's day/night and white-light schedules follow it; the OEM application's burned-in OSD also uses it, on its next start (fallback modes). |
-| `/api/v1/ssh/authorized-keys` | `GET`, `POST`, `DELETE` | Inspect, add, or remove optional Ed25519 keys (up to 8). `GET` lists one key per line; `POST` adds one, and a key already present changes nothing; `DELETE` takes `{"id":"<line number>"}` or `{"id":"all"}` |
+| `/api/v1/ssh/authorized-keys` | `GET`, `POST`, `DELETE` | Inspect, add, or remove optional Ed25519 keys (up to 8). `GET` returns them in `authorized_keys`, one key per line; `POST` adds one, and a key already present changes nothing; `DELETE` takes `{"id":"<line number>"}` or `{"id":"all"}` |
 | `/api/v1/system/restart` | `POST` | Restart the camera. See [Restarting](#restarting) |
 | `/api/v1/system/restart-schedule` | `GET`, `PUT` | Read or set a daily restart. See [Restarting](#restarting) |
+| `/api/v1/system/reset` | `POST` | Reset to defaults, keeping Wi-Fi. See [Reset to defaults](#reset-to-defaults) |
 | `/api/v1/update` | `POST`, `PUT` | Stage then apply an authenticated release |
 
 Clients must ignore unknown response fields.
@@ -167,6 +168,22 @@ it off; a bad time is a 400 `invalid_time`. The boot supervisor checks it every
 few seconds. It skips the restart when the camera has been up for less than an
 hour, the clock has not been set, or one of the conditions above holds; a
 skipped restart waits for the next day.
+
+## Reset to defaults
+
+`POST /api/v1/system/reset` with `{"confirm":"<camera name>"}` (the name from
+`/api/v1/network/mdns`) answers `200 {"ok":true}` and restarts the camera. A wrong
+name is a 400 `confirm_mismatch`, and it refuses with the same `409` reasons as a
+restart. Holding the reset button for 5 seconds does the same in a native boot;
+the button only counts once it has been seen released, so a stuck one does nothing.
+
+The next boot erases, before anything that owns those files is running: both
+passwords (back to the initial value), SSH keys, remembered sign-ins, the restart
+schedule, presets, and the picture, night, light and audio controls. A power cut
+halfway resumes it at the following boot. It keeps Wi-Fi, the local name, allowed
+networks, network time, the time zone, certificates and the installed releases, so
+the camera stays reachable the same way. The `audio` setting in the media
+configuration also stays.
 
 ## Local networking and DNS-SD
 

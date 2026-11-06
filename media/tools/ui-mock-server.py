@@ -74,7 +74,7 @@ NO_RESTART = {"username", "password", "recording", "record_seconds", "record_max
 # The platform's versioned routes, by implementation name (src/daemon/http.c `route`).
 V1 = {"v1/setup/password": "password", "v1/status": "status", "v1/network/mdns": "mdns",
       "v1/network/routes": "routes", "v1/network/quality": "network-quality", "v1/time": "time",
-      "v1/network/wifi/scan": "wifi/scan", "v1/system/restart": "restart", "v1/system/restart-schedule": "restart-schedule",
+      "v1/network/wifi/scan": "wifi/scan", "v1/system/restart": "restart", "v1/system/restart-schedule": "restart-schedule", "v1/system/reset": "reset",
       "v1/timezone": "timezone", "v1/ssh/authorized-keys": "ssh/keys"}
 
 
@@ -675,6 +675,19 @@ class Mock:
         if name == "restart" and m == "POST":  # restart_blocker(): never during an update or a trial
             why = "update" if self.release else "wifi-trial" if self.trial else self.args.restart_blocked
             if why: return ok({"ok": False, "reason": why}, 409)
+            self.reboot(now + 2, self.args.restart_seconds)
+            return ok({"ok": True})
+        if name == "reset" and m == "POST":  # jl_apply_reset() runs at the next boot; the same refusals as a restart
+            confirm = jfield(body, "confirm", 64)
+            if confirm is None:
+                return perr(400, "invalid_json", "confirm is required: the camera's name")
+            if confirm != self.hostname:
+                return perr(400, "confirm_mismatch", "confirm must be the camera's name")
+            why = "update" if self.release else "wifi-trial" if self.trial else self.args.restart_blocked
+            if why: return ok({"ok": False, "reason": why}, 409)
+            self.password = self.media_password = "admin"
+            self.ssh_keys, self.restart_time, self.presets, self.controls = "", None, {}, control_defaults()
+            self.remembered.clear()
             self.reboot(now + 2, self.args.restart_seconds)
             return ok({"ok": True})
         if name == "restart-schedule":

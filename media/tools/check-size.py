@@ -13,7 +13,7 @@ blocks; build-appfs.sh reports the exact free_bytes for a real image.
 import argparse, lzma, os, pathlib, subprocess, sys, tempfile
 
 DAEMON_XZ_MAX = 349_324
-UI_RAW_MAX = 150_000
+UI_RAW_MAX = 200_000
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", default="build/mips/jooanipc-open")

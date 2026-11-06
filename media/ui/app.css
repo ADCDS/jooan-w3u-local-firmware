@@ -258,6 +258,7 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .count{align-items:center;gap:16px;text-align:center}
 .count h3{font-size:24px;line-height:30px;font-weight:700}
 .count>p,.count .acts{max-width:420px;width:100%}
+.rl{margin:0;padding-left:18px;color:var(--muted);font-size:14px}
 .ring{position:relative;width:164px;height:164px}
 .ring svg{width:164px;height:164px;stroke-width:12;stroke:var(--sunk)}
 .ring circle+circle{stroke:var(--accent);stroke-dasharray:452.4;rotate:-90deg;transform-origin:center;transition:stroke-dashoffset 1s linear}
