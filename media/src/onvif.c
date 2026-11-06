@@ -201,7 +201,7 @@ int jipc_onvif_authorize(jipc_app *app,const char *body) {
        text_value(&d,token,"Nonce",nonce,sizeof(nonce))<0||text_value(&d,token,"Created",created,sizeof(created))<0||
        attr_value(&d,p,"Type",type,sizeof(type))<0)return 0;
     if(strcmp(type,"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest"))return 0;
-    int64_t stamp; time_t now=time(NULL); if(now==(time_t)-1||created_time(created,&stamp)<0||stamp<(int64_t)now-300||stamp>(int64_t)now+300)return 0;
+    int64_t stamp=0; time_t now=time(NULL); if(now==(time_t)-1||created_time(created,&stamp)<0||stamp<(int64_t)now-300||stamp>(int64_t)now+300)return 0;
     unsigned char raw[192],digest[20],hash[20],input[192+64+129]; char expected[64];
     int bytes=jipc_base64_decode(nonce,raw,sizeof(raw)); if(bytes<16||bytes>(int)sizeof(raw))return 0;
     jipc_config c;jipc_config_copy(app,&c);

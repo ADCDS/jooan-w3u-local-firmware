@@ -8,8 +8,10 @@ Mock API: `python3 media/tools/ui-mock-server.py`, then open the printed URL
 (admin/admin). `--help` lists simulated failures; `/__mock/fail?on=1|0`
 toggles "camera not answering".
 
-Budget: the files are embedded in the daemon; keep this directory under 80 KB
-(`cat media/ui/* | wc -c`).
+Budget: the files are embedded in the daemon, which must fit the camera's
+appfs partition. `tools/check-size.py` (run by the full gate after `make mips`)
+caps the UI at 150,000 bytes raw and the whole stripped daemon at 349,324 bytes
+xz, which keeps at least 48 KiB of the partition free.
 
 ## What the UI expects
 

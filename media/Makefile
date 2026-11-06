@@ -7,7 +7,7 @@ host:
 	cmake --build build/host --parallel $(JOBS)
 mips:
 	@test -n "$(TOOLCHAIN_ROOT)" || { echo 'Set TOOLCHAIN_ROOT to the Ingenic GCC5.4 toolchain'; exit 1; }
-	TOOLCHAIN_ROOT="$(TOOLCHAIN_ROOT)" cmake -S . -B build/mips -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/mips-uclibc.cmake
+	TOOLCHAIN_ROOT="$(TOOLCHAIN_ROOT)" cmake -S . -B build/mips -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_TOOLCHAIN_FILE=cmake/mips-uclibc.cmake
 	cmake --build build/mips --parallel $(JOBS)
 test: host
 	ctest --test-dir build/host --output-on-failure --parallel 1

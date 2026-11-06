@@ -8,7 +8,10 @@ root=$(git rev-parse --show-toplevel)
 cd "$root"
 
 ci/check-hosted.sh
-python3 ci/check_persistent_size.py
 ci/check_cookie_header.sh
 ci/check_ntp.sh
+# Media layer for the camera: MIPS build, QEMU replay run, flash budget.
+make -C media mips qemu-test
+(cd media && python3 tools/check-size.py)
+# Builds the release twice and size-checks the fresh persistent layout.
 python3 ci/check_reproducible.py

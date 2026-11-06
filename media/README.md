@@ -51,7 +51,7 @@ JA-A12 storage budget and required boot dependencies.
 | --- | --- |
 | Video | Four H.264 URLs; two main encoders with shared aliases or four independent encoders; bounded rings, SPS/PPS cache, IDR recovery |
 | RTSP | Digest authentication, TCP interleaving, UDP unicast, H.264 FU-A, PCMA, RTCP sender reports and BYE |
-| HTTPS and REST | MbedTLS 3.6.7, Basic authentication over TLS, bounded requests, private atomic configuration |
+| HTTPS and REST | MbedTLS 3.6.7 as a TLS 1.2 server only (ECDHE with an RSA or EC certificate, AES-GCM; `include/mbedtls_user_config.h` leaves the rest out to save flash), Basic authentication over TLS, bounded requests, private atomic configuration |
 | Failed-login throttle | Per peer address across HTTP Basic, ONVIF WS-Security and RTSP Digest: 10 failures within 60 s of the first block that address for the rest of the window (HTTP `429`, RTSP `503` with `Retry-After: 60`); requests without credentials never count |
 | ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery; off by default (`discovery=0`), enable with `discovery=1` |
@@ -143,6 +143,11 @@ camera's uClibc 0.9.33.2 ABI. A normal glibc MIPS cross-compiler is not a substi
 TOOLCHAIN_ROOT=/absolute/path/to/ingenic-toolchain make mips
 file build/mips/jooanipc-open
 ```
+
+`make mips` builds for size (`MinSizeRel`, `-Os`): the camera's appfs partition
+holds the vendor files, `libimp` and this program, and
+`python3 tools/check-size.py` checks the program still leaves at least 48 KiB
+of it free.
 
 The resulting ELF uses `/lib/ld-uClibc.so.0`. MbedTLS and cJSON are built into the
 program; only the normal OEM C/POSIX libraries are linked dynamically. `libimp`

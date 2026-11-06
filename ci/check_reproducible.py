@@ -65,6 +65,17 @@ def main() -> int:
                 sys.stderr.write(result.stderr)
                 print(f"reproducible-build: run {run} failed", file=sys.stderr)
                 return 1
+            if run == 1 and not args.artifact and not os.environ.get("REPRO_ARTIFACT"):
+                # Size-check the layout this build just produced, never a stale
+                # one left in build/ by an older checkout.
+                size = subprocess.run(
+                    [sys.executable, str(root / "ci/check_persistent_size.py"), "--require",
+                     str(build / "persistent-layout")], cwd=root, text=True,
+                )
+                if size.returncode:
+                    print("reproducible-build: persistent-size gate failed on the fresh layout",
+                          file=sys.stderr)
+                    return 1
             current: dict[str, tuple[str, int]] = {}
             for relative in artifacts:
                 path = out / relative
