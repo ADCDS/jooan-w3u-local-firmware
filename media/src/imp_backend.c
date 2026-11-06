@@ -714,7 +714,9 @@ int jipc_imp_open(jipc_app *app, void **out, char *error, size_t capacity)
         int ready = 1;
         for (unsigned i = 0; i < s->sensors * 2; ++i) {
             pthread_mutex_lock(&app->streams[i].mutex);
-            ready &= app->streams[i].sequence != 0 && app->streams[i].sps_size != 0 && app->streams[i].pps_size != 0;
+            /* Held for privacy, the frames are dropped on purpose: the parameter sets prove the encoder runs. */
+            ready &= (app->streams[i].sequence != 0 || atomic_load(&app->privacy_hold)) &&
+                     app->streams[i].sps_size != 0 && app->streams[i].pps_size != 0;
             pthread_mutex_unlock(&app->streams[i].mutex);
         }
         if (ready) break;

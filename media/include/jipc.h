@@ -88,6 +88,7 @@ typedef struct jipc_app {
     /* Privacy mode, and "drop every video frame": set from before video starts
      * until the black-out is confirmed, so nothing can leak if it fails. */
     atomic_int privacy_on, privacy_hold;
+    atomic_uint privacy_wait_key; /* by source: frames resume at the next keyframe */
     /* Level of the microphone audio the NVR receives, over the last full
      * second, in hundredths of a dBFS; audio_level_ms is when it was taken
      * (milliseconds, wrapping; 32 bits because MIPS32 has no 64-bit atomics). */

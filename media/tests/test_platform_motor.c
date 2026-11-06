@@ -95,7 +95,7 @@ static void moves(void)
     assert(s.target_x==2000-FOV_HALF_PAN&&s.target_y==600-FOV_HALF_TILT&&s.goto_active&&!s.goto_rate);
     RUN();assert(driver_x==2000-FOV_HALF_PAN&&driver_y==600-FOV_HALF_TILT);
     assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,-0.5,-0.5,1,error,sizeof(error)));
-    assert(s.goto_rate==900&&s.target_x==2000-FOV_HALF_PAN+286&&s.target_y==600-FOV_HALF_TILT+147);
+    assert(s.goto_rate==900&&s.target_x==2000-FOV_HALF_PAN+203&&s.target_y==600-FOV_HALF_TILT+110);
     RUN();assert(speed==900);
     /* Never past the travel. */
     assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0.01,error,sizeof(error)));assert(s.goto_rate==100);

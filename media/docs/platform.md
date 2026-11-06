@@ -100,10 +100,12 @@ four decimals and `MoveStatus`. On camera1 (`flip0=3`), +x and +y take the step
 counts down, which turns the view right and up, as ONVIF expects.
 
 `TranslationSpaceFov` is what Frigate's autotracker uses: a value of 1 brings the
-frame's edge to its centre. Half the field of view is 571 pan steps and 293 tilt
-steps, measured from the picture's shift at 1920x1080 (1.68 px per pan step, 1.84
-per tilt step, phase correlation over 12 small moves), so about 92 by 43 degrees
-at the published 330 and 90 degrees of travel.
+frame's edge to its centre. Half the field of view is 405 pan steps and 220 tilt
+steps, measured from the picture's shift at 1920x1080 by phase correlation, in
+moves of 60 to 240 steps that ran to completion, at three speeds: 2.37 px per pan
+step and 2.45 per tilt step. Every reversal first loses about 25 steps to gear
+backlash, so a short move after changing direction falls that much short, and so
+does a return to a preset approached from the other side.
 
 `ptz_recalibrate` runs the boot's homing sequence on demand and returns to where
 the head was; `homed_ago_s` in the status says when (`null`: at boot, by an
@@ -134,9 +136,11 @@ for afterwards and does not reach the lens.
 
 So that no frame can leak, video frames are dropped from before video starts until
 the lenses are black and a second has passed for what was in the pipe, at every
-turn-on and every start of the daemon. If the black-out fails, the frames stay
-dropped and `live.error` says so: a failure pauses the video instead of showing it.
-The hardware watchdog's stream check allows for this.
+turn-on and every start of the daemon. Only H.264 parameter sets get through while
+frames are held, because RTSP and the startup check need them and they show
+nothing, and each stream then resumes at a keyframe. If the black-out fails, the
+frames stay dropped and `live.error` says so: a failure pauses the video instead of
+showing it. The hardware watchdog's stream check allows for this.
 
 The microphone is muted, and moves from anyone else are refused (`privacy mode is
 on`). The head goes to `privacy.slot` if that preset exists, and otherwise looks
