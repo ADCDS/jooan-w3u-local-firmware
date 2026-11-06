@@ -33,6 +33,7 @@ typedef struct {
     int night_mode, ir_off, night_ev, day_ev, wait_s, night_from, night_until;
     int white_light, wl_schedule, wl_from, wl_until, trigger_s;
     int pilot_led, mic_mute, anti_flicker, utc_offset_min;
+    int siren_sound, siren_volume, siren_seconds, siren_strobe;
     int overlay_on, overlay_corner, overlay_format;
     char overlay_name[JIPC_OVERLAY_NAME + 1];
     picture pic[2];
@@ -54,7 +55,7 @@ typedef struct {
     uint64_t dirty_since;
     int active_night, active_white; /* -1 = not applied yet */
     int ev, ev_valid;
-    uint64_t ev_at, cond_since, trigger_until, switched_at, wl_override_until, auto_hold_us;
+    uint64_t ev_at, cond_since, trigger_until, strobe_until, switched_at, wl_override_until, auto_hold_us;
     int wl_override;
     int zone_valid, zone_min;
     uint64_t zone_at;
@@ -81,6 +82,7 @@ static void defaults(settings *s)
 {
     memset(s, 0, sizeof *s);
     s->night_mode = NIGHT_DAY;
+    s->siren_volume = 100; s->siren_seconds = 30;
     /* EV rises as the scene darkens: night above night_ev, day again below
      * day_ev. Measured at dawn on camera1: with the IR-cut filter open the
      * sky's infrared makes the level read about 3.6x lower than in day mode
@@ -262,6 +264,19 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
             }
         }
     }
+    cJSON *siren = cJSON_GetObjectItemCaseSensitive(root, "siren");
+    if (siren) {
+        if (!cJSON_IsObject(siren)) return snprintf(error, capacity, "siren must be an object"), -1;
+        cJSON *sound = cJSON_GetObjectItemCaseSensitive(siren, "sound");
+        if (sound) {
+            int found = cJSON_IsString(sound) ? jipc_siren_sound(sound->valuestring) : -1;
+            if (found < 0) return snprintf(error, capacity, "sound must be alarm, two_tone, pulse or chime"), -1;
+            next.siren_sound = found;
+        }
+        if (get_int(siren, "volume", 1, 100, &next.siren_volume, error, capacity) ||
+            get_int(siren, "seconds", 1, JIPC_SIREN_MAX_SECONDS, &next.siren_seconds, error, capacity) ||
+            get_bool(siren, "strobe", &next.siren_strobe, error, capacity)) return -1;
+    }
     cJSON *overlay = cJSON_GetObjectItemCaseSensitive(root, "overlay");
     if (overlay) {
         static const char *const corners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
@@ -395,6 +410,13 @@ static char *settings_json(const settings *s, int with_version)
             cJSON_AddNumberToObject(stop, "dwell_s", s->stops[i].dwell_s);
             cJSON_AddItemToArray(stops, stop);
         }
+    }
+    cJSON *siren = cJSON_AddObjectToObject(root, "siren");
+    if (siren) {
+        cJSON_AddStringToObject(siren, "sound", jipc_siren_name((unsigned)s->siren_sound));
+        cJSON_AddNumberToObject(siren, "volume", s->siren_volume);
+        cJSON_AddNumberToObject(siren, "seconds", s->siren_seconds);
+        cJSON_AddBoolToObject(siren, "strobe", s->siren_strobe);
     }
     cJSON *overlay = cJSON_AddObjectToObject(root, "overlay");
     if (overlay) {
@@ -649,7 +671,8 @@ static void *engine(void *opaque)
         /* White light: a trigger, then a manual change until the next
          * schedule boundary, then the schedule, then the manual state. */
         int white;
-        if (c->trigger_until && now < c->trigger_until) white = 1;
+        if (c->strobe_until && now < c->strobe_until) white = (int)(now / UINT64_C(500000) & 1);
+        else if (c->strobe_until = 0, c->trigger_until && now < c->trigger_until) white = 1;
         else {
             c->trigger_until = 0;
             if (s.wl_schedule && c->wl_override_until && now < c->wl_override_until) white = c->wl_override;
@@ -709,8 +732,13 @@ static void *engine(void *opaque)
         if (!atomic_load(&c->quit) && !c->apply_picture) {
             struct timespec until;
             clock_gettime(CLOCK_REALTIME, &until);
-            until.tv_sec += 1;
-            if (s.overlay_on) until.tv_nsec = 0; /* the timestamp changes on the second */
+            if (c->strobe_until) { /* a flash is half a second */
+                until.tv_nsec += 250000000;
+                if (until.tv_nsec >= 1000000000) { until.tv_nsec -= 1000000000; until.tv_sec += 1; }
+            } else {
+                until.tv_sec += 1;
+                if (s.overlay_on) until.tv_nsec = 0; /* the timestamp changes on the second */
+            }
             pthread_cond_timedwait(&c->wake, &c->mutex, &until);
         }
         pthread_mutex_unlock(&c->mutex);
@@ -811,7 +839,7 @@ void jipc_controls_note(jipc_app *app, const char *operation, int value, int val
             c->wl_override_until = jipc_now_us() +
                 (uint64_t)next_boundary_s(&c->s, c->s.wl_from, c->s.wl_until) * 1000000u;
         } else c->s.white_light = value;
-        c->trigger_until = 0;
+        c->trigger_until = c->strobe_until = 0;
         c->active_white = value;
     } else if (!strcmp(operation, "pilot_led")) c->s.pilot_led = value;
     else if (!strcmp(operation, "mic_mute")) c->s.mic_mute = value;
@@ -823,6 +851,63 @@ void jipc_controls_note(jipc_app *app, const char *operation, int value, int val
     else if (p && !strcmp(operation, "denoise")) p->denoise = value;
     if (memcmp(&before, &c->s, sizeof before) && !c->dirty) { c->dirty = 1; c->dirty_since = jipc_now_us(); }
     pthread_mutex_unlock(&c->mutex);
+}
+
+/* The siren with the saved sound, volume and, unless given, length; its flashing light with it. */
+int jipc_controls_siren(jipc_app *app, int on, int seconds, char *error, size_t capacity)
+{
+    if (error && capacity) error[0] = 0;
+    if (on != 0 && on != 1) { snprintf(error, capacity, "siren takes value 1 (on) or 0 (off)"); return -1; }
+    if (seconds < 0 || seconds > JIPC_SIREN_MAX_SECONDS) { snprintf(error, capacity, "the siren can sound for 1 to %d seconds", JIPC_SIREN_MAX_SECONDS); return -1; }
+    pthread_mutex_lock(&lifetime);
+    controls_state *c = app->controls_state;
+    if (!c) { pthread_mutex_unlock(&lifetime); snprintf(error, capacity, "controls are not running"); return -1; }
+    int rc = 0;
+    pthread_mutex_lock(&c->mutex);
+    settings s = c->s;
+    pthread_mutex_unlock(&c->mutex);
+    if (!on) jipc_siren_stop(app);
+    else rc = jipc_siren_start(app, (unsigned)s.siren_sound, (unsigned)(seconds ? seconds : s.siren_seconds), s.siren_volume, error, capacity);
+    if (!rc) {
+        pthread_mutex_lock(&c->mutex);
+        if (!on) c->strobe_until = 0;
+        else if (s.siren_strobe) c->strobe_until = jipc_now_us() + (uint64_t)(seconds ? seconds : s.siren_seconds) * UINT64_C(1000000);
+        pthread_cond_signal(&c->wake);
+        pthread_mutex_unlock(&c->mutex);
+    }
+    pthread_mutex_unlock(&lifetime);
+    return rc;
+}
+
+/* A short sound at the saved volume, to choose one by. */
+int jipc_controls_siren_test(jipc_app *app, int sound, char *error, size_t capacity)
+{
+    if (error && capacity) error[0] = 0;
+    if (sound < 0 || sound >= JIPC_SIREN_SOUNDS) { snprintf(error, capacity, "siren_test takes a sound from 0 to %d", JIPC_SIREN_SOUNDS - 1); return -1; }
+    pthread_mutex_lock(&lifetime);
+    controls_state *c = app->controls_state;
+    if (!c) { pthread_mutex_unlock(&lifetime); snprintf(error, capacity, "controls are not running"); return -1; }
+    pthread_mutex_lock(&c->mutex);
+    int volume = c->s.siren_volume;
+    pthread_mutex_unlock(&c->mutex);
+    int rc = jipc_siren_start(app, (unsigned)sound, JIPC_SIREN_TEST_SECONDS, volume, error, capacity);
+    pthread_mutex_unlock(&lifetime);
+    return rc;
+}
+
+int jipc_controls_strobe(jipc_app *app, int seconds, char *error, size_t capacity)
+{
+    if (error && capacity) error[0] = 0;
+    if (seconds < 0 || seconds > JIPC_SIREN_MAX_SECONDS) { snprintf(error, capacity, "strobe takes 1 to %d seconds, or 0 to stop", JIPC_SIREN_MAX_SECONDS); return -1; }
+    pthread_mutex_lock(&lifetime);
+    controls_state *c = app->controls_state;
+    if (!c) { pthread_mutex_unlock(&lifetime); snprintf(error, capacity, "controls are not running"); return -1; }
+    pthread_mutex_lock(&c->mutex);
+    c->strobe_until = seconds ? jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000) : 0;
+    pthread_cond_signal(&c->wake);
+    pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&lifetime);
+    return 0;
 }
 
 int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t capacity)

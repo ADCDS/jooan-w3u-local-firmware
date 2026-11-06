@@ -613,6 +613,10 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity)
 {
     if (!operation) return fail(error, capacity, "missing control operation");
+    /* The siren never waits on the encoder either. */
+    if (!strcmp(operation, "siren")) return jipc_controls_siren(app, value, value2, error, capacity);
+    if (!strcmp(operation, "siren_test")) return jipc_controls_siren_test(app, value, error, capacity);
+    if (!strcmp(operation, "strobe")) return jipc_controls_strobe(app, value, error, capacity);
     /* Motors and their deadlines never wait on the encoder/JPEG SDK gate. */
     if (!strcmp(operation, "ptz") || !strcmp(operation, "ptz_stop") || !strcmp(operation, "ptz_recalibrate") ||
         !strncmp(operation, "preset_", 7))
@@ -635,6 +639,10 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     } else if (!strcmp(operation, "ir_mode")) {
         rc = value != 0 && value != 1 ? fail(error, capacity, "ir_mode requires 0 (infrared at night) or 1 (always off)")
                                       : jipc_controls_patch(app, value ? "{\"night\":{\"ir\":\"off\"}}" : "{\"night\":{\"ir\":\"night\"}}",
+                                                            error, capacity);
+    } else if (!strcmp(operation, "privacy")) {
+        rc = value != 0 && value != 1 ? fail(error, capacity, "privacy takes value 1 (on) or 0 (off)")
+                                      : jipc_controls_patch(app, value ? "{\"privacy\":{\"on\":true}}" : "{\"privacy\":{\"on\":false}}",
                                                             error, capacity);
     } else if (!strcmp(operation, "white_light_trigger")) {
         rc = jipc_controls_trigger(app, value, error, capacity);

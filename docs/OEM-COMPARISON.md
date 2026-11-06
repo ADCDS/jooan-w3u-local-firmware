@@ -44,14 +44,14 @@ miss:
    bring your own VPN). The camera is meant to be watched and recorded by an
    NVR such as [Frigate](https://frigate.video/) on your own network.
 2. **No detection or alerts on the camera.** No motion detection, no push
-   notifications, no siren or flashing light. Your NVR has to do detection,
-   notifications and auto-tracking.
+   notifications. Your NVR has to do detection, notifications and auto-tracking, and
+   can trigger the siren and flashing light through Home Assistant.
 3. **Night vision thresholds need tuning.** Automatic day/night, schedules
    and a timed white light work and are remembered, but the switching levels
    are provisional until set from dusk and dawn readings.
 4. **Audio is off by default.** With `audio=1` the microphone and two-way
    talk (from Frigate's live view or the admin UI) work; they were checked on
-   the test camera. There is no siren yet.
+   the test camera.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
    2304×1296); the fixed lens streams 1024×576.
 6. **No microSD recording or playback on the camera.** Recording happens on
@@ -108,7 +108,7 @@ under [Sources](#sources):
 | Automatic day/night switching | Yes: the lights come on by themselves in the dark[^amz-us]; light thresholds `ToNightEv`/`ToDayEv` [cfg] | **Supported** (media) | Auto mode reads the image processor's exposure value and switches to night above one level and back to day below a lower one, each held for a wait time; levels and wait are set in the admin UI. A night schedule (from/until) is the alternative. Default thresholds are provisional until calibrated at dusk and dawn. |
 | Infrared night vision | Black-and-white IR night vision, up to 20 m[^off][^faq-night] | **Supported** (media) | Night mode moves the IR-cut filter, turns on the infrared LEDs (or keeps them off for a lit street) and puts the image processor in night mode. Day, night, auto or schedule, remembered across restarts. |
 | Colour night vision (white light) | Colour night vision with the white light, on a schedule ("timed full colour") or only when a person or animal moves ("intelligent full colour")[^off][^faq-night] | **Supported** (media), with the NVR | On or off by hand, on a schedule, or for a set time when triggered (`white_light_trigger`): Home Assistant can call it on a Frigate person event. The camera itself detects nothing. |
-| Flashing light on alarm | A strobe light when motion is detected[^amz-us]; alarm-light settings (`AlarmLightParam`) [cfg] | **Missing** | There is no detection to trigger it. |
+| Flashing light on alarm | A strobe light when motion is detected[^amz-us]; alarm-light settings (`AlarmLightParam`) [cfg] | **Partial** (media) | The white light flashes about once a second, with the siren or alone, from the admin UI or `POST /api/v1/control`. The camera has no detection of its own, so something like Home Assistant triggers it. |
 | Status LED | No LED switch on this model (`indicator_light_switch` = 0) [cfg] | **Supported** (media) | `pilot_led` on or off through the REST API. |
 
 ## Pan and tilt
@@ -129,7 +129,7 @@ under [Sources](#sources):
 | --- | --- | --- | --- |
 | Listen through the microphone | Built-in microphone[^off] | **Supported** (media) | With `audio=1` both main RTSP URLs carry the microphone as 8 kHz PCMA at the stock firmware's levels, which Frigate can record as AAC. Off by default. |
 | Two-way talk | Yes[^off] | **Supported** (media) | ONVIF RTSP backchannel, which go2rtc and Frigate's live-view microphone use (the page must be opened over HTTPS), the admin UI's hold-to-talk, and `POST /api/v1/talk`. One talker at a time, half-duplex. |
-| Siren and alarm sounds | A loud alarm on motion[^amz-us]; custom alarm sounds[^off]; alarm schedule (`SoundAlarmSchedule`) and self-recorded sounds (`the_user_records_alarm_information` = 1) [cfg] | **Missing** | The platform mutes the speaker amplifier during boot; afterwards the media daemon switches it on only for a talk session. |
+| Siren and alarm sounds | A loud alarm on motion[^amz-us]; custom alarm sounds[^off]; alarm schedule (`SoundAlarmSchedule`) and self-recorded sounds (`the_user_records_alarm_information` = 1) [cfg] | **Partial** (media) | Four built-in sounds, with volume and length, from the admin UI or `POST /api/v1/control`, for 1 to 300 seconds. The camera has no detection of its own, so something like Home Assistant triggers it. No custom or recorded sounds, and no schedule of its own. Checked on the camera at low volume only. |
 | Volume | Microphone and speaker volume (`support_volume_setting`, `support_speaker_volume_setting`) [cfg] | **Partial** (media) | The `volume` control sets either one with `audio=1`; it is not remembered after a restart. |
 | Voice prompts | Spoken setup and status prompts [app] | **Missing** | The media installer's rebuilt app partition leaves the prompt files out, so they are gone in the fallback modes too. |
 | Sound detection | Yes[^off]; crying detection is claimed only by the Amazon UK listing[^amz-uk] | **Missing** | Frigate can detect sounds on the microphone track once audio is on. |

@@ -8,6 +8,9 @@
  * 200 ms while audio queues up, then play 40 ms frames. It ends when the
  * talker releases (TEARDOWN or disconnect) and its queue drains, or after
  * 500 ms without audio; ending plays 80 ms of silence and mutes again.
+ *
+ * The siren plays through the same session. It comes ahead of a talker, whose audio
+ * is dropped and refused until it ends, and it has its own volume and a deadline.
  */
 #include "jipc.h"
 #include <errno.h>
@@ -46,6 +49,9 @@ typedef struct {
     unsigned mute_attempts, write_errors, backoff_s;
     uint64_t retry_us;
     uint64_t sessions, played_frames, dropped_bytes, refused, faults;
+    int siren_on, siren_volume, siren_volume_applied, volume_restore;
+    uint64_t siren_until;
+    jipc_siren siren;
     char error[160];
 } speaker_state;
 
@@ -116,9 +122,24 @@ static void end_session(speaker_state *s, int close_output)
 {
     s->session = s->leased = s->released = 0;
     s->head = s->count = 0;
+    s->siren_on = 0;
     s->session_end_us = jipc_now_us();
     stop_output(s, close_output);
+    /* The next talker gets the speaker's own volume back. */
+    if (s->volume_restore) {
+        int open = s->open, volume = s->volume;
+        s->volume_restore = 0;
+        if (open) {
+            pthread_mutex_unlock(&s->mutex);
+            (void)s->sink.volume(s->sink.context, volume);
+            pthread_mutex_lock(&s->mutex);
+        }
+    }
 }
+
+/* A DAC gain of 60 is unity, and a sound's full level is just below clipping there, so
+ * 100% is the loudest it plays clean. A step of the gain is 0.5 dB. */
+static int siren_gain(int percent) { return 60 * percent / 100; }
 
 static void fault(speaker_state *s, const char *message)
 {
@@ -159,11 +180,13 @@ static void *speaker_main(void *opaque)
                 s->head = s->count = 0;
                 s->leased = s->released = 0;
             }
-            if (!s->count) { timed_wait(s, 100); continue; }
-            /* A talker's first audio: start a session. */
+            if (s->siren_on && (s->faulted || !jipc_speaker_gate_open(s->app))) s->siren_on = 0;
+            if (!s->count && !s->siren_on) { timed_wait(s, 100); continue; }
+            /* A talker's first audio, or the siren: start a session. */
             s->session = 1;
             ++s->sessions;
-            int volume = s->volume, need_open = !s->open;
+            int volume = s->siren_on ? siren_gain(s->siren_volume) : s->volume, need_open = !s->open;
+            if (s->siren_on && need_open) s->siren_volume_applied = s->siren_volume;
             pthread_mutex_unlock(&s->mutex);
             char error[160] = {0};
             int rc = need_open ? s->sink.open(s->sink.context, volume, error, sizeof error) : 0;
@@ -178,9 +201,20 @@ static void *speaker_main(void *opaque)
             pthread_mutex_lock(&s->mutex);
             continue;
         }
-        int finished = s->released ? !s->count : !s->count && now - s->last_submit_us > DEADMAN_US;
+        if (s->siren_on && now >= s->siren_until) { s->siren_on = 0; s->released = 1; }
+        int finished = !s->siren_on && (s->released ? !s->count : !s->count && now - s->last_submit_us > DEADMAN_US);
         if (finished) { end_session(s, 0); continue; }
-        if (!s->count) {
+        if (s->siren_on) {
+            if (s->siren_volume_applied != s->siren_volume) {
+                int gain = siren_gain(s->siren_volume);
+                s->siren_volume_applied = s->siren_volume;
+                pthread_mutex_unlock(&s->mutex);
+                (void)s->sink.volume(s->sink.context, gain);
+                pthread_mutex_lock(&s->mutex);
+            }
+            s->volume_restore = 1;
+            jipc_siren_fill(&s->siren, frame, sizeof frame);
+        } else if (!s->count) {
             /* Underrun: give the talker 40 ms, then keep the driver fed. */
             timed_wait(s, 40);
             if (s->count || s->quit) continue;
@@ -297,6 +331,9 @@ int jipc_talk_submit(jipc_app *app, uint64_t owner, uint32_t ssrc, int http,
     uint64_t now = jipc_now_us();
     if (s->faulted && now < s->retry_us) {
         result = talk_error(JIPC_TALK_UNAVAILABLE, error, capacity, "the speaker output failed; retrying shortly");
+    } else if (s->siren_on) {
+        ++s->refused;
+        result = talk_error(JIPC_TALK_BUSY, error, capacity, "the siren is sounding");
     } else if (s->leased && (s->owner != owner || s->ssrc != ssrc)) {
         ++s->refused;
         result = talk_error(JIPC_TALK_BUSY, error, capacity, "another talker is using the speaker");
@@ -350,6 +387,49 @@ int jipc_talk_active(jipc_app *app)
     return active;
 }
 
+int jipc_siren_start(jipc_app *app, unsigned sound, unsigned seconds, int percent, char *error, size_t capacity)
+{
+    if (sound >= JIPC_SIREN_SOUNDS || !seconds || seconds > JIPC_SIREN_MAX_SECONDS || percent < 1 || percent > 100)
+        return talk_error(-1, error, capacity, "the siren takes one of its sounds, 1 to 300 seconds and 1 to 100%");
+    pthread_mutex_lock(&lifetime);
+    speaker_state *s = app ? app->speaker_state : NULL;
+    int rc = 0;
+    if (!s) rc = talk_error(-1, error, capacity, "the speaker is unavailable (audio is disabled)");
+    else if (!jipc_speaker_gate_open(app))
+        rc = talk_error(-1, error, capacity, "the speaker stays muted until the boot hook releases it");
+    else {
+        pthread_mutex_lock(&s->mutex);
+        if (s->faulted && jipc_now_us() < s->retry_us)
+            rc = talk_error(-1, error, capacity, "the speaker output failed; retrying shortly");
+        else {
+            /* Whoever was talking stops here. */
+            s->head = s->count = 0;
+            s->leased = s->released = 0;
+            s->siren_on = 1;
+            s->siren_volume = percent;
+            s->siren_volume_applied = 0; /* no percentage: whatever the output has now is not it */
+            s->siren_until = jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000);
+            jipc_siren_init(&s->siren, sound);
+            pthread_cond_signal(&s->wake);
+        }
+        pthread_mutex_unlock(&s->mutex);
+    }
+    pthread_mutex_unlock(&lifetime);
+    return rc;
+}
+
+void jipc_siren_stop(jipc_app *app)
+{
+    pthread_mutex_lock(&lifetime);
+    speaker_state *s = app ? app->speaker_state : NULL;
+    if (s) {
+        pthread_mutex_lock(&s->mutex);
+        if (s->siren_on) { s->siren_on = 0; s->released = 1; pthread_cond_signal(&s->wake); }
+        pthread_mutex_unlock(&s->mutex);
+    }
+    pthread_mutex_unlock(&lifetime);
+}
+
 int jipc_speaker_set_volume(jipc_app *app, int volume, char *error, size_t capacity)
 {
     if (volume < -30 || volume > 120)
@@ -361,7 +441,7 @@ int jipc_speaker_set_volume(jipc_app *app, int volume, char *error, size_t capac
     else {
         pthread_mutex_lock(&s->mutex);
         s->volume = volume;
-        int open = s->open;
+        int open = s->open && !s->siren_on; /* kept for after the siren */
         pthread_mutex_unlock(&s->mutex);
         /* The library's volume is a plain store; safe beside a blocked write. */
         if (open && s->sink.volume(s->sink.context, volume))
@@ -382,12 +462,18 @@ int jipc_speaker_status_json(jipc_app *app, char *out, size_t capacity)
         pthread_mutex_lock(&s->mutex);
         char escaped[340] = "\"\"";
         jipc_json_escape(s->error, escaped, sizeof escaped);
-        const char *state = s->faulted ? "faulted" : s->session ? "talking" : "idle";
+        const char *state = s->faulted ? "faulted" : s->siren_on ? "siren" : s->session ? "talking" : "idle";
+        char siren[64] = "null";
+        if (s->siren_on) {
+            uint64_t now = jipc_now_us();
+            snprintf(siren, sizeof siren, "{\"sound\":\"%s\",\"left_s\":%u}", jipc_siren_name(s->siren.sound),
+                     now < s->siren_until ? (unsigned)((s->siren_until - now + 999999u) / 1000000u) : 0u);
+        }
         n = snprintf(out, capacity,
-                     "{\"state\":\"%s\",\"gate_released\":%s,\"volume\":%d,\"half_duplex\":%s,"
+                     "{\"state\":\"%s\",\"siren\":%s,\"gate_released\":%s,\"volume\":%d,\"half_duplex\":%s,"
                      "\"sessions\":%llu,\"played_ms\":%llu,\"dropped_ms\":%llu,\"refused\":%llu,"
                      "\"faults\":%llu,\"queued_ms\":%u,\"error\":%s}",
-                     state, jipc_speaker_gate_open(app) ? "true" : "false", s->volume,
+                     state, siren, jipc_speaker_gate_open(app) ? "true" : "false", s->volume,
                      s->full_duplex ? "false" : "true", (unsigned long long)s->sessions,
                      (unsigned long long)(s->played_frames * 40u),
                      (unsigned long long)(s->dropped_bytes / 8u), (unsigned long long)s->refused,

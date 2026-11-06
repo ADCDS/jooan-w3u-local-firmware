@@ -154,7 +154,58 @@ def talk_checks(rtsp_port, secret, request, capture, context_status):
     # HTTP talk on an idle speaker is accepted and plays.
     code, body = request_talk(context_status, bytes(range(128, 256)) * 10)
     assert code == 200, (code, body)
+    siren_checks(request, capture, context_status)
     return status["audio"]
+
+
+def siren_checks(request, capture, context_status):
+    """The siren through the HTTP operations: its saved settings, a test, a talker
+    kept out meanwhile, and that it stops."""
+    def op(operation, value=0, value2=0):
+        return request("POST", "/api/v1/control", {"operation": operation, "value": value, "value2": value2})[0]
+
+    def speaker():
+        return json.loads(request("GET", "/api/v1/status")[1])["audio"]["speaker"]
+
+    def wait_for(check, what):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            if check():
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"{what}: {speaker()}")
+
+    wait_for(lambda: speaker()["state"] == "idle", "idle before the siren")
+    defaults = json.loads(request("GET", "/api/v1/controls")[1])["siren"]
+    assert defaults == {"sound": "alarm", "volume": 100, "seconds": 30, "strobe": False}, defaults
+    for bad in ({"sound": "bell"}, {"sound": 1}, {"volume": 0}, {"volume": 101}, {"seconds": 0}, {"seconds": 301}, {"strobe": 1}):
+        assert request("POST", "/api/v1/controls", {"siren": bad})[0] == 400, bad
+    assert request("POST", "/api/v1/controls", {"siren": {"sound": "pulse", "volume": 40, "seconds": 60}})[0] == 200
+    size = capture.stat().st_size
+    assert op("siren", 1) == 200
+    wait_for(lambda: speaker()["state"] == "siren", "the siren starts")
+    state = speaker()
+    assert state["siren"]["sound"] == "pulse" and 50 < state["siren"]["left_s"] <= 60, state
+    assert request_talk(context_status, b"\xd5" * 800)[0] == 409
+    wait_for(lambda: capture.stat().st_size > size + 4000, "the siren plays")
+    assert op("siren", 0) == 200
+    wait_for(lambda: speaker()["state"] == "idle" and speaker()["siren"] is None, "the siren stops")
+    played = capture.read_bytes()[size:]
+    assert len(set(played)) > 8, "the siren should be more than silence"
+    # A length given with the request; a test of another sound, which ends by itself.
+    assert op("siren", 1, 1) == 200
+    wait_for(lambda: speaker()["state"] == "siren", "a short siren starts")
+    assert speaker()["siren"]["left_s"] <= 1
+    wait_for(lambda: speaker()["state"] == "idle", "a short siren ends")
+    assert op("siren_test", 3) == 200
+    wait_for(lambda: speaker()["state"] == "siren", "the test starts")
+    state = speaker()
+    assert state["siren"]["sound"] == "chime" and state["siren"]["left_s"] <= 3, state
+    assert op("siren", 0) == 200
+    wait_for(lambda: speaker()["state"] == "idle", "the test stops")
+    for operation, value, value2 in (("siren", 2, 0), ("siren", 1, 301), ("siren_test", 4, 0), ("siren_test", -1, 0)):
+        assert op(operation, value, value2) != 200, (operation, value, value2)
+    assert request("POST", "/api/v1/controls", {"siren": defaults})[0] == 200
 
 
 def go2rtc_interop(binary, root, rtsp_port, secret, request):
@@ -519,6 +570,30 @@ def ptz_checks(request, connection, secret):
     assert controls()["overlay"] == {"enabled": True, "position": "bottom-right", "format": "dmy", "name": "camera1"}
     assert request("POST", "/api/v1/controls", {"overlay": {"enabled": False}})[0] == 200
     assert controls()["overlay"]["enabled"] is False and controls()["overlay"]["name"] == "camera1"
+
+    # The flashing light goes on and off, ends by itself, and leaves the light as it was.
+    def control(operation, value=0):
+        return request("POST", "/api/v1/control", {"operation": operation, "value": value, "value2": 0})[0]
+    light_before = platform()["white_light"]
+    assert control("strobe", 301) != 200 and control("strobe", -1) != 200
+    assert control("strobe", 3) == 200
+    seen, deadline = set(), time.monotonic() + 2
+    while time.monotonic() < deadline:
+        seen.add(platform()["white_light"])
+        time.sleep(0.05)
+    assert seen >= {0, 1}, seen
+    wait_for(lambda: platform()["white_light"] == light_before, 3, "the flashing light ending")
+    time.sleep(0.8)
+    assert platform()["white_light"] == light_before
+    assert control("strobe", 60) == 200
+    assert control("strobe", 0) == 200
+    wait_for(lambda: platform()["white_light"] == light_before, 2, "the flashing light stopping")
+    # Privacy mode, as an operation for Home Assistant.
+    assert control("privacy", 2) != 200
+    assert control("privacy", 1) == 200
+    wait_for(lambda: controls()["live"]["privacy"] and platform()["privacy"], 3, "privacy by its operation")
+    assert control("privacy", 0) == 200
+    wait_for(lambda: not controls()["live"]["privacy"] and not platform()["privacy"], 3, "privacy off by its operation")
 
     assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
     wait_for(lambda: controls()["live"]["privacy"] and platform()["privacy"], 3, "privacy mode")

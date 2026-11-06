@@ -172,6 +172,87 @@ int main(void)
     CHECK(jipc_speaker_set_volume(app, 121, error, sizeof error) < 0);
     CHECK(!jipc_speaker_set_volume(app, 70, error, sizeof error) && read_int(&volume_set) == 70);
 
+    /* The siren: its own volume, ahead of talkers, ends by itself, and puts all of it back. */
+    reset_fake();
+    speaker_state *state = app->speaker_state;
+    CHECK(jipc_siren_start(app, JIPC_SIREN_SOUNDS, 1, 50, error, sizeof error) < 0);
+    CHECK(jipc_siren_start(app, 0, 0, 50, error, sizeof error) < 0);
+    CHECK(jipc_siren_start(app, 0, JIPC_SIREN_MAX_SECONDS + 1, 50, error, sizeof error) < 0);
+    CHECK(jipc_siren_start(app, 0, 1, 0, error, sizeof error) < 0);
+    CHECK(jipc_siren_start(app, 0, 1, 101, error, sizeof error) < 0);
+    CHECK(!jipc_siren_start(app, 2, 1, 50, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    jipc_sleep_ms(300); /* the amplifier settles first */
+    CHECK(read_int(&volume_set) == 30); /* half of unity's 60 */
+    CHECK(jipc_talk_submit(app, 7, 7, 0, speech, 320, error, sizeof error) == JIPC_TALK_BUSY && strstr(error, "siren"));
+    CHECK(!jipc_speaker_status_json(app, json, sizeof json));
+    CHECK(strstr(json, "\"state\":\"siren\"") && strstr(json, "\"sound\":\"pulse\"") && strstr(json, "\"left_s\":1"));
+    CHECK(jipc_talk_active(app)); /* the microphone stays out of it */
+    /* A change of the speaker's volume waits until afterwards. */
+    CHECK(!jipc_speaker_set_volume(app, 70, error, sizeof error));
+    CHECK(read_int(&volume_set) == 30);
+    uint64_t siren_at = jipc_now_us();
+    CHECK(wait_until(session_idle, 3000));
+    CHECK(jipc_now_us() - siren_at < UINT64_C(1800000));
+    CHECK(wait_until(muted, 1000));
+    CHECK(read_int(&amp_on) >= 1 && read_int(&volume_set) == 70);
+    pthread_mutex_lock(&fake_lock);
+    size_t loud = 0;
+    for (size_t i = 0; i < played_size; ++i) loud += played[i] != 0xd5;
+    pthread_mutex_unlock(&fake_lock);
+    CHECK(loud > JIPC_SPEAKER_FRAME);
+    CHECK(!jipc_speaker_status_json(app, json, sizeof json) && strstr(json, "\"siren\":null"));
+    /* Stopped, it ends at once. */
+    reset_fake();
+    CHECK(!jipc_siren_start(app, 0, 60, 100, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    siren_at = jipc_now_us();
+    jipc_siren_stop(app);
+    CHECK(wait_until(session_idle, 1000) && wait_until(muted, 1000));
+    CHECK(jipc_now_us() - siren_at < UINT64_C(800000));
+    jipc_siren_stop(app); /* and stopping nothing is nothing */
+    /* It takes over from a talker, at its own volume even if an earlier siren used that
+     * one, and the talker gets the speaker back afterwards. */
+    reset_fake();
+    CHECK(jipc_talk_submit(app, 8, 8, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
+    CHECK(wait_until(session_running, 1000));
+    CHECK(!jipc_siren_start(app, 1, 1, 100, error, sizeof error));
+    jipc_sleep_ms(320);
+    CHECK(read_int(&volume_set) == 60); /* 100% is unity */
+    pthread_mutex_lock(&state->mutex); int queued = (int)state->count; pthread_mutex_unlock(&state->mutex);
+    CHECK(!queued);
+    CHECK(jipc_talk_submit(app, 8, 8, 0, speech, 320, error, sizeof error) == JIPC_TALK_BUSY);
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    CHECK(read_int(&volume_set) == 70);
+    CHECK(jipc_talk_submit(app, 8, 8, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
+    CHECK(wait_until(session_running, 1000) && wait_until(session_idle, 3000));
+    /* The same percentage again, over a talker at another volume: applied again. */
+    reset_fake();
+    CHECK(!jipc_speaker_set_volume(app, 40, error, sizeof error));
+    CHECK(jipc_talk_submit(app, 9, 9, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
+    CHECK(wait_until(session_running, 1000));
+    CHECK(!jipc_siren_start(app, 1, 1, 100, error, sizeof error));
+    jipc_sleep_ms(320);
+    CHECK(read_int(&volume_set) == 60);
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    CHECK(read_int(&volume_set) == 40);
+    CHECK(!jipc_speaker_set_volume(app, 60, error, sizeof error));
+    /* A failing output ends it rather than holding the amplifier on. */
+    speaker_retry_unit_us = 40000;
+    reset_fake();
+    pthread_mutex_lock(&fake_lock); write_result = -1; pthread_mutex_unlock(&fake_lock);
+    CHECK(!jipc_siren_start(app, 0, 60, 100, error, sizeof error));
+    CHECK(wait_until(faulted, 2000) && wait_until(muted, 1000));
+    CHECK(!jipc_speaker_status_json(app, json, sizeof json) && strstr(json, "\"siren\":null"));
+    CHECK(jipc_siren_start(app, 0, 1, 100, error, sizeof error) < 0 && strstr(error, "retrying"));
+    pthread_mutex_lock(&fake_lock); write_result = 0; pthread_mutex_unlock(&fake_lock);
+    jipc_sleep_ms(260);
+    pthread_mutex_lock(&state->mutex); state->faults = 0; state->backoff_s = 0; pthread_mutex_unlock(&state->mutex);
+    speaker_retry_unit_us = UINT64_C(1000000);
+    /* A talker opens the output again, and the checks below start from an open one. */
+    CHECK(jipc_talk_submit(app, 4, 4, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
+    CHECK(wait_until(session_running, 1000) && wait_until(session_idle, 3000) && wait_until(muted, 1000));
+
     /* Faults: three refused frames close the output, mute, and back off. */
     speaker_retry_unit_us = 40000; /* 5 "seconds" = 200 ms */
     reset_fake();

@@ -265,6 +265,12 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .one{grid-template-columns:minmax(0,1fr) 110px}
 .one .l1{display:none!important}
 .talk-box{display:flex;flex-direction:column;gap:12px}
+.sirens{display:flex;flex-direction:column;gap:8px}
+.sir{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px}
+.sir .chk{flex:1;min-width:0}
+.sir .chk span{display:flex;flex-direction:column}
+.sir .btn{flex:none}
+#ov-sir{align-self:stretch}
 .talk{min-height:56px;border-radius:12px;border:1px solid var(--accent);background:var(--panel);color:var(--strong);font-size:16px;font-weight:650;gap:14px;padding:8px 16px}
 .talk svg{width:24px;height:24px}
 .talk>span{align-items:flex-start}
@@ -342,7 +348,7 @@ main{padding:4px 16px calc(96px + env(safe-area-inset-bottom))}
 .ph p{display:none}
 .card .acts{flex-direction:column;align-items:stretch}
 #top.sub b{display:none}
-#au-body>.card:last-child{order:-1}
+#au-talk{order:-1}
 .presets{display:block;border-top:1px solid var(--line)}
 .presets li{flex-direction:row;align-items:center;min-height:60px;padding:0;border-width:0 0 1px;border-radius:0}
 .presets li>div:first-child{flex:1}

@@ -457,9 +457,9 @@
 	wide.onchange = () => route == 'settings' && go();
 	const LD = {
 		overview: [media, joan, quality, controls],
+		audio: [media, config, controls],
 		pantilt: [media, [controls, 'pt-ptst'], aim],
 		image: [media, config, [controls, 'im-nst']],
-		audio: [media, config],
 		streams: [config, mdns, media, controls],
 		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes'], wifiState, [ipInfo, 'nw-ipm']],
 		system: [joan, media, config, controls, [clock, 'sy-nh'], [restartAt, 'sy-rsn'], [keys, 'sy-keys']],
@@ -1140,6 +1140,7 @@
 		privacyShow();
 		patrolShow();
 		ovShow(x.overlay);
+		sirShow(x.siren);
 		const n = x.night,
 			w = x.white_light,
 			wm = w.schedule.enabled ? 'schedule' : w.on ? 'on' : 'off';
@@ -2281,11 +2282,102 @@
 			pwShow.firstChild.textContent = 'Hide';
 		});
 	pwCopy.onclick = () => run(pwCopy, async () => copy(await getPw(), pwCopy));
+	/* The siren: its sound, volume and length are kept on the camera, it asks before it
+	   sounds, and it stops by itself. */
+	const SIR = [
+			['alarm', 'Alarm', 'Rising and falling tone'],
+			['two_tone', 'Two-tone', 'Alternating high and low'],
+			['pulse', 'Pulse', 'Short beeps'],
+			['chime', 'Chime', 'Soft, for a doorbell or a reminder']
+		],
+		sirOn = () => S.m?.audio?.speaker?.siren,
+		sirName = v => SIR.find(x => x[0] == v)?.[1] || v,
+		sirLeft = () => Math.max(0, (sirOn()?.left_s || 0) - Math.round(age('m') / 1e3));
+	function sirUI() {
+		const on = sirOn(),
+			b = $('ov-sir'),
+			talking = T.st != 'idle';
+		b.classList.toggle('dzf', !!on);
+		b.lastChild.textContent = on ? `Stop the siren · ${sirLeft()} s` : talking ? 'Siren (after talk)' : 'Siren…';
+		b.disabled = !on && (talking || aon() === false);
+		$('au-sirx').hidden = !on;
+		tx('au-sirn', on ? `${sirName(on.sound)}: ${sirLeft()} s left.` : '');
+	}
+	function sirShow(x) {
+		$('au-sir').hidden = !x;
+		if (!x) return;
+		$$('input', $('au-sirs')).forEach(i => busy(i) || (i.checked = i.value == x.sound));
+		setSl('au-sirv', x.volume);
+		durs($('au-sird'), [10, 30, 60, 120, 300], x.seconds);
+		busy($('au-sirf')) || ($('au-sirf').checked = x.strobe);
+	}
+	const putS = (b, siren) => run(b, () => putX({ siren }), $('au-sirn'));
+	$('au-sirs').append(
+		...SIR.map(([v, nm, d], i) =>
+			h(
+				'div',
+				{ class: 'sir' },
+				h(
+					'label',
+					{ class: 'chk' },
+					h('input', { type: 'radio', name: 'au-sirs', value: v, onchange: e => putS(e.target, { sound: v }) }),
+					h('span', null, h('b', { text: nm }), h('small', { text: d }))
+				),
+				h(
+					'button',
+					{
+						type: 'button',
+						class: 'btn',
+						'aria-label': `Test ${nm} for 3 seconds`,
+						onclick: act(async () => {
+							await ctl('siren_test', i);
+							toast(`Testing ${nm} for 3 seconds`);
+							await media();
+						})
+					},
+					'Test 3 s'
+				)
+			)
+		)
+	);
+	$('au-sirl').append(slider('au-sirv', 'Siren volume', 1, 100, 100, v => v + '%', v => putX({ siren: { volume: v } })));
+	$('au-sird').onchange = e => putS(e.target, { seconds: +e.target.value });
+	$('au-sirf').onchange = e => putS(e.target, { strobe: e.target.checked });
+	const sirStop = act(async () => {
+		await ctl('siren', 0);
+		await media();
+	});
+	$('au-sirx').onclick = sirStop;
+	$('ov-sir').onclick = e => {
+		if (sirOn()) return sirStop(e);
+		const x = S.x?.siren;
+		sheet({
+			title: 'Sound the siren?',
+			text: x
+				? `${sirName(x.sound)} at ${x.volume}%, for ${long(x.seconds)}. People nearby will hear it. You can stop it from here.`
+				: 'People nearby will hear it. You can stop it from here.',
+			ok: 'Sound the siren',
+			icon: 'siren',
+			danger: 1,
+			run: async () => {
+				await ctl('siren', 1);
+				await media();
+			}
+		});
+	};
 	/* Home Assistant: POST /api/v1/control over HTTPS with Basic sign-in (the stream account).
 	   The timed white light is what Home Assistant calls on a Frigate person event. */
 	const haUrl = () => `https://${hs}:18443/api/v1/control`,
 		haBody = (operation, value) => JSON.stringify({ operation, value, value2: 0 }),
 		HA = [
+			[
+				'Siren',
+				'siren',
+				1,
+				'the siren action',
+				() =>
+					`Sounds for ${S.x ? long(S.x.siren.seconds) : 'the time set'} (set on Audio), or give value2 in seconds, up to 300. Send value 0 to stop it.`
+			],
 			['White light', 'white_light', 1, 'the white light action', () => 'Send value 0 to turn it off.'],
 			[
 				'White light for a while',
@@ -2294,7 +2386,9 @@
 				'the timed white light action',
 				() =>
 					`Value 0 keeps it on for ${S.x ? dur(S.x.white_light.trigger_s) : 'the time set'} (set on Image & night), or give 1–3600 seconds; then it goes back to its schedule or manual state.`
-			]
+			],
+			['Flashing light', 'strobe', 30, 'the flashing light action', () => 'The white light flashes for this many seconds, up to 300. Send value 0 to stop it.'],
+			['Privacy mode', 'privacy', 1, 'the privacy mode action', () => 'Send value 0 to turn it off.']
 		];
 	function ha(c) {
 		$('st-acts').replaceChildren(
@@ -2320,14 +2414,7 @@
 					),
 					b
 				);
-			}),
-			...['Siren', 'Privacy mode'].map(n =>
-				h(
-					'li',
-					null,
-					h('span', null, h('b', { text: n }), h('small', { text: 'Not available in this firmware yet.' }))
-				)
-			)
+			})
 		);
 	}
 	function rest(c) {
@@ -2348,7 +2435,12 @@
 				'rest_command:',
 				...cmd('white_light_on', haBody('white_light', 1)),
 				...cmd('white_light_off', haBody('white_light', 0)),
-				...cmd('white_light_trigger', haBody('white_light_trigger', 0))
+				...cmd('white_light_trigger', haBody('white_light_trigger', 0)),
+				...cmd('siren_on', haBody('siren', 1)),
+				...cmd('siren_off', haBody('siren', 0)),
+				...cmd('flashing_light', haBody('strobe', 30)),
+				...cmd('privacy_on', haBody('privacy', 1)),
+				...cmd('privacy_off', haBody('privacy', 0))
 			].join('\n') + '\n'
 		);
 	}
@@ -3020,6 +3112,7 @@
 		tick();
 	}
 	function tick() {
+		if (route == 'overview' || route == 'audio') sirUI();
 		/* countdowns between reads: the switch wait, the triggered light */
 		if (S.x && (route == 'overview' || route == 'image')) {
 			lights();
@@ -3503,7 +3596,7 @@
 		const mv = fast > Date.now() || S.m?.platform?.moving;
 		if (
 			!['streams', 'network', 'settings'].includes(route) &&
-			age('m') > (mv && route == 'pantilt' ? 1e3 : route == 'audio' ? 2e3 : 5e3)
+			age('m') > (sirOn() || (mv && route == 'pantilt') ? 1e3 : route == 'audio' ? 2e3 : 5e3)
 		)
 			media().catch(noop);
 		if (route == 'pantilt') {

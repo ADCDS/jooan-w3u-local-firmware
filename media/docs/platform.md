@@ -107,6 +107,21 @@ step and 2.45 per tilt step. Every reversal first loses about 25 steps to gear
 backlash, so a short move after changing direction falls that much short, and so
 does a return to a preset approached from the other side.
 
+The siren is a generator inside the speaker service, so one thread still owns the
+audio output and the amplifier. It comes ahead of a talker: their audio is dropped, and
+talk answers 409 until it ends. It always ends by itself, at 300 s at most, and it ends if
+the output fails. The microphone is out of it, as in any talk session, so it does not
+reach the NVR's recording. `siren` in `/api/v1/controls` keeps `sound` (`alarm`,
+`two_tone`, `pulse`, `chime`), `volume` (1 to 100), `seconds` and `strobe`. Volume is the
+DAC's gain: 100% is its unity, where the sounds play just below clipping, and 50% is
+15 dB less. The speaker's own volume comes back afterwards. On camera1 it was checked at
+5% and 15% only, for state, timing, the amplifier and video, which it did not disturb;
+how loud 100% is has not been measured.
+
+`strobe` flashes the white light on a 500 ms cycle (measured on its pin), which stays
+well below the flash rates that are a concern for photosensitivity. It stops after its
+time and leaves the light as it was; any manual change of the light ends it.
+
 `overlay` in `/api/v1/controls` burns a timestamp into both lenses' video and
 stills: `enabled`, `position` (a corner), `format` (`ymd`, `dmy`, `mdy`) and `name`
 (plain text, at most 16 characters). It is redrawn on each second in the camera's
