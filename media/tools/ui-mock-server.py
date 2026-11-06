@@ -6,6 +6,9 @@ It serves the UI files and imitates both API families the UI uses with one
 session: the platform daemon's /api/joan/v1/... (relayed by the media daemon on
 the camera) and the media daemon's own /api/v1/....  Standard library only,
 plain HTTP, state in memory.  The built-in sample data is anonymized.
+Camera controls (/api/v1/controls) survive simulated restarts like the
+daemon's; automatic day/night follows a simulated exposure that drifts across
+both default levels every 5 minutes, so the wait before a switch is visible.
 
     python3 media/tools/ui-mock-server.py                # open the printed URL
     python3 media/tools/ui-mock-server.py --homing 20 --latency 300 --wifi-mode lost
@@ -198,6 +201,102 @@ def validate_config(c, password):
     return None
 
 
+# ---- camera controls (media/src/controls.c): kept across restarts, applied by an engine ----
+NIGHT_MODES, IR_MODES, FLICKER = ("day", "night", "auto", "schedule"), ("night", "off"), ("off", "50", "60")
+PICTURE = ("brightness", "contrast", "saturation", "sharpness", "denoise")  # no hue: the ISP driver rejects it
+EV_READ = 5.0  # in automatic mode the daemon reads the ISP exposure every 5 s
+
+
+def control_defaults():
+    return {"night": {"mode": "day", "ir": "night", "night_ev": 30000, "day_ev": 15000, "wait_s": 60,
+                      "from": "18:30", "until": "06:00"},
+            "white_light": {"on": False, "trigger_s": 120,
+                            "schedule": {"enabled": False, "from": "19:00", "until": "23:00"}},
+            "pilot_led": False, "mic_mute": False, "anti_flicker": "off", "utc_offset_min": 0,
+            "picture": [dict.fromkeys(PICTURE, 128) for _ in range(2)]}
+
+
+def hhmm(text):
+    """parse_hhmm(): minutes after midnight, or None."""
+    m = re.fullmatch(r"(\d{1,2}):(\d{1,2})", text) if isinstance(text, str) else None
+    return int(m[1]) * 60 + int(m[2]) if m and int(m[1]) < 24 and int(m[2]) < 60 else None
+
+
+def in_window(now, start, end):
+    """Inside [start, end), which may wrap past midnight; an empty window never matches."""
+    return start != end and (start <= now < end if start < end else now >= start or now < end)
+
+
+class Invalid(Exception):
+    """A refused controls patch: 400 with the daemon's message."""
+
+
+def controls_patch(current, o):
+    """jipc_controls_patch()'s checks, in its order: the patched copy, or Invalid (nothing changes)."""
+    if not isinstance(o, dict):
+        raise Invalid("the request must be a JSON object")
+    nxt = json.loads(json.dumps(current))
+
+    def whole(src, dst, key, lo, hi):
+        if key in src:
+            v = src[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or not lo <= v <= hi:
+                raise Invalid("%s must be a whole number from %d to %d" % (key, lo, hi))
+            dst[key] = int(v)
+
+    def flag(src, dst, key):
+        if key in src:
+            if not isinstance(src[key], bool): raise Invalid("%s must be true or false" % key)
+            dst[key] = src[key]
+
+    def clock(src, dst, key):
+        if key in src:
+            m = hhmm(src[key])
+            if m is None: raise Invalid("%s must be a time like 18:30" % key)
+            dst[key] = "%02d:%02d" % divmod(m, 60)
+
+    def choice(src, dst, key, names):
+        if key in src:
+            if not isinstance(src[key], str) or src[key] not in names: raise Invalid("%s has an unknown value" % key)
+            dst[key] = src[key]
+
+    if "night" in o:
+        n, d = o["night"], nxt["night"]
+        if not isinstance(n, dict): raise Invalid("night must be an object")
+        choice(n, d, "mode", NIGHT_MODES)
+        choice(n, d, "ir", IR_MODES)
+        whole(n, d, "night_ev", 1, 10000000)
+        whole(n, d, "day_ev", 1, 10000000)
+        whole(n, d, "wait_s", 1, 3600)
+        clock(n, d, "from")
+        clock(n, d, "until")
+        if d["day_ev"] >= d["night_ev"]: raise Invalid("the day level must be below the night level")
+    if "white_light" in o:
+        w, d = o["white_light"], nxt["white_light"]
+        if not isinstance(w, dict): raise Invalid("white_light must be an object")
+        flag(w, d, "on")
+        whole(w, d, "trigger_s", 5, 3600)
+        if "schedule" in w:
+            s = w["schedule"]
+            if not isinstance(s, dict): raise Invalid("schedule must be an object")
+            flag(s, d["schedule"], "enabled")
+            clock(s, d["schedule"], "from")
+            clock(s, d["schedule"], "until")
+    flag(o, nxt, "pilot_led")
+    flag(o, nxt, "mic_mute")
+    choice(o, nxt, "anti_flicker", FLICKER)
+    whole(o, nxt, "utc_offset_min", -720, 840)
+    if "picture" in o:
+        pics = o["picture"]
+        if not isinstance(pics, list) or len(pics) > 2: raise Invalid("picture must be a list of at most two lenses")
+        for i, p in enumerate(pics):
+            if p is None: continue
+            if not isinstance(p, dict): raise Invalid("picture entries must be objects")
+            for k in PICTURE:
+                whole(p, nxt["picture"][i], k, 0, 255)
+    return nxt
+
+
 class Mock:
     """The camera's state.  Every request runs under `lock`; time-driven state
     (motion, the speaker queue, deadlines) is brought up to date by tick()."""
@@ -219,7 +318,7 @@ class Mock:
         self.config, self.media_password, self.recording = dict(MEDIA_CONFIG), args.password, False
         self.presets = {} if args.no_presets else {k: list(v) for k, v in PRESETS.items()}
         self.x, self.y = -14.0, 70.0
-        self.muted = False  # mic_mute
+        self.controls = control_defaults()  # the daemon's state_dir/controls.json
         self.media_boot(now, args.homing, first=True)
 
     # ---- time ----
@@ -227,7 +326,11 @@ class Mock:
         """(Re)start of the media daemon at t: runtime levels and lights reset, presets and position persist."""
         self.started = t - (2709.852889 if first and not homing else 0)
         self.homing_until, self.restart_at, self.motion, self.goto = t + homing, None, None, None
-        self.ctl = {"night": -1, "white_light": -1, "pilot_led": -1, "speaker_enable": 0}
+        self.ctl = {"night": -1, "white_light": -1, "pilot_led": int(self.controls["pilot_led"]), "speaker_enable": 0}
+        self.muted = self.controls["mic_mute"]
+        # the controls engine's memory: what it applied, the exposure, timers
+        self.ce = {"night": -1, "white": -1, "ev": None, "ev_at": 0.0, "cond": 0.0, "switched": 0.0,
+                   "trigger_until": 0.0, "override": 0, "override_until": 0.0, "reason": ""}
         self.mic = {"volume": 80, "gain": 22, "speaker_gain": 25}
         self.spk = {"volume": 60, "sessions": 3 if first else 0, "played": 7280.0 if first else 0.0,
                     "dropped": 340 if first else 0, "refused": 0, "queued": 0.0, "t": t, "session": False,
@@ -272,11 +375,110 @@ class Mock:
             self.rebooted()
         if self.restart_at is not None and now >= self.restart_at:
             self.media_boot(self.restart_at + self.args.restart_outage, 0)
+        self.controls_tick(now)
         n = self.ntp
         if n["due"] and now >= n["due"]:
             host = n["server"].partition(":")[0]
             n.update(resolved="192.168.1.1" if host == "gateway" else host, attempts=n["attempts"] + 1,
                      offset=round(random.uniform(-40, 40), 3), synced=n["due"], due=None)
+
+    # ---- controls engine (media/src/controls.c engine()) ----
+    def exposure(self, now):
+        """The pan/tilt lens's ISP exposure value (higher is darker): drifts across both default
+        levels every 5 minutes, so automatic switching and its wait are visible."""
+        return max(1, int(22500 + 16000 * math.sin(2 * math.pi * now / 300) + random.uniform(-300, 300)))
+
+    def local_minutes(self, now):
+        return int((now // 60 + self.controls["utc_offset_min"]) % 1440)
+
+    def next_boundary(self, now, start, end):
+        """Seconds until the next start/end edge of a daily window."""
+        today = (now + self.controls["utc_offset_min"] * 60) % 86400
+        return min((edge * 60 - today) % 86400 or 86400 for edge in (hhmm(start), hhmm(end)))
+
+    def controls_tick(self, now):
+        c, e, n = self.controls, self.ce, self.controls["night"]
+        if n["mode"] == "auto" and now - e["ev_at"] >= EV_READ:
+            e["ev_at"], e["ev"] = now, self.exposure(now)
+        night = e["night"]
+        if n["mode"] in ("day", "night"):
+            night, e["reason"] = int(n["mode"] == "night"), "%s (chosen)" % n["mode"]
+        elif n["mode"] == "schedule":
+            night, e["reason"] = int(in_window(self.local_minutes(now), hhmm(n["from"]), hhmm(n["until"]))), "schedule"
+        elif e["ev"] is None:
+            night, e["reason"] = max(night, 0), "no exposure reading; holding"
+        elif night < 0:
+            night = int(e["ev"] >= (n["night_ev"] + n["day_ev"]) // 2)
+            e["reason"] = "auto: started %s" % ("dark" if night else "light")
+        else:
+            want = e["ev"] <= n["day_ev"] if night else e["ev"] >= n["night_ev"]
+            e["cond"] = (e["cond"] or now) if want else 0.0
+            e["reason"] = ("auto: night; day at level %d or below" % n["day_ev"] if night
+                           else "auto: day; night at level %d or above" % n["night_ev"])
+            if want and now - e["cond"] >= n["wait_s"]:
+                night, e["cond"] = 1 - night, 0.0
+                e["reason"] = "auto: level %d %s %d for %d s" % (e["ev"], ">=" if night else "<=",
+                                                                 n["night_ev"] if night else n["day_ev"], n["wait_s"])
+        # white light: a trigger, then a manual change until the next schedule edge, the schedule, the manual state
+        w = c["white_light"]
+        if e["trigger_until"] and now < e["trigger_until"]:
+            white = 1
+        else:
+            e["trigger_until"] = 0.0
+            if w["schedule"]["enabled"] and e["override_until"] and now < e["override_until"]:
+                white = e["override"]
+            elif w["schedule"]["enabled"]:
+                e["override_until"] = 0.0
+                white = int(in_window(self.local_minutes(now), hhmm(w["schedule"]["from"]), hhmm(w["schedule"]["until"])))
+            else:
+                white = int(w["on"])
+        if night != e["night"]:
+            e["night"], e["switched"] = night, now
+        e["white"] = white
+        self.ctl["night"], self.ctl["white_light"] = night, white  # what the platform daemon was told
+
+    def controls_set(self, o, now):
+        """POST /api/v1/controls (and the controls the legacy operations patch)."""
+        before = self.controls
+        self.controls, e = controls_patch(before, o), self.ce
+        b, a = before["night"], self.controls["night"]
+        if isinstance(o.get("white_light"), dict) and "on" in o["white_light"]:
+            e["override_until"] = 0.0
+        if any(b[k] != a[k] for k in ("mode", "night_ev", "day_ev")):
+            e["cond"] = 0.0
+        if b["ir"] != a["ir"]:
+            e["night"] = -1  # re-applied with the new infrared mode
+        self.muted = self.controls["mic_mute"]
+        self.ctl["pilot_led"] = int(self.controls["pilot_led"])
+
+    def controls_note(self, op, v, v2, now):
+        """jipc_controls_note(): a successful manual control is remembered too."""
+        c, e = self.controls, self.ce
+        if op in ("night", "ircut") and v in (0, 1):
+            c["night"]["mode"], e["night"] = NIGHT_MODES[v], v
+        elif op == "white_light":
+            s = c["white_light"]["schedule"]
+            if s["enabled"]:
+                e["override"], e["override_until"] = v, now + self.next_boundary(now, s["from"], s["until"])
+            else:
+                c["white_light"]["on"] = bool(v)
+            e["trigger_until"], e["white"] = 0.0, v
+        elif op in ("pilot_led", "mic_mute"):
+            c[op] = bool(v)
+        elif op == "anti_flicker":
+            c[op] = FLICKER[v]
+        elif op in PICTURE and v2 in (0, 1):
+            c["picture"][v2][op] = v
+
+    def controls_json(self, now):
+        c, e = self.controls, self.ce
+        auto = c["night"]["mode"] == "auto"
+        return {**json.loads(json.dumps(c)), "live": {
+            "night": "unknown" if e["night"] < 0 else ("day", "night")[e["night"]], "reason": e["reason"],
+            "level": e["ev"] if auto else None, "since_s": int(now - e["switched"]) if e["switched"] else 0,
+            "pending_s": int(now - e["cond"]) if e["cond"] else 0, "white_light": e["white"] == 1,
+            "trigger_left_s": math.ceil(e["trigger_until"] - now) if e["trigger_until"] > now else 0,
+            "local_minutes": self.local_minutes(now), "error": ""}}
 
     def ptz_advance(self, now):
         m, g = self.motion, self.goto
@@ -566,6 +768,15 @@ class Mock:
             return mok({"username": self.config["username"], "password": self.media_password})
         if t == "/api/v1/config":
             return mok(self.config) if m == "GET" else self.config_post(h.body, now)
+        if t == "/api/v1/controls":
+            if m == "POST":
+                try:
+                    self.controls_set(json.loads(h.body), now)
+                except ValueError:
+                    return merr(400, "the request must be a JSON object")
+                except Invalid as e:
+                    return merr(400, str(e))
+            return mok(self.controls_json(now))
         if t == "/api/v1/control" and m == "POST":
             return self.control(h.body, now)
         if t == "/api/v1/recording" and m == "POST":
@@ -701,6 +912,7 @@ class Mock:
             self.backend_control(op, value, value2, name if op in ("preset_set", "preset_rename") else None, now)
         except Fail as e:
             return merr(409, str(e))
+        self.controls_note(op, value, value2, now)  # manual changes survive a restart
         return mok({"ok": True})
 
     def backend_control(self, op, v, v2, name, now):
@@ -708,11 +920,22 @@ class Mock:
         sensors, audio = self.config["sensors"], self.config["audio"]
         if op == "idr":
             if not 0 <= v < sensors * 2: raise Fail("invalid stream channel")
-        elif op in ("night", "isp_night"):
+        elif op == "night" and v in (2, 3):  # automatic or scheduled: the controls engine decides
+            self.controls_set({"night": {"mode": NIGHT_MODES[v]}}, now)
+        elif op == "night":
+            if v not in (0, 1): raise Fail("night requires 0 (day), 1 (night), 2 (auto) or 3 (schedule)")
+            self.platform_control(op, v, v2, None, now)
+        elif op == "isp_night":
             if v not in (0, 1):
                 raise Fail("night mode requires 0 (day) or 1 (night); automatic exposure mode is unsupported")
-            if op == "night":
-                self.platform_control(op, v, v2, None, now)
+        elif op == "ir_mode":
+            if v not in (0, 1): raise Fail("ir_mode requires 0 (infrared at night) or 1 (always off)")
+            self.controls_set({"night": {"ir": IR_MODES[v]}}, now)
+        elif op == "white_light_trigger":  # on for v seconds (0: trigger_s), then back to the schedule or manual state
+            if v and not 1 <= v <= 3600: raise Fail("the light can stay on for 1 to 3600 seconds")
+            self.ce["trigger_until"] = now + (v or self.controls["white_light"]["trigger_s"])
+        elif op == "anti_flicker":
+            if not 0 <= v <= 2: raise Fail("anti_flicker requires 0 (off), 1 (50 Hz) or 2 (60 Hz)")
         elif op == "volume" and v2 == 1:
             if not -30 <= v <= 120: raise Fail("speaker volume must be -30..120 (60 is unity gain)")
             if not audio: raise Fail("the speaker is unavailable (audio is disabled)")
@@ -737,9 +960,9 @@ class Mock:
             if not audio: raise Fail("audio is off")
             if v not in (0, 1): raise Fail("mic_mute requires 0 or 1")
             self.muted = bool(v)
-        elif op in ("brightness", "contrast", "saturation", "sharpness"):
+        elif op in PICTURE:
             if not 0 <= v2 < sensors: raise Fail("invalid sensor index")
-            if not 0 <= v <= 255: raise Fail("image control must be in 0..255")
+            if not 0 <= v <= 255: raise Fail("denoise must be in 0..255" if op == "denoise" else "image control must be in 0..255")
         else:  # ptz*, preset_*, ircut, lights, speaker_enable, and the "unsupported" message
             self.platform_control(op, v, v2, name, now)
 

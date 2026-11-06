@@ -40,3 +40,14 @@ xz, which keeps at least 48 KiB of the partition free.
   `{FRIGATE_<NAME>_PASSWORD}` placeholder, Home Assistant a `!secret`, curl asks.
 - Health shows `watchdog` from `GET /api/v1/config`. SSH keys are checked as
   ed25519 and shown with their SHA256 fingerprint (as `ssh-keygen -l` prints it).
+- Image & night reads `GET /api/v1/controls` (every 2 s there, 5 s on
+  Overview) and changes it with `POST /api/v1/controls` and a partial object
+  (`picture: [null, {...}]` leaves the pan/tilt lens alone); the answer is the
+  full state, and the page reads it again a second later, once the engine has
+  applied it. Night and white-light schedules also send `utc_offset_min` from
+  this browser. `live` drives the darkness meter (`level` against `day_ev` and
+  `night_ev`), the state line and the switch countdown (`wait_s - pending_s`),
+  and the triggered light's countdown (`trigger_left_s`). The Overview white
+  light switch keeps using the `white_light` control (with a schedule it holds
+  until the next edge); "Turn on for N" and Home Assistant use
+  `white_light_trigger` (value 0: `trigger_s`).

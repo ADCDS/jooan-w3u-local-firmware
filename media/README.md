@@ -58,12 +58,12 @@ JA-A12 storage budget and required boot dependencies.
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
 | Clock | Optional SNTP client for the RTC-less board: random origin cookie, clock steps of one second or more, status under `clock` |
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
-| Lights | Native white light, IR-cut/manual day/night and speaker amplifier controls |
+| Lights and night | White light (manual, schedule, timed trigger), day/night (manual, automatic from the ISP exposure, schedule), infrared mode, pilot LED; remembered across restarts |
 | Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
 | Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
-Automatic exposure-driven day/night, motion/person detection, autotracking,
+Motion/person detection, autotracking,
 zoom, vendor provisioning/cloud, proprietary command compatibility, ONVIF
 encoder-setting writes and firmware flashing are not implemented. Replay has
 no sensor/JPEG encoder or speaker; unavailable operations return errors. ONVIF
@@ -233,6 +233,7 @@ Authenticated REST endpoints:
 | `GET /` and `GET /ui/<file>` | The admin UI, without credentials |
 | `/api/joan/<path>` | Relayed to the platform's `/api/<path>` on loopback (GET, POST, PUT, DELETE) |
 | `GET /api/v1/status` | Backend readiness, streams, platform state and recording errors |
+| `GET /api/v1/controls` | Remembered camera controls (night, lights, picture, anti-flicker, mute) and their live state; `POST` takes any part, validated (see [platform controls](docs/platform.md#remembered-controls-and-automatic-daynight)) |
 | `GET /api/v1/config` | Configuration with password redacted |
 | `GET /api/v1/config/password` | The stream account (`username`, `password`), only for the admin UI's own signed-in fetch (`X-Requested-With: jipc-ui`, same origin); `403` for Basic and anything else |
 | `POST /api/v1/config` | Validated public settings; filesystem/listener/library settings remain local-only |

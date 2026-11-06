@@ -74,7 +74,7 @@ With 0.2.24 and its media layer:
   mDNS; signed updates.
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
   through the speaker from Frigate, the admin UI or the API).
-- **Missing:** a siren; motion and person detection; automatic day/night; digital zoom; on-screen timestamp;
+- **Missing:** a siren; motion and person detection; digital zoom; on-screen timestamp;
   snapshots in the qualified profile; patrol, auto-tracking and privacy
   schedules; on-camera recording (off in the qualified profile: record with
   the NVR) and SD-card management; Wi-Fi scanning; a reboot button; any cloud

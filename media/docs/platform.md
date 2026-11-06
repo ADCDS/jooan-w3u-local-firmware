@@ -127,16 +127,19 @@ positions, lights and night mode are explicitly simulated.
 
 With the IMP backend, `POST /api/v1/control` also accepts:
 
-- `brightness`, `contrast`, `saturation`, `sharpness`: `value` 0–255, `value2`
-  the sensor index (0 movable lens, 1 fixed lens);
+- `brightness`, `contrast`, `saturation`, `sharpness`, `denoise` (temporal and
+  spatial noise reduction, 128 neutral): `value` 0–255, `value2` the sensor
+  index (0 movable lens, 1 fixed lens). There is no hue: the camera's ISP
+  driver rejects the V4L2 hue control;
+- `anti_flicker`: `value` 0 (off), 1 (50 Hz) or 2 (60 Hz) on both sensors,
+  visible as `Antiflicker` in `/proc/jz/isp/isp-m0`;
 - `hflip`, `vflip` (`value` 0 or 1) and `flip` (bitmask 0–3), per sensor;
 - `isp_night`: the ISP running mode, `value` 0 (day) or 1 (night) on both
-  sensors; there is no automatic mode (`night` drives this and the IR-cut GPIO
-  together);
+  sensors only (`night` drives this and the IR-cut GPIO together);
 - `idr`: request a key frame on stream channel `value`;
 - `mic_mute`: `value` 1 sends silence on the microphone track (the track and
-  its timestamps keep running), 0 restores it; needs `audio=1`; lasts until the
-  daemon restarts. `GET /api/v1/status` reports `audio.muted`;
+  its timestamps keep running), 0 restores it; needs `audio=1`.
+  `GET /api/v1/status` reports `audio.muted`;
 - `volume`: `value` -30–120 (60 is unity gain, about 0.5 dB per step) on
   `value2` 0 (microphone, default 80) or 1 (speaker, default 60); it needs
   `audio=1`. The speaker volume also applies to the next talk session.
@@ -145,7 +148,40 @@ With the IMP backend, `POST /api/v1/control` also accepts:
   `AudioParam` values. Only the thread that owns the device applies it: the
   microphone within about 100 ms, the speaker when it next opens.
 
-Nothing applies these at start; they last until the daemon restarts.
+## Remembered controls and automatic day/night
+
+`state_dir/controls.json` (mode 0600, written 3 s after the last change)
+keeps the night mode, infrared mode, the automatic levels and wait, the night
+and white-light schedules, the white-light trigger time, the pilot LED, the
+microphone mute, each lens's picture settings and anti-flicker. The daemon
+applies them once the backend is ready. `GET /api/v1/controls` returns them
+with a `live` block (current day/night, the exposure level, the pending
+switch, the trigger countdown, the last error); `POST /api/v1/controls` takes
+any part of the same JSON, validates all of it, and changes nothing on an
+error. The manual controls above (`night`, `white_light`, `pilot_led`,
+`mic_mute`, picture, `anti_flicker`) are remembered too.
+
+Night modes (`night` `value`, or `night.mode`): 0 `day`, 1 `night`, 2 `auto`,
+3 `schedule` (night from `from` until `until`, local time by
+`utc_offset_min`; the admin UI sends the browser's offset). In `auto` the
+daemon reads lens 0's `ISP EV value` from the kernel's
+`/proc/jz/isp/isp-m0` every 5 s (higher is darker). It switches to night
+when the level stays at or above `night_ev` for `wait_s`, and back to day
+when it stays at or below `day_ev` (lower, for hysteresis) for `wait_s`.
+Under infrared the scene is lit, so `day_ev` must sit below the level seen at
+night with the LEDs on. The defaults (30000/15000, 60 s) are provisional: on
+camera1, under a street light, night reads about 41,000 in day mode and
+37,000 with the infrared on.
+
+`ir_mode` (`night.ir`): 0 `night` turns the infrared LEDs on with night
+mode; 1 `off` keeps them off (night mode still opens the IR-cut filter and
+the image is black and white) for a scene with its own light.
+
+White light: `white_light` sets the manual state. With its schedule enabled
+the light follows the schedule, and a manual change holds until the next
+schedule edge. `white_light_trigger` (`value` seconds, 0 for the configured
+`trigger_s`) turns it on for that long and then back to whatever applies:
+Home Assistant calls it on an NVR event.
 
 ## Lights and IR-cut
 
@@ -192,8 +228,8 @@ GPIO57 is not exposed as a blue LED: factory `IndicatorParam/type` is zero,
 and `HardwareParam/OneTouchCallGpio` identifies GPIO57 as a button input.
 The unused blue/yellow indicator description must not override that evidence.
 
-Automatic day/night value 2 is explicitly rejected. Although the OEM config
-contains EV thresholds 75000/12000, a complete reliable sensor exposure query
-ABI has not been established. Returning success or guessing automatic light
-changes would misrepresent the hardware behavior. Audio volume is implemented
-by the SDK media backend, not by this motor/GPIO module.
+The stock firmware's EV thresholds are 75000 (to night) and 12000 (to day).
+Automatic mode reads the exposure from the kernel's ISP report rather than
+the library's `IMP_ISP_Tuning_GetEVAttr`, whose ABI on this kernel is
+unverified. Audio volume is implemented by the SDK media backend, not by this
+motor/GPIO module.

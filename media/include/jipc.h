@@ -82,6 +82,7 @@ typedef struct jipc_app {
     int record_active;
     char record_error[256];
     void *speaker_state;
+    void *controls_state;
     /* Microphone mute (control mic_mute): the track keeps running, silent. */
     atomic_int mic_muted;
     /* Level of the microphone audio the NVR receives, over the last full
@@ -148,6 +149,17 @@ int jipc_codec_parameters(jipc_app *app, unsigned channel,
 /* SDK backend is loaded at runtime; no vendor library is shipped or linked. */
 int jipc_backend_start(jipc_app *app);
 void jipc_backend_stop(jipc_app *app);
+/* Day (0) or night (1) on the ISP and the IR-cut/infrared GPIOs, without
+ * recording it as the user's choice (the controls engine's own switch). */
+int jipc_backend_night(jipc_app *app, int night, char *error, size_t capacity);
+/* Persisted camera controls and their engine (src/controls.c). */
+int jipc_controls_start(jipc_app *app);
+void jipc_controls_stop(jipc_app *app);
+void jipc_controls_note(jipc_app *app, const char *operation, int value, int value2);
+int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t capacity);
+int jipc_controls_trigger(jipc_app *app, int seconds, char *error, size_t capacity);
+int jipc_controls_json(jipc_app *app, char *out, size_t capacity);
+int jipc_controls_picture(jipc_app *app, unsigned lens, int values[4], int *night_mode);
 int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity);
 int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,

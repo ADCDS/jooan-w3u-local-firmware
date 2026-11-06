@@ -149,7 +149,7 @@ static void escaped(writer *w, const char *s) {
     }
 }
 static void envelope(writer *w) {
-    put(w,"<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ter=\"http://www.onvif.org/ver10/error\"><s:Body>");
+    put(w,"<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ter=\"http://www.onvif.org/ver10/error\"><s:Body>");
 }
 static int fault(writer *w, const char *code, const char *reason) {
     w->used=0; w->failed=0; envelope(w);
@@ -268,6 +268,54 @@ static void profile(jipc_app *app,writer *w,const jipc_config *c,unsigned ch,con
 static int number(const char *text,double *out){char *end;errno=0;double v=strtod(text,&end);if(errno||end==text||*end||!isfinite(v)||v < -1||v > 1)return -1;*out=v;return 0;}
 static int slot_token(const char *s){if(strncmp(s,"preset",6))return -1;char *end;errno=0;long v=strtol(s+6,&end,10);return errno||*end||v<1||v>16?-1:(int)v;}
 static int control(jipc_app *app,writer *w,const char *operation,int a,int b){char error[256]={0};if(jipc_backend_control(app,operation,a,b,error,sizeof(error))<0)return fault(w,"ActionNotSupported",error[0]?error:"Backend does not support this action");return 0;}
+/* Imaging (ver20): brightness, saturation, contrast and sharpness of each
+ * lens on ONVIF's 0..100 scale (0..255 on the ISP), and the IR-cut mode:
+ * ON = day (filter in), OFF = night, AUTO = automatic or scheduled. Changes
+ * go through the persisted controls, like the admin UI's. */
+static int to_onvif(int v){return (v*100+127)/255;}
+static int imaging_lens(const xml *d,const jipc_config *c,unsigned *lens){
+    char token[64];if(text_value(d,d->action,"VideoSourceToken",token,sizeof(token))<0)return -1;
+    if(!strcmp(token,"sensor0"))*lens=0;else if(!strcmp(token,"sensor1")&&c->sensors>1)*lens=1;else return -1;
+    return 0;
+}
+static int imaging(jipc_app *app,writer *w,const xml *d,const jipc_config *c,span action){
+    unsigned lens=0;
+    if(named(action,"GetServiceCapabilities")){put(w,"<timg:GetServiceCapabilitiesResponse><timg:Capabilities ImageStabilization=\"false\" Presets=\"false\" AdaptablePreset=\"false\"/></timg:GetServiceCapabilitiesResponse>");return 0;}
+    if(imaging_lens(d,c,&lens)<0)return fault(w,"InvalidArgVal","Unknown VideoSourceToken");
+    if(named(action,"GetImagingSettings")){
+        int v[4],mode;if(jipc_controls_picture(app,lens,v,&mode)<0)return fault(w,"Action","Image settings are unavailable");
+        put(w,"<timg:GetImagingSettingsResponse><timg:ImagingSettings><tt:Brightness>%d</tt:Brightness><tt:ColorSaturation>%d</tt:ColorSaturation><tt:Contrast>%d</tt:Contrast><tt:IrCutFilter>%s</tt:IrCutFilter><tt:Sharpness>%d</tt:Sharpness></timg:ImagingSettings></timg:GetImagingSettingsResponse>",
+            to_onvif(v[0]),to_onvif(v[1]),to_onvif(v[2]),mode==0?"ON":mode==1?"OFF":"AUTO",to_onvif(v[3]));
+    }else if(named(action,"GetOptions")){
+        put(w,"<timg:GetOptionsResponse><timg:ImagingOptions>");
+        const char *names[]={"Brightness","ColorSaturation","Contrast"};
+        for(unsigned i=0;i<3;++i)put(w,"<tt:%s><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:%s>",names[i],names[i]);
+        put(w,"<tt:IrCutFilterModes>ON</tt:IrCutFilterModes><tt:IrCutFilterModes>OFF</tt:IrCutFilterModes><tt:IrCutFilterModes>AUTO</tt:IrCutFilterModes><tt:Sharpness><tt:Min>0</tt:Min><tt:Max>100</tt:Max></tt:Sharpness></timg:ImagingOptions></timg:GetOptionsResponse>");
+    }else if(named(action,"GetMoveOptions")){put(w,"<timg:GetMoveOptionsResponse><timg:MoveOptions/></timg:GetMoveOptionsResponse>");
+    }else if(named(action,"SetImagingSettings")){
+        int settings=child(d,d->action,"ImagingSettings");if(settings<0)return fault(w,"InvalidArgVal","ImagingSettings is required");
+        const char *names[]={"Brightness","ColorSaturation","Contrast","Sharpness"},*keys[]={"brightness","saturation","contrast","sharpness"};
+        char json[512],text[64],*at=json;size_t left=sizeof(json);int n=snprintf(at,left,"{\"picture\":[%s{",lens?"null,":"");at+=n;left-=(size_t)n;int first=1;
+        for(unsigned i=0;i<4;++i){
+            if(child(d,settings,names[i])<0)continue;
+            double v;char *end;if(text_value(d,settings,names[i],text,sizeof(text))<0)return fault(w,"InvalidArgVal","Invalid imaging value");
+            errno=0;v=strtod(text,&end);if(errno||end==text||*end||!isfinite(v)||v<0||v>100)return fault(w,"InvalidArgVal","Imaging values are 0 to 100");
+            n=snprintf(at,left,"%s\"%s\":%d",first?"":",",keys[i],(int)(v*255.0/100.0+0.5));if(n<0||(size_t)n>=left)return fault(w,"Action","Request too large");at+=n;left-=(size_t)n;first=0;
+        }
+        n=snprintf(at,left,"}]");if(n<0||(size_t)n>=left)return fault(w,"Action","Request too large");at+=n;left-=(size_t)n;
+        if(child(d,settings,"IrCutFilter")>=0){
+            if(text_value(d,settings,"IrCutFilter",text,sizeof(text))<0)return fault(w,"InvalidArgVal","Invalid IrCutFilter");
+            const char *mode=!strcmp(text,"ON")?"day":!strcmp(text,"OFF")?"night":!strcmp(text,"AUTO")?"auto":NULL;
+            if(!mode)return fault(w,"InvalidArgVal","IrCutFilter must be ON, OFF or AUTO");
+            n=snprintf(at,left,",\"night\":{\"mode\":\"%s\"}",mode);if(n<0||(size_t)n>=left)return fault(w,"Action","Request too large");at+=n;left-=(size_t)n;
+        }
+        if(left<2)return fault(w,"Action","Request too large");
+        strcpy(at,"}");
+        char error[256]={0};if(jipc_controls_patch(app,json,error,sizeof(error))<0)return fault(w,"InvalidArgVal",error[0]?error:"Rejected");
+        put(w,"<timg:SetImagingSettingsResponse/>");
+    }else return fault(w,"ActionNotSupported","Action is not implemented by this imaging service");
+    return 0;
+}
 int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,char *out,size_t capacity){
     writer w={out,capacity,0,0};xml d;jipc_config c;char hostname[256],base[384];unsigned ch=0;
     if(!capacity)return 500;
@@ -282,11 +330,13 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
     }else if(named(action,"GetDeviceInformation")){
         put(&w,"<tds:GetDeviceInformationResponse><tds:Manufacturer>jooanipc-open</tds:Manufacturer><tds:Model>JOOAN W3-U local replacement</tds:Model><tds:FirmwareVersion>%s</tds:FirmwareVersion><tds:SerialNumber>local-camera</tds:SerialNumber><tds:HardwareId>Ingenic-T23</tds:HardwareId></tds:GetDeviceInformationResponse>",JIPC_VERSION);
     }else if(named(action,"GetCapabilities")){
-        put(&w,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>%s/onvif/device_service</tt:XAddr><tt:Network><tt:IPFilter>false</tt:IPFilter><tt:ZeroConfiguration>false</tt:ZeroConfiguration><tt:IPVersion6>false</tt:IPVersion6><tt:DynDNS>false</tt:DynDNS></tt:Network><tt:System><tt:DiscoveryResolve>false</tt:DiscoveryResolve><tt:DiscoveryBye>false</tt:DiscoveryBye><tt:RemoteDiscovery>false</tt:RemoteDiscovery><tt:SystemBackup>false</tt:SystemBackup><tt:SystemLogging>false</tt:SystemLogging><tt:FirmwareUpgrade>false</tt:FirmwareUpgrade><tt:SupportedVersions><tt:Major>2</tt:Major><tt:Minor>4</tt:Minor></tt:SupportedVersions></tt:System><tt:Security><tt:TLS1.1>false</tt:TLS1.1><tt:TLS1.2>%s</tt:TLS1.2><tt:OnboardKeyGeneration>false</tt:OnboardKeyGeneration><tt:AccessPolicyConfig>false</tt:AccessPolicyConfig><tt:X.509Token>false</tt:X.509Token><tt:SAMLToken>false</tt:SAMLToken><tt:KerberosToken>false</tt:KerberosToken><tt:RELToken>false</tt:RELToken></tt:Security></tt:Device><tt:Media><tt:XAddr>%s/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTPMulticast>false</tt:RTPMulticast><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>%s/onvif/ptz_service</tt:XAddr></tt:PTZ></tds:Capabilities></tds:GetCapabilitiesResponse>",base,c.tls_cert[0]?"true":"false",base,base);
+        put(&w,"<tds:GetCapabilitiesResponse><tds:Capabilities><tt:Device><tt:XAddr>%s/onvif/device_service</tt:XAddr><tt:Network><tt:IPFilter>false</tt:IPFilter><tt:ZeroConfiguration>false</tt:ZeroConfiguration><tt:IPVersion6>false</tt:IPVersion6><tt:DynDNS>false</tt:DynDNS></tt:Network><tt:System><tt:DiscoveryResolve>false</tt:DiscoveryResolve><tt:DiscoveryBye>false</tt:DiscoveryBye><tt:RemoteDiscovery>false</tt:RemoteDiscovery><tt:SystemBackup>false</tt:SystemBackup><tt:SystemLogging>false</tt:SystemLogging><tt:FirmwareUpgrade>false</tt:FirmwareUpgrade><tt:SupportedVersions><tt:Major>2</tt:Major><tt:Minor>4</tt:Minor></tt:SupportedVersions></tt:System><tt:Security><tt:TLS1.1>false</tt:TLS1.1><tt:TLS1.2>%s</tt:TLS1.2><tt:OnboardKeyGeneration>false</tt:OnboardKeyGeneration><tt:AccessPolicyConfig>false</tt:AccessPolicyConfig><tt:X.509Token>false</tt:X.509Token><tt:SAMLToken>false</tt:SAMLToken><tt:KerberosToken>false</tt:KerberosToken><tt:RELToken>false</tt:RELToken></tt:Security></tt:Device><tt:Imaging><tt:XAddr>%s/onvif/imaging_service</tt:XAddr></tt:Imaging><tt:Media><tt:XAddr>%s/onvif/media_service</tt:XAddr><tt:StreamingCapabilities><tt:RTPMulticast>false</tt:RTPMulticast><tt:RTP_TCP>true</tt:RTP_TCP><tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media><tt:PTZ><tt:XAddr>%s/onvif/ptz_service</tt:XAddr></tt:PTZ></tds:Capabilities></tds:GetCapabilitiesResponse>",base,c.tls_cert[0]?"true":"false",base,base,base);
     }else if(named(action,"GetServices")){
-        put(&w,"<tds:GetServicesResponse>");const char *ns[]={"http://www.onvif.org/ver10/device/wsdl","http://www.onvif.org/ver10/media/wsdl","http://www.onvif.org/ver20/ptz/wsdl"};const char *service[]={"device_service","media_service","ptz_service"};
-        for(unsigned i=0;i<3;++i)put(&w,"<tds:Service><tds:Namespace>%s</tds:Namespace><tds:XAddr>%s/onvif/%s</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>4</tt:Minor></tds:Version></tds:Service>",ns[i],base,service[i]);
+        put(&w,"<tds:GetServicesResponse>");const char *ns[]={"http://www.onvif.org/ver10/device/wsdl","http://www.onvif.org/ver10/media/wsdl","http://www.onvif.org/ver20/ptz/wsdl","http://www.onvif.org/ver20/imaging/wsdl"};const char *service[]={"device_service","media_service","ptz_service","imaging_service"};
+        for(unsigned i=0;i<4;++i)put(&w,"<tds:Service><tds:Namespace>%s</tds:Namespace><tds:XAddr>%s/onvif/%s</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>4</tt:Minor></tds:Version></tds:Service>",ns[i],base,service[i]);
         put(&w,"</tds:GetServicesResponse>");
+    }else if(!strcmp(path,"/onvif/imaging_service")){
+        int status=imaging(app,&w,&d,&c,action);if(status)return status;
     }else if(named(action,"GetServiceCapabilities")){
         if(!strcmp(path,"/onvif/ptz_service"))put(&w,"<tptz:GetServiceCapabilitiesResponse><tptz:Capabilities EFlip=\"false\" Reverse=\"false\" GetCompatibleConfigurations=\"true\" MoveStatus=\"true\" StatusPosition=\"true\"/></tptz:GetServiceCapabilitiesResponse>");
         else if(!strcmp(path,"/onvif/media_service"))put(&w,"<trt:GetServiceCapabilitiesResponse><trt:Capabilities SnapshotUri=\"%s\" Rotation=\"false\" VideoSourceMode=\"false\" OSD=\"false\"><trt:ProfileCapabilities MaximumNumberOfProfiles=\"%u\"/><trt:StreamingCapabilities RTPMulticast=\"false\" RTP_TCP=\"true\" RTP_RTSP_TCP=\"true\" NonAggregateControl=\"false\"/></trt:Capabilities></trt:GetServiceCapabilitiesResponse>",c.main_only?"false":"true",c.sensors*2);

@@ -46,8 +46,9 @@ miss:
 2. **No detection or alerts on the camera.** No motion detection, no push
    notifications, no siren or flashing light, no auto-tracking. Your NVR has to
    do detection and notifications.
-3. **No automatic night vision.** Infrared and the white light switch only
-   when something calls the API, and the setting is not remembered.
+3. **Night vision thresholds need tuning.** Automatic day/night, schedules
+   and a timed white light work and are remembered, but the switching levels
+   are provisional until set from dusk and dawn readings.
 4. **Audio is off by default.** With `audio=1` the microphone and two-way
    talk (from Frigate's live view or the admin UI) work; they were checked on
    the test camera. There is no siren yet.
@@ -95,8 +96,8 @@ under [Sources](#sources):
 | Digital zoom | 5× in the app[^off] | **Missing** | Zoom in the NVR or player. ONVIF zoom requests are rejected. |
 | Still snapshots (JPEG) | App screenshots (`support_screenshot_3_million_pixels` = 1) [cfg] | **Missing** (media) | `GET /api/v1/snapshot` and ONVIF `GetSnapshotUri` are refused in the shipped profile. NVRs take stills from the RTSP video instead. Snapshots work only in the four-encoder mode. |
 | Flip and mirror | Yes (`image_rollovers` = 1) [cfg] | **Supported** (media) | `flip`, `hflip` and `vflip` controls. Saved, and pan/tilt directions follow the image. |
-| Brightness, contrast, saturation, sharpness | Stored settings `Brightness`, `Contrast`, `Hue`, `Saturation`, `Sharpness`, `Denoise` [cfg]; whether the app shows them is unverified | **Partial** (media), unverified | The REST API has `brightness`, `contrast`, `saturation` and `sharpness` controls (0–255). They are undocumented, not saved across restarts and not tested on the camera. No hue or noise-reduction control. |
-| Anti-flicker (50/60 Hz) | Stored setting `PowerFreq` [cfg] | **Missing** | No control. |
+| Brightness, contrast, saturation, sharpness, noise reduction | Stored settings `Brightness`, `Contrast`, `Hue`, `Saturation`, `Sharpness`, `Denoise` [cfg]; whether the app shows them is unverified | **Supported** (media) | Per lens in the admin UI, `/api/v1/controls`, the REST controls and ONVIF imaging; remembered across restarts. Noise reduction (temporal + spatial) was measured on the camera. Hue is not possible: this camera's image-processor driver rejects it. |
+| Anti-flicker (50/60 Hz) | Stored setting `PowerFreq` [cfg] | **Supported** (media) | Off, 50 Hz or 60 Hz for both lenses, remembered; verified in the image processor's own readout. |
 | Dual-lens linkage (tap the wide view to aim the pan/tilt lens) | Not advertised; a linkage setting exists (`GunBallLinkageEnable`) [cfg] and the app has lens-linkage screens [phone]. Offered on this model: unverified | **Missing** | |
 | Timestamp and logo on the picture | Timestamp on by default (`OSDTimeEnable` = 1), optional logo (`OSDLogoEnable`) [cfg] | **Missing** | The media daemon draws no overlay. NVR recordings carry the NVR's own timestamps. |
 
@@ -104,9 +105,9 @@ under [Sources](#sources):
 
 | Feature | Official firmware | This firmware | How it's done here, or what's missing |
 | --- | --- | --- | --- |
-| Automatic day/night switching | Yes: the lights come on by themselves in the dark[^amz-us]; light thresholds `ToNightEv`/`ToDayEv` [cfg] | **Missing** | Day/night is manual only. The automatic mode (`night=2`) is rejected until the sensor's exposure reading is understood. |
-| Infrared night vision | Black-and-white IR night vision, up to 20 m[^off][^faq-night] | **Partial** (media) | `night=1` moves the IR-cut filter, turns on the infrared LEDs and puts the image processor in night mode; `night=0` goes back to day. Only through the REST API. The choice is not saved: when the media daemon stops it switches the lights off, and nothing switches them back on at start, so an NVR or home-automation script has to do it. |
-| Colour night vision (white light) | Colour night vision with the white light, on a schedule ("timed full colour") or only when a person or animal moves ("intelligent full colour")[^off][^faq-night] | **Partial** (media) | `white_light` on or off by hand. No schedule and no motion-triggered mode. |
+| Automatic day/night switching | Yes: the lights come on by themselves in the dark[^amz-us]; light thresholds `ToNightEv`/`ToDayEv` [cfg] | **Supported** (media) | Auto mode reads the image processor's exposure value and switches to night above one level and back to day below a lower one, each held for a wait time; levels and wait are set in the admin UI. A night schedule (from/until) is the alternative. Default thresholds are provisional until calibrated at dusk and dawn. |
+| Infrared night vision | Black-and-white IR night vision, up to 20 m[^off][^faq-night] | **Supported** (media) | Night mode moves the IR-cut filter, turns on the infrared LEDs (or keeps them off for a lit street) and puts the image processor in night mode. Day, night, auto or schedule, remembered across restarts. |
+| Colour night vision (white light) | Colour night vision with the white light, on a schedule ("timed full colour") or only when a person or animal moves ("intelligent full colour")[^off][^faq-night] | **Supported** (media), with the NVR | On or off by hand, on a schedule, or for a set time when triggered (`white_light_trigger`): Home Assistant can call it on a Frigate person event. The camera itself detects nothing. |
 | Flashing light on alarm | A strobe light when motion is detected[^amz-us]; alarm-light settings (`AlarmLightParam`) [cfg] | **Missing** | There is no detection to trigger it. |
 | Status LED | No LED switch on this model (`indicator_light_switch` = 0) [cfg] | **Supported** (media) | `pilot_led` on or off through the REST API. |
 
@@ -165,7 +166,7 @@ under [Sources](#sources):
 | Voice assistants | Alexa[^off]; Tmall Genie[^ios]; the app also links to Google Home [phone] | **Missing** | |
 | Web browser | Unverified | **Partial** (media) | One admin UI at `https://<camera>/` (port 443; the certificate is the camera's own, so the browser warns once), for phones and computers: status, pan/tilt and presets, night and white light, picture, microphone and speaker levels, talk from the browser, stream addresses and a Frigate snippet, Wi-Fi, local name, routes, time, SSH keys, password and platform updates. `http://<camera>/` redirects there. No video or stills in the page: watch in the NVR. |
 | RTSP | Not on the product page; the app sets an RTSP "security password" for NVRs [phone] | **Supported** (media) | TCP/18554, Digest authentication, RTP over TCP or UDP, H.264, up to 8 clients in the default configuration. |
-| ONVIF | Supported[^off]. The stock application's ONVIF server also has events, imaging, absolute and relative moves, snapshots and recording search [app] | **Partial** (media) | An ONVIF subset on HTTPS port 18443: device information, profiles, stream addresses, pan/tilt and presets. No events, imaging settings, snapshots (in the shipped profile), recording search or encoder changes. WS-Discovery is implemented but off in the default configuration, so add the camera by address. |
+| ONVIF | Supported[^off]. The stock application's ONVIF server also has events, imaging, absolute and relative moves, snapshots and recording search [app] | **Partial** (media) | An ONVIF subset on HTTPS port 18443: device information, profiles, stream addresses, pan/tilt and presets, and imaging (brightness, saturation, contrast, sharpness, IR-cut ON/OFF/AUTO). No events, snapshots (in the shipped profile), recording search or encoder changes. WS-Discovery is implemented but off in the default configuration, so add the camera by address. |
 
 ## Network and setup
 

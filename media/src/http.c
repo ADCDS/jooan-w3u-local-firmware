@@ -350,7 +350,7 @@ static void joan_relay(connection *c,request *r){
 }
 static void dispatch(connection *c,request *r){
     jipc_app *app=c->server->app;
-    int soap=!strcmp(r->target,"/onvif/device_service")||!strcmp(r->target,"/onvif/media_service")||!strcmp(r->target,"/onvif/ptz_service");
+    int soap=!strcmp(r->target,"/onvif/device_service")||!strcmp(r->target,"/onvif/media_service")||!strcmp(r->target,"/onvif/ptz_service")||!strcmp(r->target,"/onvif/imaging_service");
     if((!strcmp(r->target,"/health")||!strcmp(r->target,"/healthz"))&&!strcmp(r->method,"GET")){int ready=app->backend_ready&&!app->stop;
         if(ready)response(c,200,"application/json","{\"ok\":true}\n",12);else error_response(c,503,"Not ready");return;}
     c->challenge=!r->cookie[0]&&!r->requested_with[0];
@@ -397,6 +397,13 @@ static void dispatch(connection *c,request *r){
         int n=snprintf(out,sizeof(out),"{\"username\":%s,\"password\":%s}\n",user,pass);memset(pass,0,sizeof(pass));
         if(n>0&&(size_t)n<sizeof(out))response(c,200,"application/json",out,(size_t)n);else error_response(c,500,"Password unavailable");
         memset(out,0,sizeof(out));return;
+    }
+    if(!strcmp(r->target,"/api/v1/controls")){
+        if(!strcmp(r->method,"GET")){if(jipc_controls_json(app,out,sizeof(out))<0)error_response(c,503,"Controls are not running");else response(c,200,"application/json",out,strlen(out));}
+        else if(jipc_controls_patch(app,r->body,error,sizeof(error))<0)error_response(c,400,error[0]?error:"Invalid controls");
+        else if(jipc_controls_json(app,out,sizeof(out))<0)response(c,200,"application/json","{\"ok\":true}\n",12);
+        else response(c,200,"application/json",out,strlen(out));
+        return;
     }
     if(!strcmp(r->target,"/api/v1/config")){
         if(!strcmp(r->method,"GET")){if(jipc_config_json(app,out,sizeof(out))<0)error_response(c,500,"Configuration unavailable");else response(c,200,"application/json",out,strlen(out));}

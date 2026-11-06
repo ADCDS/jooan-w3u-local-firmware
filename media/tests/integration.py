@@ -294,6 +294,133 @@ def fake_platform():
     return server, seen
 
 
+ISP_PROC = ("****************** ISP INFO 0**********************\nISP Runing Mode : Day\n"
+            "SENSOR Integration Time : 2990 lines\nISP EV value: {ev0}\nISP EV value log2: 1\n"
+            "****************** ISP INFO 1**********************\nISP EV value: {ev1}\n")
+
+
+def controls_checks(request, root, connection=None, secret=None):
+    """Persisted controls and their engine: automatic day/night from the ISP's
+    exposure value with hysteresis and a wait, the night schedule, the timed
+    white-light trigger, validation, and controls.json."""
+    proc = root / "isp-m0"
+
+    def set_ev(ev):
+        proc.write_text(ISP_PROC.format(ev0=ev, ev1=ev // 2))
+
+    def controls():
+        status, body = request("GET", "/api/v1/controls")
+        assert status == 200, body
+        return json.loads(body)
+
+    def platform():
+        return json.loads(request("GET", "/api/v1/status")[1])["platform"]
+
+    def wait_for(check, seconds, what):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if check():
+                return
+            time.sleep(0.25)
+        raise AssertionError(f"{what}: {controls()}")
+
+    set_ev(10000)
+    status, body = request("POST", "/api/v1/controls",
+                           {"night": {"mode": "auto", "night_ev": 30000, "day_ev": 15000, "wait_s": 1}})
+    assert status == 200 and json.loads(body)["night"]["mode"] == "auto", body
+    wait_for(lambda: controls()["live"]["level"] == 10000, 8, "exposure read")
+    assert controls()["live"]["night"] == "day" and platform()["night"] == 0
+    set_ev(40000)  # darker than the night level: night after the wait
+    wait_for(lambda: controls()["live"]["night"] == "night" and platform()["night"] == 1, 12, "auto to night")
+    set_ev(20000)  # between the levels: stays night (hysteresis)
+    time.sleep(6.5)
+    assert controls()["live"]["night"] == "night"
+    set_ev(9000)
+    wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 12, "auto to day")
+    # Validation leaves everything as it was.
+    for bad in ({"night": {"night_ev": 100, "day_ev": 200}}, {"night": {"from": "25:00"}},
+                {"night": {"mode": "dusk"}}, {"picture": [{"denoise": 300}]}, {"anti_flicker": "40"}, [1]):
+        assert request("POST", "/api/v1/controls", bad)[0] == 400, bad
+    assert controls()["night"]["mode"] == "auto"
+    # Schedule, in UTC minutes (utc_offset_min 0): the current minute is inside.
+    now = time.gmtime()
+    start = (now.tm_hour * 60 + now.tm_min - 1) % 1440
+    end = (start + 4) % 1440
+    status, _ = request("POST", "/api/v1/controls", {"utc_offset_min": 0, "night": {
+        "mode": "schedule", "from": f"{start // 60:02d}:{start % 60:02d}", "until": f"{end // 60:02d}:{end % 60:02d}"}})
+    assert status == 200
+    wait_for(lambda: controls()["live"]["night"] == "night", 5, "schedule night")
+    # The legacy control still works and becomes the choice.
+    assert request("POST", "/api/v1/control", {"operation": "night", "value": 0, "value2": 0})[0] == 200
+    assert controls()["night"]["mode"] == "day" and platform()["night"] == 0
+    assert request("POST", "/api/v1/control", {"operation": "night", "value": 2, "value2": 0})[0] == 200
+    assert controls()["night"]["mode"] == "auto"
+    assert request("POST", "/api/v1/control", {"operation": "night", "value": 4, "value2": 0})[0] == 409
+    assert request("POST", "/api/v1/control", {"operation": "ir_mode", "value": 1, "value2": 0})[0] == 200
+    assert controls()["night"]["ir"] == "off"
+    # White light: on for 2 s from a trigger, then back off by itself.
+    assert request("POST", "/api/v1/control", {"operation": "white_light_trigger", "value": 2, "value2": 0})[0] == 200
+    wait_for(lambda: platform()["white_light"] == 1, 4, "trigger on")
+    wait_for(lambda: platform()["white_light"] == 0 and controls()["live"]["trigger_left_s"] == 0, 6, "trigger off")
+    # Saved (after a short debounce) and readable.
+    saved = root / "state" / "controls.json"
+    wait_for(lambda: saved.exists() and json.loads(saved.read_text())["night"]["ir"] == "off", 8, "controls.json")
+    stored = json.loads(saved.read_text())
+    assert stored["v"] == 1 and stored["night"]["mode"] == "auto" and oct(saved.stat().st_mode & 0o777) == "0o600", stored
+    request("POST", "/api/v1/controls", {"night": {"mode": "day", "ir": "night"}})
+    imaging = imaging_checks(connection, secret, controls) if connection else None
+    return {"saved": stored["night"], "imaging": imaging}
+
+
+def imaging_checks(connection, secret, controls):
+    """ONVIF imaging: advertised in schema order, reads the persisted values on
+    the 0..100 scale, and writes through the controls."""
+    ns = {"s": "http://www.w3.org/2003/05/soap-envelope", "tt": "http://www.onvif.org/ver10/schema",
+          "timg": "http://www.onvif.org/ver20/imaging/wsdl", "tds": "http://www.onvif.org/ver10/device/wsdl"}
+
+    def soap(path, body):
+        client = connection()
+        try:
+            client.request("POST", path, body=('<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+                                               f'<s:Body>{body}</s:Body></s:Envelope>'), headers={
+                "Authorization": "Basic " + base64.b64encode(f"admin:{secret}".encode()).decode(),
+                "Content-Type": "application/soap+xml"})
+            reply = client.getresponse()
+            return reply.status, ET.fromstring(reply.read())
+        finally:
+            client.close()
+
+    status, tree = soap("/onvif/device_service", '<GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"/>')
+    caps = tree.find(".//tds:Capabilities", ns)
+    order = [child.tag.rsplit("}", 1)[-1] for child in caps]
+    assert status == 200 and order == ["Device", "Imaging", "Media", "PTZ"], order
+    xaddr = caps.find("tt:Imaging/tt:XAddr", ns).text
+    assert xaddr.endswith("/onvif/imaging_service"), xaddr
+    img = '<{0} xmlns="http://www.onvif.org/ver20/imaging/wsdl"><VideoSourceToken>sensor0</VideoSourceToken>{1}</{0}>'
+    status, tree = soap("/onvif/imaging_service", img.format("GetImagingSettings", ""))
+    settings = tree.find(".//timg:ImagingSettings", ns)
+    assert status == 200 and settings.find("tt:Brightness", ns).text == "50" and \
+        settings.find("tt:IrCutFilter", ns).text == "ON", ET.tostring(tree)
+    status, tree = soap("/onvif/imaging_service", img.format("SetImagingSettings",
+        '<ImagingSettings><Brightness xmlns="http://www.onvif.org/ver10/schema">80</Brightness>'
+        '<IrCutFilter xmlns="http://www.onvif.org/ver10/schema">AUTO</IrCutFilter></ImagingSettings>'))
+    assert status == 200, ET.tostring(tree)
+    state = controls()
+    assert state["picture"][0]["brightness"] == 204 and state["night"]["mode"] == "auto", state
+    status, tree = soap("/onvif/imaging_service", img.format("GetOptions", ""))
+    modes = [m.text for m in tree.findall(".//tt:IrCutFilterModes", ns)]
+    assert status == 200 and modes == ["ON", "OFF", "AUTO"], modes
+    status, _ = soap("/onvif/imaging_service", img.replace("sensor0", "sensor9").format("GetImagingSettings", ""))
+    assert status != 200
+    status, _ = soap("/onvif/imaging_service", img.format("SetImagingSettings",
+        '<ImagingSettings><Brightness xmlns="http://www.onvif.org/ver10/schema">101</Brightness></ImagingSettings>'))
+    assert status != 200 and controls()["picture"][0]["brightness"] == 204
+    soap("/onvif/imaging_service", img.format("SetImagingSettings",
+        '<ImagingSettings><Brightness xmlns="http://www.onvif.org/ver10/schema">50</Brightness>'
+        '<IrCutFilter xmlns="http://www.onvif.org/ver10/schema">ON</IrCutFilter></ImagingSettings>'))
+    return {"capabilities": order}
+
+
 def wave_a_checks(request):
     """Microphone mute and level meter (the replay tone), and renaming a
     preset without moving it."""
@@ -513,7 +640,9 @@ def main():
         environment = os.environ | {"JIPC_SPEAKER_GATE": "", "JIPC_SPEAKER_CAPTURE": str(capture),
                                     "JIPC_REPLAY_TONE": "1",
                                     "JIPC_JOAN_PORT": str(platform_server.server_address[1]),
-                                    "JIPC_HTTPS_UI_PORT": str(ui_port)}
+                                    "JIPC_HTTPS_UI_PORT": str(ui_port),
+                                    "JIPC_ISP_PROC": str(root / "isp-m0")}
+        (root / "isp-m0").write_text(ISP_PROC.format(ev0=10000, ev1=5000))
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, cwd=root, env=environment)
 
         def request(method, path, data=None, password=None):
@@ -580,6 +709,9 @@ def main():
             connection.secret = secret
             result["audio"] = talk_checks(rtsp_port, secret, request, capture, connection)
             result["wave_a"] = wave_a_checks(request)
+            result["controls"] = controls_checks(request, root, connection, secret)
+            result["checks"].append("controls: auto day/night with hysteresis, schedule, white-light trigger, "
+                                    "validation and controls.json")
             result["checks"].append("microphone mute and level meter; preset rename keeps its position")
             result["checks"].append("go2rtc-style backchannel talk: one talker, half-duplex mute, "
                                     "deadman unmute/mute, ordered playback; HTTP talk")

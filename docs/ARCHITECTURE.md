@@ -225,8 +225,8 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Speaker volume | → `volume` control with `audio=1` |
 | Custom voice / alert clips | ✗ |
 | **Light & night vision** | |
-| Day / Night / IR-cut mode | → manual `night`/`ircut` only; automatic day/night is not implemented |
-| Floodlight / white light (+ schedule) | → manual `white_light` on/off; no schedule |
+| Day / Night / IR-cut mode | → day, night, automatic (ISP exposure, hysteresis) or schedule; infrared LEDs on or off at night; remembered |
+| Floodlight / white light (+ schedule) | → manual, schedule, or a timed trigger (for Home Assistant on an NVR event); remembered |
 | **Detection & alarms** | |
 | Motion detection (+ sensitivity, zones) | ✗ |
 | Human / person detection (+ area) | ✗ |

@@ -267,7 +267,8 @@
 		quality = src('q', J + 'network/quality', rQuality, { timeout: 2e4 }),
 		routes = src('r', J + 'network/routes', rRoutes, { timeout: 2e4 }),
 		keys = src('k', J + 'ssh/authorized-keys', rKeys, { timeout: 2e4 }),
-		clock = src('t', J + 'time', rTime);
+		clock = src('t', J + 'time', rTime),
+		controls = src('x', M + 'controls', rControls);
 	const guess = /^[\d.]+$|[:[]/.test(location.hostname) ? 'Camera' : location.hostname.split('.')[0],
 		name = () => S.n?.hostname || guess,
 		rel = () => (/\/releases\/([0-9a-f]{8})/.exec(S.c?.libimp || '') || [])[1];
@@ -432,11 +433,11 @@
 	onhashchange = () => csrf && go(1);
 	wide.onchange = () => route == 'settings' && go();
 	const LD = {
-		overview: [media, joan, quality],
+		overview: [media, joan, quality, controls],
 		pantilt: [media],
-		image: [media, config],
+		image: [media, config, [controls, 'im-nst']],
 		audio: [media, config],
-		streams: [config, mdns, media],
+		streams: [config, mdns, media, controls],
 		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes']],
 		system: [joan, media, config, [clock, 'sy-nh'], [keys, 'sy-keys']],
 		settings: [joan, media, quality]
@@ -766,28 +767,259 @@
 					: ''
 		);
 	}
-	function lights() {
-		const p = S.m?.platform;
-		if (!p) return;
-		$$('.night').forEach(s => busy(s) || pick(s, p.night));
-		$$('.sw.wl').forEach(b => busy(b) || sw(b, p.white_light == 1));
-		$$('.wl-note').forEach(
-			e =>
-				(e.textContent =
-					p.white_light < 0 ? 'Not set since the camera started' : p.white_light ? 'On' : 'Off')
+	/* Camera controls (GET/POST /api/v1/controls): night mode, infrared, white light and
+	   picture, kept by the camera across restarts. POST takes any subset and answers with
+	   the full state; the engine applies it within a second, so the page reads it again. */
+	const tz = () => ({ utc_offset_min: -new Date().getTimezoneOffset() }),
+		utc = m => 'UTC' + (m < 0 ? '−' : '+') + p2((Math.abs(m) / 60) | 0) + ':' + p2(Math.abs(m) % 60),
+		num = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' '),
+		mins = t => +t.slice(0, 2) * 60 + +t.slice(3),
+		inWin = (m, a, b) => a != b && (a < b ? m >= a && m < b : m >= a || m < b);
+	let xt = 0;
+	async function putX(json) {
+		const d = await api(M + 'controls', { method: 'POST', json });
+		S.x = d;
+		S['x@'] = Date.now();
+		rControls(d);
+		clearTimeout(xt);
+		xt = setTimeout(() => controls().catch(noop), 1200);
+		return d;
+	}
+	/* Seconds still to go on a live countdown, counted on between reads. */
+	const left = s => Math.max(0, Math.round(s - age('x') / 1e3)),
+		mmss = s => ((s / 60) | 0) + ':' + p2(s % 60);
+	function nightLine() {
+		const x = S.x;
+		if (!x) return '';
+		const n = x.night,
+			L = x.live,
+			now = L.night,
+			other = now == 'night' ? 'day' : 'night';
+		if (now == 'unknown') return 'Starting…';
+		let t = cap(now) + ' now' + (L.since_s ? `, for ${dur(L.since_s + age('x') / 1e3)}` : '') + '.';
+		if (n.mode == 'auto')
+			t +=
+				L.level == null
+					? ' No darkness reading yet; it stays as it is.'
+					: L.pending_s > 0
+						? ` Switching to ${other} ${(r => (r ? 'in ' + dur(r) : 'now'))(left(n.wait_s - L.pending_s))} if it stays ${now == 'night' ? 'light' : 'dark'}.`
+						: now == 'night'
+							? ` Back to day when the level falls to ${num(n.day_ev)}.`
+							: ` Night when the level reaches ${num(n.night_ev)}.`;
+		else if (n.mode == 'schedule') t += ` Night from ${n.from} until ${n.until}, camera time.`;
+		else t += ' It stays so until you change it.';
+		return t + (L.error ? ' The camera reports: ' + L.error + '.' : '');
+	}
+	function wlNote() {
+		const x = S.x,
+			p = S.m?.platform,
+			on = p?.white_light >= 0 ? p.white_light == 1 : x?.live.white_light;
+		if (!x) return p?.white_light < 0 ? 'Not set since the camera started' : on ? 'On' : 'Off';
+		const s = x.white_light.schedule,
+			tl = left(x.live.trigger_left_s);
+		if (tl) return `On for ${mmss(tl)} more (triggered)`;
+		return (on ? 'On' : 'Off') + (s.enabled ? ` · scheduled ${s.from}–${s.until}` : '');
+	}
+	/* The schedule line: the zone the camera uses, and the next change. */
+	function wlWhen() {
+		const x = S.x,
+			s = x.white_light.schedule,
+			m = (x.live.local_minutes + age('x') / 6e4) % 1440,
+			a = mins(s.from),
+			b = mins(s.until),
+			inside = inWin(m, a, b),
+			e = inside ? b : a,
+			day = e > m ? 'today' : 'tomorrow',
+			dz = tz().utc_offset_min;
+		return (
+			(a == b
+				? 'From and until are the same, so the light never turns on.'
+				: `Every day, camera time (${utc(x.utc_offset_min)}). ` +
+					(inside ? `On now, off ${day} at ${s.until}.` : `Next: ${day} ${s.from}.`)) +
+			(x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '')
 		);
 	}
+	function lights() {
+		const x = S.x,
+			p = S.m?.platform;
+		const mode = x?.night.mode ?? (p?.night >= 0 ? (p.night ? 'night' : 'day') : null);
+		$$('.night').forEach(s => busy(s) || pick(s, mode));
+		p && $$('.sw.wl').forEach(b => busy(b) || sw(b, p.white_light == 1));
+		$$('.wl-note').forEach(e => (e.textContent = wlNote()));
+		$$('.night-note').forEach(e => (e.textContent = x ? nightLine() : ''));
+	}
+	/* Darkness: the ISP's exposure value for the pan/tilt lens (higher is darker), with both levels. */
+	function darkness() {
+		const x = S.x,
+			n = x.night,
+			lv = x.live.level,
+			top = Math.max(n.night_ev * 1.4, (lv || 0) * 1.1),
+			at = v => Math.min(100, (v / top) * 100) + '%',
+			[fill, d, nt, dl, nl] = $('im-dm').children;
+		fill.style.width = lv == null ? '0' : at(lv);
+		d.style.left = dl.style.left = at(n.day_ev);
+		nt.style.left = nl.style.left = at(n.night_ev);
+		tx('im-lv', lv == null ? 'No reading' : `${num(lv)} · ${x.live.night}`);
+		$('im-dm').setAttribute(
+			'aria-label',
+			`Darkness meter: now ${lv == null ? 'no reading' : num(lv)}, back to day below ${num(n.day_ev)}, night above ${num(n.night_ev)}`
+		);
+	}
+	const keep = i => document.activeElement == i || i.dataset.d;
+	function setIn(i, v) {
+		keep(i) || (i.value = v);
+	}
+	/* Durations in words for the selects and the trigger button: "10 seconds", "2 minutes". */
+	const long = s => (s < 60 ? pl(s, 'second') : s % 60 ? dur(s) : pl(s / 60, 'minute'));
+	/* A select of durations, with the current value added when it is not one of them. */
+	function durs(el, list, v) {
+		const L = list.includes(v) ? list : [...list, v].sort((a, b) => a - b);
+		if (el.dataset.k != L + '') {
+			el.dataset.k = L;
+			el.replaceChildren(...L.map(s => h('option', { value: s }, long(s))));
+		}
+		busy(el) || (el.value = v);
+	}
+	function rControls(x) {
+		const n = x.night,
+			w = x.white_light,
+			wm = w.schedule.enabled ? 'schedule' : w.on ? 'on' : 'off';
+		lights();
+		$('im-auto').hidden = n.mode != 'auto';
+		$('im-sch').hidden = n.mode != 'schedule';
+		n.mode == 'auto' && darkness();
+		setIn($('im-ne'), num(n.night_ev).replace(/ /g, ' '));
+		setIn($('im-de'), num(n.day_ev).replace(/ /g, ' '));
+		setIn($('im-nf'), n.from);
+		setIn($('im-nu'), n.until);
+		durs($('im-wait'), [10, 30, 60, 120, 300, 600], n.wait_s);
+		busy($('im-ir')) || pick($('im-ir'), n.ir);
+		busy($('im-wlm')) || pick($('im-wlm'), wm);
+		$('im-wls').hidden = wm != 'schedule';
+		setIn($('im-wf'), w.schedule.from);
+		setIn($('im-wu'), w.schedule.until);
+		durs($('im-wd'), [30, 60, 120, 300, 600, 1800], w.trigger_s);
+		tx('im-wt', 'Turn on for ' + long(w.trigger_s));
+		rCount();
+		busy($('im-af')) || pick($('im-af'), x.anti_flicker);
+		const pic = x.picture[lens];
+		pic && PIC.forEach(op => setSl('im-' + op, pic[op]));
+		S.c && ha(S.c);
+	}
+	function rCount() {
+		const x = S.x,
+			w = x.white_light,
+			tl = left(x.live.trigger_left_s);
+		tx('im-wln', w.schedule.enabled ? wlWhen() : '');
+		tx(
+			'im-wtn',
+			tl
+				? `On for ${mmss(tl)} more, then back to ${w.schedule.enabled ? 'its schedule' : w.on ? 'on' : 'off'}.`
+				: ''
+		);
+	}
+	/* Day and night (Overview and Image): the mode; schedules follow this device's zone. */
+	const NT = {
+		day: 'Day mode on',
+		night: 'Night vision on',
+		auto: 'Day and night switch by themselves',
+		schedule: 'Night on a schedule'
+	};
 	$$('.night').forEach(s =>
 		seg(s, v =>
 			run(s, async () => {
-				await ctl('night', +v);
-				S.m && (S.m.platform.night = +v);
+				await putX({ night: { mode: v }, ...(v == 'schedule' ? tz() : {}) });
 				pick(s, v); // lights() leaves busy controls alone
-				lights();
-				toast(+v ? 'Night vision on' : 'Day mode on');
+				toast(NT[v]);
 			})
 		)
 	);
+	/* Darkness levels: whole numbers, spaces allowed ("75 000"); day must stay below night. */
+	const lvl = v => ((v = v.replace(/[\s,.'_]/g, '')), /^\d{1,8}$/.test(v) && v >= 1 && v <= 1e7 ? +v : null),
+		evIn = [$('im-ne'), $('im-de')];
+	evIn.forEach(i => {
+		i.addEventListener('input', () => (i.dataset.d = 1));
+		i.onchange = () => {
+			const [ne, de] = evIn.map(e => lvl(e.value));
+			evIn.forEach(e => {
+				e.removeAttribute('aria-invalid');
+				clr(e);
+			});
+			for (const [e, v] of [
+				[evIn[0], ne],
+				[evIn[1], de]
+			])
+				if (v == null) return bad(e, 'Use a whole number from 1 to 10 000 000.');
+			if (de >= ne) return bad(i, 'The day level must be below the night level.');
+			run(
+				i,
+				async () => {
+					await putX({ night: { night_ev: ne, day_ev: de } });
+					evIn.forEach(e => delete e.dataset.d);
+					toast('Levels saved');
+				},
+				i
+			);
+		};
+	});
+	$('im-wait').onchange = e =>
+		run(e.target, async () => {
+			await putX({ night: { wait_s: +e.target.value } });
+			toast('Saved');
+		});
+	/* Schedules: a pair of "HH:MM" times; saving also sends this device's zone. */
+	function times(a, b, key) {
+		[a, b].forEach(i => {
+			i.addEventListener('input', () => (i.dataset.d = 1));
+			i.onchange = () => {
+				if (!a.value || !b.value) return bad(i, 'Enter both times.');
+				if (a.value == b.value) return bad(i, 'From and until must differ.');
+				run(
+					i,
+					async () => {
+						const t = { from: a.value, until: b.value };
+						await putX({ ...(key ? { white_light: { schedule: t } } : { night: t }), ...tz() });
+						[a, b].forEach(e => delete e.dataset.d);
+						toast('Schedule saved');
+					},
+					i
+				);
+			};
+		});
+	}
+	times($('im-nf'), $('im-nu'));
+	times($('im-wf'), $('im-wu'), 1);
+	seg($('im-ir'), v =>
+		run($('im-ir'), async () => {
+			await putX({ night: { ir: v } });
+			pick($('im-ir'), v);
+			toast(v == 'off' ? 'Infrared LEDs stay off' : 'Infrared LEDs on at night');
+		})
+	);
+	/* White light: Off, On, or a schedule; the Overview switch changes it until the next schedule edge. */
+	seg($('im-wlm'), v =>
+		run($('im-wlm'), async () => {
+			const s = S.x?.white_light.schedule || {};
+			await putX(
+				v == 'schedule'
+					? { white_light: { schedule: { enabled: true, from: s.from, until: s.until } }, ...tz() }
+					: { white_light: { on: v == 'on', schedule: { enabled: false } } }
+			);
+			pick($('im-wlm'), v);
+			toast(v == 'schedule' ? 'White light on a schedule' : 'White light ' + v);
+		})
+	);
+	$('im-wd').onchange = e =>
+		run(e.target, async () => {
+			await putX({ white_light: { trigger_s: +e.target.value } });
+			toast('Saved');
+		});
+	$('im-wt').onclick = act(async () => {
+		await ctl('white_light_trigger', 0); // 0: for trigger_s
+		await controls();
+		media().catch(noop);
+		toast('White light on for ' + long(S.x.white_light.trigger_s));
+	});
 	$$('.sw.wl').forEach(
 		b =>
 			(b.onclick = () => {
@@ -798,33 +1030,38 @@
 					sw(b, on);
 					lights();
 					toast('White light ' + (on ? 'on' : 'off'));
+					controls().catch(noop);
 				});
 			})
 	);
-	const PIC = ['brightness', 'contrast', 'saturation', 'sharpness'],
-		pv = [{}, {}];
+	/* Picture per lens, from the camera's remembered values. */
+	const PIC = ['brightness', 'contrast', 'saturation', 'sharpness', 'denoise'],
+		picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 	PIC.forEach(op =>
 		$('im-sl').append(
-			slider('im-' + op, cap(op), 0, 255, 128, String, async v => {
-				const l = lens;
-				await ctl(op, v, l);
-				pv[l][op] = v;
-			})
+			slider('im-' + op, op == 'denoise' ? 'Noise reduction' : cap(op), 0, 255, 128, String, v =>
+				putX(picOf(lens, { [op]: v }))
+			)
 		)
 	);
 	seg($('im-lens'), v => {
 		lens = +v;
 		pick($('im-lens'), v);
-		PIC.forEach(op => setSl('im-' + op, pv[lens][op] ?? 128, 1));
+		PIC.forEach(op => setSl('im-' + op, S.x?.picture[lens][op] ?? 128, 1));
 	});
 	$('im-reset').onclick = act(async () => {
-		for (const op of PIC) {
-			await ctl(op, 128, lens);
-			pv[lens][op] = 128;
-			setSl('im-' + op, 128, 1);
-		}
+		const p = Object.fromEntries(PIC.map(op => [op, 128]));
+		await putX(picOf(lens, p));
+		PIC.forEach(op => setSl('im-' + op, 128, 1));
 		toast('Picture reset to neutral');
 	});
+	seg($('im-af'), v =>
+		run($('im-af'), async () => {
+			await putX({ anti_flicker: v });
+			pick($('im-af'), v);
+			toast(v == 'off' ? 'Anti-flicker off' : `Anti-flicker for ${v} Hz mains`);
+		})
+	);
 	const rm = f => [(f >> 1) & 1, (f ^ (f >> 1)) & 1];
 	function orient() {
 		const c = S.c;
@@ -1585,30 +1822,46 @@
 			pwShow.firstChild.textContent = 'Hide';
 		});
 	pwCopy.onclick = () => run(pwCopy, async () => copy(await getPw(), pwCopy));
-	/* Home Assistant: POST /api/v1/control over HTTPS with Basic sign-in (the stream account). */
+	/* Home Assistant: POST /api/v1/control over HTTPS with Basic sign-in (the stream account).
+	   The timed white light is what Home Assistant calls on a Frigate person event. */
 	const haUrl = () => `https://${hs}:18443/api/v1/control`,
-		haBody = v => JSON.stringify({ operation: 'white_light', value: v, value2: 0 });
+		haBody = (operation, value) => JSON.stringify({ operation, value, value2: 0 }),
+		HA = [
+			['White light', 'white_light', 1, 'the white light action', () => 'Send value 0 to turn it off.'],
+			[
+				'White light for a while',
+				'white_light_trigger',
+				0,
+				'the timed white light action',
+				() =>
+					`Value 0 keeps it on for ${S.x ? dur(S.x.white_light.trigger_s) : 'the time set'} (set on Image & night), or give 1–3600 seconds; then it goes back to its schedule or manual state.`
+			]
+		];
 	function ha(c) {
-		const curl = `curl -k -u ${c.username} -H 'Content-Type: application/json' -d '${haBody(1)}' ${haUrl()}`,
-			b = h(
-				'button',
-				{ class: 'btn', 'aria-label': 'Copy the white light action as a curl command' },
-				h('span', { text: 'Copy' })
-			);
-		b.onclick = () => copy(curl, b);
 		$('st-acts').replaceChildren(
-			h(
-				'li',
-				null,
-				h(
-					'span',
+			...HA.map(([nm, op, v, what, note]) => {
+				const body = haBody(op, v),
+					curl = `curl -k -u ${c.username} -H 'Content-Type: application/json' -d '${body}' ${haUrl()}`,
+					b = h(
+						'button',
+						{ class: 'btn', 'aria-label': `Copy ${what} as a curl command` },
+						h('span', { text: 'Copy' })
+					);
+				b.onclick = () => copy(curl, b);
+				return h(
+					'li',
 					null,
-					h('b', { text: 'White light' }),
-					h('code', null, h('b', { text: 'POST' }), ' ' + haUrl()),
-					h('code', { class: 'body', text: haBody(1) })
-				),
-				b
-			),
+					h(
+						'span',
+						null,
+						h('b', { text: nm }),
+						h('code', null, h('b', { text: 'POST' }), ' ' + haUrl()),
+						h('code', { class: 'body', text: body }),
+						h('small', { text: note() })
+					),
+					b
+				);
+			}),
 			...['Siren', 'Privacy mode'].map(n =>
 				h(
 					'li',
@@ -1619,21 +1872,24 @@
 		);
 	}
 	function rest(c) {
-		const n = slug();
+		const n = slug(),
+			cmd = (name, body) => [
+				`  ${n}_${name}:`,
+				`    url: ${haUrl()}`,
+				'    method: post',
+				`    username: ${c.username}`,
+				`    password: !secret ${n}_stream_password`,
+				'    content_type: application/json',
+				`    payload: '${body}'`,
+				'    verify_ssl: false'
+			];
 		return (
 			[
 				`# Home Assistant configuration.yaml; put ${n}_stream_password in secrets.yaml.`,
 				'rest_command:',
-				...[1, 0].flatMap(v => [
-					`  ${n}_white_light_${v ? 'on' : 'off'}:`,
-					`    url: ${haUrl()}`,
-					'    method: post',
-					`    username: ${c.username}`,
-					`    password: !secret ${n}_stream_password`,
-					'    content_type: application/json',
-					`    payload: '${haBody(v)}'`,
-					'    verify_ssl: false'
-				])
+				...cmd('white_light_on', haBody('white_light', 1)),
+				...cmd('white_light_off', haBody('white_light', 0)),
+				...cmd('white_light_trigger', haBody('white_light_trigger', 0))
 			].join('\n') + '\n'
 		);
 	}
@@ -1988,6 +2244,11 @@
 		tick();
 	}
 	function tick() {
+		/* countdowns between reads: the switch wait, the triggered light */
+		if (S.x && (route == 'overview' || route == 'image')) {
+			lights();
+			route == 'image' && rCount();
+		}
 		if (route != 'system') return;
 		const now = new Date();
 		tx('sy-dev', hm(now));
@@ -2337,6 +2598,8 @@
 			age('m') > (mv && route == 'pantilt' ? 1e3 : route == 'audio' ? 2e3 : 5e3)
 		)
 			media().catch(noop);
+		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
+		if (age('x') > (route == 'image' ? 2e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
 		if ((route == 'overview' || route == 'system') && age('j') > 6e4) joan().catch(noop);
 		if (['overview', 'network', 'settings'].includes(route) && age('q') > 3e4) quality().catch(noop);
 		if (age('ka') > 24e4) {
