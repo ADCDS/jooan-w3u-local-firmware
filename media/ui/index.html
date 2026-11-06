@@ -73,14 +73,15 @@
 <div id="banner" class="banner crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b><span class="cam-name">Camera</span> isn’t answering</b><p><span id="bn-why"></span> Retrying in <b class="mono" id="bn-s">10 s</b>.<span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
 
 <section class="page ov" id="p-overview" hidden>
-<header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Live video plays in your NVR (Frigate).</p></div></header>
+<header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Stills refresh every 5 seconds. Live video plays in your NVR (Frigate).</p></div><span class="inl"><small>Updated <span class="mono ink" id="ov-at">–</span></small><button class="btn" id="ov-pz">Pause stills</button></span></header>
 <div class="cols"><div class="stack w2">
-<div class="card o1"><div class="still"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><p>No stills in this video profile.<br>Live video is in your NVR (Frigate).</p></div>
-<div class="bar nw"><div><h2>Pan/tilt lens</h2><small class="mono" id="ov-s0"></small></div><a class="btn" href="#pantilt"><svg><use href="#i-pantilt"/></svg>Steer</a></div>
-<div><h2>Fixed lens</h2><small class="mono" id="ov-s1"></small></div></div>
+<div class="card o1"><div class="still" data-ch="0" data-at="ago"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><span class="tag b mono at"></span><p></p></div>
+<div class="bar nw"><div><h2>Pan/tilt lens</h2><small class="mono" id="ov-s0"></small></div><span class="inl"><a class="btn" href="#pantilt"><svg><use href="#i-pantilt"/></svg>Steer</a><a class="btn dsk" href="/api/v1/snapshot?channel=0" target="_blank" rel="noopener">Full size</a></span></div></div>
 <div class="card o4" id="ov-st"><div class="bar"><h2>Status</h2><span id="ov-sum"></span></div><ul class="health" id="ov-stats"></ul></div>
 <div class="card o4" id="ov-last" hidden><h2>Last known status</h2><dl class="stats"><div><dt>Last answer</dt><dd class="mono" id="ov-la"></dd></div><div><dt>Wi-Fi then</dt><dd id="ov-lw"></dd></div></dl></div>
 </div><div class="stack">
+<div class="card o1 o2"><div class="still" data-ch="2"><span class="tag">Fixed lens</span><span class="tag b mono at"></span><p></p></div>
+<div class="bar nw"><div><h2>Fixed lens</h2><small class="mono" id="ov-s1"></small></div><a class="btn dsk" href="/api/v1/snapshot?channel=2" target="_blank" rel="noopener">Full size</a></div></div>
 <div class="card o3"><h2>Quick actions</h2>
 <div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note"></small></div>
 <div class="row"><span><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
@@ -92,7 +93,7 @@
 <header class="ph"><div><h1 tabindex="-1">Pan/tilt</h1><p>Presets are shared with your NVR over ONVIF.</p></div><span class="mono" role="status" id="pt-pos"></span></header>
 <div class="cols rv">
 <div class="stack">
-<div class="card" id="pt-move"><h2>Move</h2>
+<div class="card pt2" id="pt-move"><h2>Move</h2>
 <div class="pad" id="pt-pad"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg>Stop</button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
 <small class="c">Hold an arrow to move, release to stop. Arrow keys work here too.</small>
 <div class="f"><span class="lbl dsk" id="pt-sl">Speed</span><div class="seg" id="pt-speed" aria-labelledby="pt-sl"><button value="30">Slow</button><button value="60">Normal</button><button value="100">Fast</button></div></div>
@@ -105,7 +106,8 @@
 </div>
 </div>
 <div class="stack w2">
-<div class="card"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
+<div class="card o1 pt1"><div class="still" data-ch="0" data-at="mv"><span class="tag">Pan/tilt lens</span><span class="tag b mono at"></span><p></p></div></div>
+<div class="card pt3"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
 <ul class="presets" id="pt-list"></ul><small class="mob" id="pt-free"></small>
 <div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div>
 <div class="card" id="pt-pat"><div class="row first"><span><h2 id="pt-ptl">Patrol</h2><small id="pt-ptn">Visits these presets in order, then starts again.</small></span><button class="sw" id="pt-pts" aria-labelledby="pt-ptl"></button></div>
@@ -146,6 +148,8 @@
 </div>
 <div class="card">
 <div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
+<div class="still" data-ch="im"><span class="tag" id="im-pvl">Pan/tilt lens</span><span class="tag b mono at"></span><p></p></div>
+<small>Preview still, refreshes after each change.</small>
 <div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
 <div class="stack s" id="im-sl"></div><small>Noise reduction: 0 leaves grain, 255 is very strong and may smear moving things.</small>
 <div class="f"><span class="lbl" id="im-afl">Anti-flicker</span><div class="seg" id="im-af" aria-labelledby="im-afl"><button value="50">50 Hz</button><button value="60">60 Hz</button><button value="off">Off</button></div>
@@ -173,7 +177,7 @@
 <section class="page" id="p-streams" hidden>
 <header class="ph"><div><h1 tabindex="-1">Streams &amp; integrations</h1><p>Addresses for your NVR, video players and Home Assistant. Passwords are never put in a copied URL.</p></div></header>
 <div class="f"><span class="lbl" id="st-hl">Write addresses with</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div>
-<div class="card"><div><h2>Video</h2><small id="st-vs"></small></div><div class="cols" id="st-lenses"></div>
+<div class="card"><div><h2>Video and stills</h2><small id="st-vs"></small></div><div class="cols" id="st-lenses"></div>
 <div class="f"><span class="lbl">ONVIF device address</span><div id="st-onvif"></div><small id="st-on"></small></div></div>
 <div class="cols">
 <div class="card"><div><h2>Stream account</h2><small>What your NVR and Home Assistant sign in with. Separate from the admin password you use here.</small></div>

@@ -68,8 +68,10 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
 void jipc_imp_close(void *state);
 int jipc_imp_control(void *state, const char *operation, int value, int value2,
                      char *error, size_t capacity);
-int jipc_imp_snapshot(void *state, unsigned channel, jipc_frame *frame,
-                      char *error, size_t capacity);
+/* control, if given, is a lock the caller holds and H.264 draining needs: it is
+ * let go while waiting for the picture. */
+int jipc_imp_snapshot(void *state, unsigned channel, pthread_mutex_t *control,
+                      jipc_frame *frame, char *error, size_t capacity);
 /* Audio output for the speaker thread only (src/speaker.c). write plays one
  * JIPC_SPEAKER_FRAME of A-law and may block up to the driver's 800 ms. */
 int jipc_imp_ao_open(void *state, int volume, char *error, size_t capacity);

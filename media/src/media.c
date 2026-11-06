@@ -694,12 +694,21 @@ int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
     if (!frame) return fail(error, capacity, "missing snapshot result");
     memset(frame, 0, sizeof *frame);
     if (atomic_load(&app->privacy_on)) return fail(error, capacity, "privacy mode is on");
+    /* One at a time: the control lock is let go during the wait, and a lens has
+     * one JPEG encoder, which exists only for its still. */
+    static pthread_mutex_t one_still = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&one_still);
     control_lock(app);
     media_state *state = app->backend_state;
     int rc = !state || !app->backend_ready ? fail(error, capacity, "media backend is not ready") :
-             state->imp ? jipc_imp_snapshot(state->imp, channel, frame, error, capacity) :
+             state->imp ? jipc_imp_snapshot(state->imp, channel, &app->control_mutex, frame, error, capacity) :
              fail(error, capacity, "JPEG snapshots are unavailable from an H.264 replay input");
     pthread_mutex_unlock(&app->control_mutex);
+    if (!rc && atomic_load(&app->privacy_on)) { /* it came on during the wait */
+        jipc_frame_free(frame);
+        rc = fail(error, capacity, "privacy mode is on");
+    }
+    pthread_mutex_unlock(&one_still);
     return rc;
 }
 

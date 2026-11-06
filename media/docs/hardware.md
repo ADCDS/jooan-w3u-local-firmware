@@ -142,11 +142,27 @@ together; changing only `main_only` leaves incompatible main dimensions.
 | Audio input channel parameter | 12 | Buffer depth, AEC channel, reserved word (OpenIMP's T23 layout) |
 
 Logical video streams 0/1 belong to sensor 0 and 2/3 to sensor 1. The recovered
-independent-encoder mapping is 0/4/1/5. In that layout JPEG uses the sensor's
-substream group, so snapshot resolution is the configured substream resolution.
-JPEG is explicitly unavailable in `main_only=1`: no extra JPEG resources are
-allocated, ONVIF advertises no snapshot capability, and RTSP frame extraction
-is the available still-image path.
+independent-encoder mapping is 0/4/1/5.
+
+A still uses encoder 2 or 3 on a group of that lens: its substream group in the
+four-encoder layout, so the still has the substream's size, and in `main_only=1`
+its only group, so the still has the main stream's size. The JPEG channel exists
+only for the request. Its bitstream is borrowed from the shared H.264 area, so it
+allocates no reserved memory, and the VPU takes the job between two H.264
+pictures. Measured on camera1 on 2026-11-06, with Frigate connected and both
+streams being read:
+
+| | 1920×1080 | 640×360 |
+|---|---|---|
+| Size | about 370 KB | about 38 KB |
+| Waiting for the encoder | 45-106 ms | 17-86 ms |
+| Create, start, stop, destroy | 1-19 ms | 1-17 ms |
+| Whole request with a new TLS connection | 1.2-1.8 s | 0.4-1.2 s |
+
+A 1080p still every 2 s for 24 s left 347 and 358 frames on the two streams, with
+350 and 357 and no stills, and a worst gap of 0.15 s. The control lock has to be
+free during the wait: with it held, H.264 output is not drained, the wait reached
+412 ms, and each such wait took 0.4 s of video from both lenses.
 
 Audio runs on two threads of its own, so neither can stall video. The
 microphone thread is the only `IMP_AI` caller: it opens capture at 16 kHz
@@ -177,7 +193,7 @@ native shutdown/restart and Frigate recording/ONVIF interoperability have been
 exercised. Audio (microphone, talk over the RTSP backchannel and HTTP, the
 boot gate and the mutes) passed on the camera on 2026-11-05
 ([receipt](camera-audio-test-20261105.json)); the long soak with audio on is
-still running. Native JPEG, light/IR-cut
+still running. Light/IR-cut
 behavior, arbitrary resolutions, long-duration soak and cold power-cycle
 recovery are not qualified by this run. The broad `hardware_validated` status
 field remains false because that complete hardware feature matrix is pending;
@@ -429,6 +445,7 @@ self-signed and the camera is addressed by IP.
   "jooanipc_open": {"release": "<app sha256 prefix>-<libimp sha256 prefix>",
                     "image": "appfs.img", "image_md5": "…",
                     "expected_current_appfs_md5": "…", "app_md5": "…",
+                    "imp_md5": "… (only when libimp changes)", "imp_sha256": "…",
                     "installer": "upgrade-appfs.sh", "installer_md5": "…"},
   "config": {"camera_ini": {"set": {}, "unset": ["ntp_server"]},
              "files": {"/opt/custom/jooan-local/config/ntp-server": "gateway\n",

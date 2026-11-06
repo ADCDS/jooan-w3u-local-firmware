@@ -983,13 +983,14 @@ def main():
                     enc=p.find("tt:VideoEncoderConfiguration",ns)
                     size=(int(enc.findtext("tt:Resolution/tt:Width",namespaces=ns)),int(enc.findtext("tt:Resolution/tt:Height",namespaces=ns)))
                     assert size==((320,240) if i<2 else (160,120)),size
-                    assert soap("GetSnapshotUri",f"<ProfileToken>{p.attrib['token']}</ProfileToken>")[0]==500
+                    code,body=soap("GetSnapshotUri",f"<ProfileToken>{p.attrib['token']}</ProfileToken>")
+                    assert code==200 and f"/api/v1/snapshot?channel={i}".encode() in body.replace(b"&amp;",b"&")
                 assert len(profiles)==4
-                code,body=soap("GetServiceCapabilities");assert code==200 and b'SnapshotUri="false"' in body
+                code,body=soap("GetServiceCapabilities");assert code==200 and b'SnapshotUri="true"' in body
                 client.close()
                 streams=json.loads(request("GET","/api/v1/status")[1])["streams"]
                 assert streams[1]["alias_of"]==0 and streams[3]["alias_of"]==2
-                result["checks"].append("all logical profiles report effective geometry; alias subscribers decode concurrently; JPEG capability disabled")
+                result["checks"].append("all logical profiles report effective geometry; alias subscribers decode concurrently; still URI offered")
             else:
                 for transport,channel in (("tcp",0),("udp",3)):
                     result["checks"].append(decode(transport,channel))

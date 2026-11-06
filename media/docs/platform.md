@@ -136,8 +136,7 @@ camera's time zone. With a schedule, `on` holds until the window's next edge.
 
 The cover is the ISP: brightness, contrast and saturation at 0 on both lenses.
 Measured on camera1 at midday, every pixel of both streams then reads Y=16,
-U=V=128. An IMP OSD cover would need a change to the video graph, and the pan/tilt
-lens's direct path to the encoder (IVDC) makes it doubtful there. The picture
+U=V=128. An IMP OSD cover would need a change to the video graph. The picture
 settings are not touched in the file: a manual change during privacy mode is kept
 for afterwards and does not reach the lens.
 

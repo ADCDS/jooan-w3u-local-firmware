@@ -182,12 +182,31 @@ def preflight_problems(facts, platform, local, appfs, config):
         problems.append(f"platform already at sequence {platform.get('release_sequence')}")
     if appfs and facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:
         problems.append(f"appfs is {facts.get('appfs_md5')}, bundle expects {appfs['expected_current_appfs_md5']}")
+    # The boot checks libimp against deployment.env: a new library that does not
+    # bring its sums would fail that check and drop the camera to its fallback.
+    if appfs and "release" in appfs and "-" in appfs["release"]:
+        library = appfs["release"].rsplit("-", 1)[1]
+        if not facts.get("libimp_sha256", "").startswith(library) and not (
+                appfs.get("imp_md5") and appfs.get("imp_sha256", "").startswith(library)):
+            problems.append(f"release {appfs['release']} changes libimp, but the bundle has no matching "
+                            "imp_md5 and imp_sha256")
     return problems
 
 
-def wait_reboot(cam, seconds=600):
+class InstallerStopped(Exception):
+    """The camera's installer gave up before changing anything; not worth retrying."""
+
+
+def wait_reboot(cam, aborted=None, seconds=600):
     # A platform apply runs its whole maintenance transaction before rebooting.
-    wait(lambda: not cam.up(), 600, "the camera to go down", step=2)
+    def down():
+        if not cam.up():
+            return True
+        why = aborted() if aborted else ""
+        if why:
+            raise InstallerStopped(f"nothing was changed; the camera's installer stopped: {why}")
+        return False
+    wait(down, 600, "the camera to go down", step=2)
     log("camera rebooting")
     wait(cam.up, seconds, "SSH after reboot")
     log("SSH is back; waiting for the media daemon to qualify")
@@ -261,6 +280,7 @@ def main():
         f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
         "echo qualified=$(cat /tmp/jipc-handoff.log /tmp/jipc-native.log 2>/dev/null | "
         "grep -c -E 'boot handoff qualified|native boot qualified');"
+        "echo libimp_sha256=$(sed -n 's/^JIPC_LIBIMP_SHA256=//p' " + ENV + ");"
         "echo release=$(sed -n 's/^JIPC_RELEASE=//p' " + ENV + ")").splitlines() if "=" in line)
     status, _, data = cam.platform("GET", "/api/v1/setup/status")
     platform = json.loads(data) if status == 200 else {}
@@ -358,7 +378,10 @@ def main():
             next_ini = ini_edit(cur_ini.replace(old + "/", release + "/"), ini_set, ini_unset)
             next_env = "".join(
                 f"JIPC_RELEASE={release}\n" if line.startswith("JIPC_RELEASE=") else
-                f"JIPC_APP_MD5={appfs['app_md5']}\n" if line.startswith("JIPC_APP_MD5=") else line + "\n"
+                f"JIPC_APP_MD5={appfs['app_md5']}\n" if line.startswith("JIPC_APP_MD5=") else
+                f"JIPC_IMP_MD5={appfs['imp_md5']}\n" if appfs.get("imp_md5") and line.startswith("JIPC_IMP_MD5=") else
+                f"JIPC_LIBIMP_SHA256={appfs['imp_sha256']}\n"
+                if appfs.get("imp_sha256") and line.startswith("JIPC_LIBIMP_SHA256=") else line + "\n"
                 for line in cur_env.splitlines())
             write_remote(cam, INI + ".next", next_ini)
             write_remote(cam, ENV + ".next", next_env)
@@ -371,7 +394,17 @@ def main():
             cam.ssh(f"( trap '' HUP; exec sh /tmp/upgrade-appfs.sh {appfs['image_md5']} {current} ) "
                     "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")
             rebooted = True
-            mode = wait_reboot(cam)
+            # A precondition that fails changes nothing and reboots nothing: say so
+            # now, not after waiting for a reboot with the NVR stopped.
+            def aborted():
+                try:
+                    why = cam.ssh("grep ' ABORT: ' /tmp/jipc-upgrade.log || :", timeout=10).strip()
+                    if why:  # the staged copies take up the small settings partition
+                        cam.ssh(f"rm -f {INI}.next {ENV}.next {HANDOFF}.next; sync", timeout=20)
+                    return why
+                except Exception:
+                    return ""
+            mode = wait_reboot(cam, aborted)
             flashed = cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip()
             if flashed != appfs["image_md5"]:
                 raise RuntimeError(f"appfs is {flashed} after reboot; the installer rolled back")
