@@ -53,7 +53,7 @@ JA-A12 storage budget and required boot dependencies.
 | RTSP | Digest authentication, TCP interleaving, UDP unicast, H.264 FU-A, PCMA, RTCP sender reports and BYE |
 | HTTPS and REST | MbedTLS 3.6.7 as a TLS 1.2 server only (ECDHE with an RSA or EC certificate, AES-GCM; `include/mbedtls_user_config.h` leaves the rest out to save flash), Basic authentication over TLS, bounded requests, private atomic configuration |
 | Failed-login throttle | Per peer address across HTTP Basic, ONVIF WS-Security and RTSP Digest: 10 failures within 60 s of the first block that address for the rest of the window (HTTP `429`, RTSP `503` with `Retry-After: 60`); requests without credentials never count |
-| ONVIF subset | Device/Media/PTZ queries and control, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
+| ONVIF subset | Device/Media/PTZ queries and control, absolute and relative moves (generic and field-of-view spaces) and a home position, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery; off by default (`discovery=0`), enable with `discovery=1` |
 | Recording | Rotating H.264/PCMA files, metadata, storage retention, IDR recovery after drops, authenticated download |
 | Clock | Optional SNTP client for the RTC-less board: random origin cookie, clock steps of one second or more, status under `clock` |
@@ -237,7 +237,7 @@ Authenticated REST endpoints:
 | `GET /api/v1/config` | Configuration with password redacted |
 | `GET /api/v1/config/password` | The stream account (`username`, `password`), only for the admin UI's own signed-in fetch (`X-Requested-With: jipc-ui`, same origin); `403` for Basic and anything else |
 | `POST /api/v1/config` | Validated public settings; filesystem/listener/library settings remain local-only |
-| `POST /api/v1/control` | `{ "operation": "ptz", "value":50, "value2":0 }` and documented platform/ISP controls |
+| `POST /api/v1/control` | `{ "operation": "ptz", "value":50, "value2":0 }`, `ptz_recalibrate` and documented platform/ISP controls |
 | `POST /api/v1/recording` | `{ "enabled":true }` starts recording; false stops |
 | `GET /api/v1/recordings` | Bounded file listing; download a listed name under the same path |
 | `GET /api/v1/snapshot?channel=0` | Native JPEG when the backend can produce one |

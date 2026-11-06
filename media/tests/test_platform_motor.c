@@ -80,9 +80,88 @@ static void homing(void)
     pthread_mutex_destroy(&s.mutex);unlink(HOMED_MARKER);unlink(MOTOR_INFO);
     driver_x=1400;driver_y=400;moving=dx=dy=swapped=0; /* the motion tests below start here */
 }
+/* Exact moves, with this camera's mounted signs: +x and +y take the motor's step
+ * counts down. Measured: that turns the view right and up. */
+static void moves(void)
+{
+    platform_state s=state_new();s.pan_sign=s.tilt_sign=-1;s.known=1;s.position_trusted=1;
+    jipc_app app={0};pthread_mutex_init(&s.mutex,NULL);app.platform_state=&s;s.app=&app;char error[128];
+    /* Deadlines come from the real clock; the fake one runs far ahead of it. */
+    #define SYNC() (clock_us=previous_us=jipc_now_us())
+    #define RUN() do{SYNC();for(unsigned i=0;i<20000&&s.goto_active;++i)tick(&s,clock_us+10000);assert(!s.goto_active&&!s.faulted);}while(0)
+    moving=dx=dy=swapped=0;driver_x=2000;driver_y=600;assert(!motor_read(&s));
+    /* FOV-relative: 1 brings the frame's edge to the centre. */
+    assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0,error,sizeof(error)));
+    assert(s.target_x==2000-FOV_HALF_PAN&&s.target_y==600-FOV_HALF_TILT&&s.goto_active&&!s.goto_rate);
+    RUN();assert(driver_x==2000-FOV_HALF_PAN&&driver_y==600-FOV_HALF_TILT);
+    assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,-0.5,-0.5,1,error,sizeof(error)));
+    assert(s.goto_rate==900&&s.target_x==2000-FOV_HALF_PAN+286&&s.target_y==600-FOV_HALF_TILT+147);
+    RUN();assert(speed==900);
+    /* Never past the travel. */
+    assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0.01,error,sizeof(error)));assert(s.goto_rate==100);
+    s.target_x=s.x;s.target_y=s.y;RUN();
+    driver_x=100;driver_y=100;assert(!motor_read(&s));
+    assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE_FOV,1,1,0,error,sizeof(error)));assert(s.target_x==0&&s.target_y==0);RUN();
+    /* Absolute: the ONVIF position the status reports, both ways. */
+    assert(!jipc_platform_move(&app,JIPC_MOVE_ABSOLUTE,-1,-1,0,error,sizeof(error)));assert(s.target_x==4080&&s.target_y==1230);RUN();
+    assert(!jipc_platform_move(&app,JIPC_MOVE_ABSOLUTE,0,0,0,error,sizeof(error)));assert(s.target_x==2040&&s.target_y==615);RUN();
+    jipc_ptz_status st;assert(!jipc_platform_status(&app,&st,error,sizeof(error)));assert(fabs(st.pan_norm)<0.001&&fabs(st.tilt_norm)<0.001);
+    assert(!jipc_platform_move(&app,JIPC_MOVE_ABSOLUTE,0.5,0.5,0,error,sizeof(error)));RUN();
+    assert(!jipc_platform_status(&app,&st,error,sizeof(error)));assert(fabs(st.pan_norm-0.5)<0.001&&fabs(st.tilt_norm-0.5)<0.002&&!st.moving);
+    /* Relative in the generic space: 1 is half of the travel. */
+    driver_x=2040;driver_y=615;assert(!motor_read(&s));
+    assert(!jipc_platform_move(&app,JIPC_MOVE_RELATIVE,0.5,0,0,error,sizeof(error)));assert(s.target_x==1020&&s.target_y==615);RUN();
+    /* A long slow move gets the time it needs, not the presets' 45 s. */
+    driver_x=0;driver_y=0;assert(!motor_read(&s));
+    assert(!jipc_platform_move(&app,JIPC_MOVE_STEPS,4080,1230,0.01,error,sizeof(error)));
+    assert(s.goto_until>clock_us+UINT64_C(53000000));
+    assert(!motor_stop_motion(&s));
+    /* Privacy: the head looks down, and nothing else may move it. */
+    driver_x=1500;driver_y=300;assert(!motor_read(&s));
+    assert(!jipc_platform_privacy(&app,1,0,error,sizeof(error)));
+    assert(s.privacy&&s.target_x==1500&&s.target_y==1230&&s.goto_active);RUN();assert(driver_y==1230);
+    assert(jipc_platform_move(&app,JIPC_MOVE_ABSOLUTE,0,0,0,error,sizeof(error))<0&&strstr(error,"privacy"));
+    assert(platform_control(&app,"ptz",50,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"privacy"));
+    assert(platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"privacy"));
+    assert(platform_control(&app,"preset_set",1,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"privacy"));
+    /* Its waiting place is never saved as the place to come back to. */
+    s.saved_valid=1;s.saved_x=1;s.saved_y=1;snprintf(s.position_path,sizeof(s.position_path),"/tmp/jipc-test-position");unlink(s.position_path);
+    position_track(&s,clock_us);position_track(&s,clock_us+POSITION_QUIET_US+1);assert(access(s.position_path,F_OK));
+    /* And it goes back afterwards. */
+    assert(!jipc_platform_privacy(&app,0,0,error,sizeof(error)));
+    assert(!s.privacy&&s.target_x==1500&&s.target_y==300);RUN();assert(driver_x==1500&&driver_y==300);
+    /* A preset as the waiting place. */
+    s.presets[2]=(saved_preset){.valid=1,.x=3000,.y=900};strcpy(s.presets[2].name,"Wall");
+    assert(!jipc_platform_privacy(&app,1,3,error,sizeof(error)));assert(s.target_x==3000&&s.target_y==900);RUN();
+    assert(!jipc_platform_privacy(&app,0,0,error,sizeof(error)));RUN();assert(driver_x==1500&&driver_y==300);
+    /* A patrol's stop is not someone steering, nor the last position; a preset is. */
+    assert(!platform_control(&app,"preset_patrol",3,0,NULL,NULL,NULL,error,sizeof(error)));
+    jipc_ptz_motion mo;assert(!jipc_platform_motion(&app,&mo));assert(s.patrol_move&&mo.moving);
+    uint64_t manual=s.manual_at;RUN();assert(s.manual_at==manual);
+    s.position_quiet_until=0;position_track(&s,clock_us);position_track(&s,clock_us+POSITION_QUIET_US+1);assert(access(s.position_path,F_OK));
+    assert(!platform_control(&app,"preset_goto",3,0,NULL,NULL,NULL,error,sizeof(error)));assert(!s.patrol_move&&s.manual_at>=manual);RUN();
+    /* Recalibrate: the boot's run, then back to where it was, with a time. */
+    FILE *info=fopen(MOTOR_INFO,"w");assert(info);
+    fputs("## motor is Horizontal motor ##\nmax steps 4080\n## motor is Vertical motor ##\nmax steps 1230\n",info);fclose(info);
+    driver_x=1700;driver_y=500;assert(!motor_read(&s));s.saved_x=1;s.saved_y=1;
+    assert(!platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error)));
+    assert(s.homing==1&&s.saved_x==1700&&s.saved_y==500);
+    assert(platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error))<0&&strstr(error,"homing"));
+    SYNC();for(unsigned i=0;i<40000&&(s.homing||s.goto_active);++i)tick(&s,clock_us+10000);
+    assert(s.homed&&s.homed_at&&driver_x==1700&&driver_y==500);
+    /* Privacy during homing: its end goes to the waiting place. */
+    driver_x=1700;driver_y=500;assert(!motor_read(&s));
+    assert(!platform_control(&app,"ptz_recalibrate",0,0,NULL,NULL,NULL,error,sizeof(error)));
+    assert(!jipc_platform_privacy(&app,1,0,error,sizeof(error)));assert(!s.goto_active||s.homing);
+    SYNC();for(unsigned i=0;i<40000&&(s.homing||s.goto_active);++i)tick(&s,clock_us+10000);
+    assert(driver_y==1230&&s.privacy);
+    unlink(s.position_path);unlink(HOMED_MARKER);unlink(MOTOR_INFO);
+    #undef RUN
+    #undef SYNC
+}
 int main(void)
 {
-    clock_us=previous_us=1000000;homing();platform_state state=state_new();
+    clock_us=previous_us=1000000;homing();moves();platform_state state=state_new();
     go(&state,1650,680);go(&state,1400,400);go(&state,1280,620);go(&state,1400,400);
     state.goto_active=1;state.goto_until=clock_us-1;native_tick(&state,clock_us);
     assert(state.faulted&&!state.goto_active&&strstr(state.last_error,"preset"));

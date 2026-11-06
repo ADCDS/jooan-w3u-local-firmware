@@ -220,7 +220,9 @@ def control_defaults():
             "white_light": {"on": False, "trigger_s": 120,
                             "schedule": {"enabled": False, "from": "19:00", "until": "23:00"}},
             "pilot_led": False, "mic_mute": False, "anti_flicker": "off", "utc_offset_min": 0,
-            "picture": [dict.fromkeys(PICTURE, 128) for _ in range(2)]}
+            "picture": [dict.fromkeys(PICTURE, 128) for _ in range(2)],
+            "patrol": {"enabled": False, "pause_s": 120, "stops": []},
+            "privacy": {"on": False, "slot": 0, "schedule": {"enabled": False, "from": "22:00", "until": "06:00"}}}
 
 
 def hhmm(text):
@@ -289,6 +291,32 @@ def controls_patch(current, o):
             flag(s, d["schedule"], "enabled")
             clock(s, d["schedule"], "from")
             clock(s, d["schedule"], "until")
+    if "patrol" in o:
+        t, d = o["patrol"], nxt["patrol"]
+        if not isinstance(t, dict): raise Invalid("patrol must be an object")
+        flag(t, d, "enabled")
+        whole(t, d, "pause_s", 0, 3600)
+        if "stops" in t:
+            if not isinstance(t["stops"], list) or len(t["stops"]) > 16: raise Invalid("stops must be a list of at most 16")
+            stops = []
+            for s in t["stops"]:
+                if not isinstance(s, dict) or "slot" not in s: raise Invalid("each stop needs a slot")
+                q = {"slot": 1, "dwell_s": 10}
+                whole(s, q, "slot", 1, 16)
+                whole(s, q, "dwell_s", 3, 3600)
+                stops.append(q)
+            d["stops"] = stops
+    if "privacy" in o:
+        v, d = o["privacy"], nxt["privacy"]
+        if not isinstance(v, dict): raise Invalid("privacy must be an object")
+        flag(v, d, "on")
+        whole(v, d, "slot", 0, 16)
+        if "schedule" in v:
+            s = v["schedule"]
+            if not isinstance(s, dict): raise Invalid("schedule must be an object")
+            flag(s, d["schedule"], "enabled")
+            clock(s, d["schedule"], "from")
+            clock(s, d["schedule"], "until")
     flag(o, nxt, "pilot_led")
     flag(o, nxt, "mic_mute")
     choice(o, nxt, "anti_flicker", FLICKER)
@@ -318,6 +346,7 @@ class Mock:
         self.hostname = self.hostname_next = "camera1"
         self.routes, self.clock_offset, self.ssh_keys = ["10.42.0.0/24"], 0.0, ""
         self.ip = {"mode": "dhcp", "address": "192.168.1.38", "prefix": 24, "gateway": "192.168.1.1"}
+        self.manual_at, self.privacy_until, self.privacy_override, self.homed_at = 0.0, 0.0, False, None
         self.ntp = {"server": "gateway", "resolved": "192.168.1.1", "attempts": 1, "offset": 760454.303,
                     "synced": now - 2637, "due": None}
         self.ssid, self.trial, self.staged = "HomeNet-IoT", None, None
@@ -463,6 +492,12 @@ class Mock:
         """POST /api/v1/controls (and the controls the legacy operations patch)."""
         before = self.controls
         self.controls, e = controls_patch(before, o), self.ce
+        v = o.get("privacy") if isinstance(o.get("privacy"), dict) else {}
+        if "on" in v and self.controls["privacy"]["schedule"]["enabled"]:  # holds until the schedule's next edge
+            self.privacy_override, self.privacy_until = v["on"], now + 3600
+            self.controls["privacy"]["on"] = before["privacy"]["on"]
+        elif "on" in v or "schedule" in v:
+            self.privacy_until = 0.0
         b, a = before["night"], self.controls["night"]
         if isinstance(o.get("white_light"), dict) and "on" in o["white_light"]:
             e["override_until"] = 0.0
@@ -504,7 +539,31 @@ class Mock:
             "white_light": e["white"] == 1,
             "trigger_left_s": math.ceil(e["trigger_until"] - now) if e["trigger_until"] > now else 0,
             "local_minutes": self.local_minutes(now), "zone": "browser" if self.zone is None else "camera",
-            "error": ""}}
+            "privacy": self.privacy_active(now), "patrol": self.patrol_live(now), "error": ""}}
+
+    def privacy_active(self, now):
+        v = self.controls["privacy"]
+        if self.privacy_until > now: return self.privacy_override
+        s = v["schedule"]
+        if s["enabled"]: return in_window(self.local_minutes(now), hhmm(s["from"]), hhmm(s["until"]))
+        return v["on"]
+
+    def patrol_live(self, now):
+        """patrol_tick()'s report; each stop takes its dwell plus 3 s of moving."""
+        t = self.controls["patrol"]
+        if not t["enabled"] or not t["stops"]: return {"state": "off", "slot": 0, "left_s": 0}
+        if self.privacy_active(now): return {"state": "privacy", "slot": t["stops"][0]["slot"], "left_s": 0}
+        if self.homing(now): return {"state": "homing", "slot": t["stops"][0]["slot"], "left_s": 0}
+        if t["pause_s"] and now - self.manual_at < t["pause_s"]:
+            return {"state": "paused", "slot": t["stops"][0]["slot"], "left_s": math.ceil(t["pause_s"] - (now - self.manual_at))}
+        at = (now - self.manual_at) % sum(s["dwell_s"] + 3 for s in t["stops"])
+        for s in t["stops"]:
+            if s["slot"] not in self.presets:
+                continue
+            if at < 3: return {"state": "moving", "slot": s["slot"], "left_s": 0}
+            if at < 3 + s["dwell_s"]: return {"state": "dwell", "slot": s["slot"], "left_s": math.ceil(3 + s["dwell_s"] - at)}
+            at -= 3 + s["dwell_s"]
+        return {"state": "no_stops", "slot": 0, "left_s": 0}
 
     def ptz_advance(self, now):
         m, g = self.motion, self.goto
@@ -953,6 +1012,7 @@ class Mock:
         platform = {"backend": "imp", "position_known": True, "position_x": round(self.x), "position_y": round(self.y),
                     "moving": bool(self.motion or self.goto or homing), "preset_motion": bool(self.goto),
                     "homing": homing, "homed": not homing, **self.ctl, "manual_timeout_ms": 1200, "last_error": "",
+                    "privacy": self.privacy_active(now), "homed_ago_s": int(now - self.homed_at) if self.homed_at else None,
                     "presets": [{"slot": k, "name": p[0], "x": p[1], "y": p[2]} for k, p in sorted(self.presets.items())]}
         if c["audio"]:
             mic = {"state": "running", **({} if self.args.old_audio else self.mic), "frames": int(up * 25),
@@ -1109,8 +1169,9 @@ class Mock:
         """media/src/platform.c platform_control(): its validation order and messages."""
         motion = op in ("ptz", "ptz_nudge")
         preset = op in ("preset_set", "preset_goto", "preset_remove", "preset_rename")
-        if not motion and not preset and op not in ("ptz_stop", "night", "ircut", "white_light", "pilot_led",
-                                                    "speaker_enable"):
+        recalibrate = op == "ptz_recalibrate"
+        if not motion and not preset and not recalibrate and op not in ("ptz_stop", "night", "ircut", "white_light", "pilot_led",
+                                                                        "speaker_enable"):
             raise Fail("unsupported platform operation: " + op)
         if motion and not (-100 <= v <= 100 and -100 <= v2 <= 100):
             raise Fail("PTZ velocity must be between -100 and 100")
@@ -1122,8 +1183,15 @@ class Mock:
             raise Fail("control value must be 0 or 1")
         if name is not None and not preset_name_ok(name):
             raise Fail("preset name requires 1..64 printable UTF-8 bytes")
-        if self.homing(now) and (motion or (preset and op != "preset_rename") or op == "ptz_stop"):
+        if self.homing(now) and (motion or recalibrate or (preset and op != "preset_rename") or op == "ptz_stop"):
             raise Fail("pan/tilt homing in progress")
+        if self.privacy_active(now) and (motion or recalibrate or op in ("preset_goto", "preset_set")):
+            raise Fail("privacy mode is on")
+        if motion or op == "preset_goto": self.manual_at = now
+        if recalibrate:
+            self.homing_until = self.homed_at = now + max(self.args.homing, 5)
+            self.motion = self.goto = None
+            return
         if motion:  # the dominant axis wins; an identical repeat renews the lease
             vx, vy = (v, 0) if abs(v) >= abs(v2) else (0, v2)
             nudge, m = op == "ptz_nudge", self.motion

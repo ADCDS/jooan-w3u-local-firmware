@@ -390,6 +390,156 @@ def controls_checks(request, root, connection=None, secret=None):
     return {"saved": stored["night"], "imaging": imaging}
 
 
+def ptz_checks(request, connection, secret):
+    """Wave D: ONVIF moves in the shapes Frigate sends, recalibrate, patrol and
+    privacy mode. The replay backend's head moves at 70 units per second."""
+    ns = {"s": "http://www.w3.org/2003/05/soap-envelope", "tt": "http://www.onvif.org/ver10/schema",
+          "tptz": "http://www.onvif.org/ver20/ptz/wsdl"}
+    spaces = "http://www.onvif.org/ver10/tptz/PanTiltSpaces/"
+
+    def soap(body):
+        client = connection()
+        try:
+            client.request("POST", "/onvif/ptz_service", body=(
+                '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" '
+                f'xmlns:tt="http://www.onvif.org/ver10/schema"><s:Body>{body}</s:Body></s:Envelope>'), headers={
+                "Authorization": "Basic " + base64.b64encode(f"admin:{secret}".encode()).decode(),
+                "Content-Type": "application/soap+xml"})
+            reply = client.getresponse()
+            return reply.status, ET.fromstring(reply.read())
+        finally:
+            client.close()
+
+    def status():
+        code, root = soap('<tptz:GetStatus><tptz:ProfileToken>main0</tptz:ProfileToken></tptz:GetStatus>')
+        assert code == 200, code
+        point = root.find(".//tt:Position/tt:PanTilt", ns)
+        return float(point.get("x")), float(point.get("y")), root.find(".//tt:MoveStatus/tt:PanTilt", ns).text
+
+    def settle(seconds=8):
+        end = time.time() + seconds
+        seen = None
+        while time.time() < end:
+            seen = status()
+            if seen[2] == "IDLE":
+                return seen
+            time.sleep(0.1)
+        raise AssertionError(f"still moving: {seen}")
+
+    def platform():
+        return json.loads(request("GET", "/api/v1/status")[1])["platform"]
+
+    def controls():
+        return json.loads(request("GET", "/api/v1/controls")[1])
+
+    def wait_for(check, seconds, what):
+        end = time.time() + seconds
+        while time.time() < end:
+            if check():
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"timed out waiting for {what}: {controls()['live']}")
+
+    def move(tag, element, x, y, space=None, speed=None):
+        attr = f' space="{space}"' if space else ""
+        sp = f'<tptz:Speed><tt:PanTilt x="{speed}" y="{speed}"/></tptz:Speed>' if speed is not None else ""
+        return soap(f'<tptz:{tag}><tptz:ProfileToken>main0</tptz:ProfileToken><tptz:{element}><tt:PanTilt x="{x}" y="{y}"{attr}/>'
+                    f'</tptz:{element}>{sp}</tptz:{tag}>')
+
+    # What Frigate looks for: the FOV translation space, in a schema-ordered list.
+    code, root = soap('<tptz:GetConfigurationOptions><tptz:ConfigurationToken>ptz0</tptz:ConfigurationToken></tptz:GetConfigurationOptions>')
+    assert code == 200
+    children = [c.tag.split("}")[1] for c in root.find(".//tt:Spaces", ns)]
+    assert children == ["AbsolutePanTiltPositionSpace", "RelativePanTiltTranslationSpace", "RelativePanTiltTranslationSpace",
+                        "ContinuousPanTiltVelocitySpace", "PanTiltSpeedSpace"], children
+    uris = [e.text for e in root.findall(".//tt:RelativePanTiltTranslationSpace/tt:URI", ns)]
+    assert uris == [spaces + "TranslationGenericSpace", spaces + "TranslationSpaceFov"], uris
+    code, root = soap('<tptz:GetConfigurations/>')
+    config = [c.tag.split("}")[1] for c in root.find(".//tptz:PTZConfiguration", ns)]
+    assert config.index("DefaultAbsolutePantTiltPositionSpace") < config.index("DefaultRelativePanTiltTranslationSpace") < \
+        config.index("DefaultContinuousPanTiltVelocitySpace") < config.index("DefaultPTZTimeout"), config
+    code, root = soap('<tptz:GetNodes/>')
+    assert root.find(".//tt:HomeSupported", ns).text == "true"
+    # Moves report MOVING until they end, and land where they were told to.
+    assert move("AbsoluteMove", "Position", 0, 0, spaces + "PositionGenericSpace")[0] == 200
+    settle()
+    assert move("AbsoluteMove", "Position", 0.5, -0.25, spaces + "PositionGenericSpace", 1)[0] == 200
+    assert status()[2] == "MOVING"
+    x, y, _ = settle()
+    assert abs(x - 0.5) < 0.02 and abs(y + 0.25) < 0.02, (x, y)
+    assert move("RelativeMove", "Translation", 0.5, 0.5, spaces + "TranslationSpaceFov", 1)[0] == 200  # a quarter of the range in replay
+    x2, y2, _ = settle()
+    assert abs(x2 - 0.75) < 0.02 and abs(y2 - 0.0) < 0.02, (x2, y2)
+    assert move("RelativeMove", "Translation", -0.25, 0, spaces + "TranslationGenericSpace")[0] == 200
+    x3, _, _ = settle()
+    assert abs(x3 - 0.5) < 0.02, x3
+    assert move("RelativeMove", "Translation", 0.1, 0, "http://example.com/other")[0] == 500  # a SOAP fault
+    assert move("AbsoluteMove", "Position", 2, 0)[0] == 500
+    # Home: saved, then gone back to.
+    assert soap('<tptz:SetHomePosition><tptz:ProfileToken>main0</tptz:ProfileToken></tptz:SetHomePosition>')[0] == 200
+    assert move("AbsoluteMove", "Position", -0.5, -0.5)[0] == 200
+    settle()
+    assert soap('<tptz:GotoHomePosition><tptz:ProfileToken>main0</tptz:ProfileToken></tptz:GotoHomePosition>')[0] == 200
+    x4, _, _ = settle()
+    assert abs(x4 - 0.5) < 0.02, x4
+    # Recalibrate reports when it was done.
+    assert request("POST", "/api/v1/control", {"operation": "ptz_recalibrate", "value": 0, "value2": 0})[0] == 200
+    assert platform()["homed_ago_s"] is not None
+    # Patrol: stop, stay, next stop; steering pauses it; it survives an unknown slot.
+    for slot, x, y in ((5, -0.4, 0), (6, 0.4, 0)):
+        assert move("AbsoluteMove", "Position", x, y)[0] == 200
+        settle()
+        assert request("POST", "/api/v1/control", {"operation": "preset_set", "value": slot, "value2": 0, "name": f"Stop {slot}"})[0] == 200
+    bad = request("POST", "/api/v1/controls", {"patrol": {"stops": [{"slot": 99}]}})
+    assert bad[0] == 400, bad
+    assert request("POST", "/api/v1/controls", {"patrol": {"stops": [{"slot": 5, "dwell_s": 2}]}})[0] == 400  # at least 3 s
+    assert request("POST", "/api/v1/controls", {"patrol": {"enabled": True, "pause_s": 3, "stops": [
+        {"slot": 5, "dwell_s": 3}, {"slot": 15, "dwell_s": 3}, {"slot": 6, "dwell_s": 3}]}})[0] == 200
+    wait_for(lambda: controls()["live"]["patrol"]["state"] == "paused", 3, "the pause after the last manual move")
+    wait_for(lambda: controls()["live"]["patrol"]["slot"] in (5, 15) and controls()["live"]["patrol"]["state"] == "dwell", 15, "the first stop")
+    assert abs(status()[0] + 0.4) < 0.03, status()
+    wait_for(lambda: controls()["live"]["patrol"]["slot"] == 6 and controls()["live"]["patrol"]["state"] == "dwell", 15, "the second stop, past the empty slot")
+    assert abs(status()[0] - 0.4) < 0.03, status()
+    assert request("POST", "/api/v1/control", {"operation": "ptz", "value": 20, "value2": 0})[0] == 200
+    wait_for(lambda: controls()["live"]["patrol"]["state"] == "paused", 3, "steering to pause the patrol")
+    assert request("POST", "/api/v1/control", {"operation": "ptz_stop", "value": 0, "value2": 0})[0] == 200
+    wait_for(lambda: controls()["live"]["patrol"]["state"] in ("moving", "dwell"), 8, "the patrol to resume")
+    assert request("POST", "/api/v1/controls", {"patrol": {"enabled": False}})[0] == 200
+    wait_for(lambda: controls()["live"]["patrol"]["state"] == "off", 3, "the patrol to stop")
+    settle()
+    # Privacy: the head looks away and nothing moves it; video keeps flowing (black on a real lens).
+    assert move("AbsoluteMove", "Position", 0.1, 0.1)[0] == 200
+    before = settle()
+    mute_before = json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"]
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"] and platform()["privacy"], 3, "privacy mode")
+    assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is True
+    assert abs(settle()[1] - 1.0) < 0.02, status()
+    assert request("POST", "/api/v1/control", {"operation": "ptz", "value": 20, "value2": 0})[0] == 409
+    assert move("AbsoluteMove", "Position", 0, 0)[0] == 500
+    assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 0, "value2": 0})[0] == 200
+    assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is True  # unmuting waits for the end of privacy
+    produced = json.loads(request("GET", "/api/v1/status")[1])["streams"][0]
+    time.sleep(2.5)
+    later = json.loads(request("GET", "/api/v1/status")[1])["streams"][0]
+    assert later != produced, "frames must flow again once the black-out is applied"
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: not controls()["live"]["privacy"] and not platform()["privacy"], 3, "privacy off")
+    back = settle()
+    assert abs(back[0] - before[0]) < 0.02 and abs(back[1] - before[1]) < 0.02, (back, before)
+    assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is False or mute_before
+    # A schedule covering now, and a manual change holding until its next edge.
+    now = controls()["live"]["local_minutes"]
+    hhmm = lambda m: f"{(m % 1440) // 60:02d}:{(m % 1440) % 60:02d}"
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": True, "from": hhmm(now - 5), "until": hhmm(now + 60)}}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"], 3, "the schedule")
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: not controls()["live"]["privacy"], 3, "the manual change")
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
+    settle()
+    return {"position": back[:2]}
+
+
 def imaging_checks(connection, secret, controls):
     """ONVIF imaging: advertised in schema order, reads the persisted values on
     the 0..100 scale, and writes through the controls."""
@@ -765,6 +915,7 @@ def main():
             result["audio"] = talk_checks(rtsp_port, secret, request, capture, connection)
             result["wave_a"] = wave_a_checks(request)
             result["controls"] = controls_checks(request, root, connection, secret)
+            result["ptz"] = ptz_checks(request, connection, secret)
             result["checks"].append("controls: auto day/night with hysteresis, schedule, white-light trigger, "
                                     "validation and controls.json")
             result["checks"].append("microphone mute and level meter; preset rename keeps its position")

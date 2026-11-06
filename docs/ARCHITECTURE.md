@@ -216,9 +216,9 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Presets — save / recall / delete | → 16 named presets |
 | Control from an NVR (Frigate) | → over ONVIF on TCP/18443 |
 | Home / calibration | → homes on every boot (the media daemon in a native boot, the OEM application before a handoff) |
-| Cruise / patrol schedule | ✗ |
+| Cruise / patrol | ✓ preset tour with a time at each stop, pausing after someone steers; no schedule of its own |
 | Auto-tracking | ✗ |
-| Privacy / PTZ-hide schedule | ✗ |
+| Privacy / PTZ-hide schedule | ✓ both lenses black, microphone muted, head turned away; on demand or on a daily schedule |
 | **Audio** | |
 | Listen (camera microphone) | → PCMA on the main RTSP URLs with `audio=1` |
 | Two-way talk | → ONVIF RTSP backchannel, the admin UI and `POST /api/v1/talk` with `audio=1` |

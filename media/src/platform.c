@@ -25,6 +25,11 @@ enum { MOTOR_STOP = 1, MOTOR_RESET = 2, MOTOR_POSITION = 4, MOTOR_SPEED = 5,
  * factory PtzParam: HorizontalMaxStep, VerticalMaxStep, VerticalResetStep and
  * ResetSpeed. See docs/platform.md. */
 enum { HOME_PAN_STEPS = 4080, HOME_TILT_STEPS = 1200, HOME_TILT_RESET = 200, HOME_SPEED = 450 };
+/* Half the pan/tilt lens's field of view in motor steps, measured on camera1
+ * from how far the picture shifts: 1.68 px per pan step and 1.84 per tilt step
+ * at 1920x1080, so about 92 by 43 degrees. An ONVIF FOV-relative move of 1 brings
+ * the frame's edge to its centre, which is how Frigate's autotracker aims. */
+enum { FOV_HALF_PAN = 571, FOV_HALF_TILT = 293 };
 #define MANUAL_LEASE_US UINT64_C(1200000)
 #define NUDGE_US UINT64_C(350000)
 #define PRESET_LIMIT_US UINT64_C(45000000)
@@ -59,7 +64,13 @@ typedef struct {
     int homing, homed, saved_valid, saved_x, saved_y;
     /* Only a calibrated position may become the next boot's return target. */
     int position_trusted;
-    uint64_t homing_until, homing_settle, position_quiet_until;
+    uint64_t homing_until, homing_settle, position_quiet_until, homed_at;
+    /* goto speed (0: the preset speed); a patrol's stops are not saved as the
+     * last position, and only someone else's moves pause the patrol. */
+    int goto_rate, patrol_move;
+    uint64_t manual_at;
+    /* Privacy: where the head waits (x -1: stays where it is), and where it goes back to. */
+    int privacy, privacy_x, privacy_y, return_valid, return_x, return_y;
     char position_path[640];
 } platform_state;
 
@@ -269,7 +280,7 @@ static void position_track(platform_state *state, uint64_t now)
     char text[32];
     int n;
     if (state->replay || !state->known || !state->position_trusted || state->faulted ||
-        state->homing || state->moving || state->goto_active ||
+        state->homing || state->moving || state->goto_active || state->privacy || state->patrol_move ||
         state->lease_until || (state->saved_valid && state->x == state->saved_x && state->y == state->saved_y)) {
         state->position_quiet_until = 0; return;
     }
@@ -318,14 +329,18 @@ static void home_tick(platform_state *state, uint64_t now)
     if (ioctl(state->motor_fd, MOTOR_STOP, 0) || motor_limits(state) || motor_read(state)) {
         state->homing = 0; worker_error(state, "motor homing completion"); return;
     }
-    state->homing = 0; state->homed = 1; state->position_trusted = 1;
+    state->homing = 0; state->homed = 1; state->position_trusted = 1; state->homed_at = now;
     int marker = open(HOMED_MARKER, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (marker >= 0) close(marker);
     jipc_log("info", "motor homing complete at %d,%d (limits %d,%d)", state->x, state->y, state->pan_max, state->tilt_max);
-    if (state->saved_valid && (state->saved_x != state->x || state->saved_y != state->y)) {
+    if (state->privacy) {
+        state->target_x = state->privacy_x < 0 ? state->x : clamp(state->privacy_x, 0, state->pan_max);
+        state->target_y = clamp(state->privacy_y, 0, state->tilt_max);
+        state->goto_active = 1; state->goto_rate = 0; state->goto_until = now + PRESET_LIMIT_US;
+    } else if (state->saved_valid && (state->saved_x != state->x || state->saved_y != state->y)) {
         state->target_x = clamp(state->saved_x, 0, state->pan_max);
         state->target_y = clamp(state->saved_y, 0, state->tilt_max);
-        state->goto_active = 1; state->goto_until = now + PRESET_LIMIT_US;
+        state->goto_active = 1; state->goto_rate = 0; state->goto_until = now + PRESET_LIMIT_US;
         jipc_log("info", "motor returning to last position %d,%d", state->target_x, state->target_y);
     }
 }
@@ -371,7 +386,7 @@ static void native_tick(platform_state *state, uint64_t now)
         (void)motor_stop_motion(state); return;
     }
     if (!move[0] && !move[1]) { (void)motor_stop_motion(state); return; }
-    int32_t speed = state->goto_active ? MOTOR_RATE : state->rate;
+    int32_t speed = state->goto_active ? (state->goto_rate ? state->goto_rate : MOTOR_RATE) : state->rate;
     if (ioctl(state->motor_fd, MOTOR_SPEED, &speed) || ioctl(state->motor_fd, MOTOR_MOVE, move)) {
         worker_error(state, "motor move"); return;
     }
@@ -571,8 +586,10 @@ static int platform_control(jipc_app *app, const char *operation, int value,
     if (!app || !operation) return fail(error, capacity, "invalid platform request");
     motion = !strcmp(operation, "ptz") || !strcmp(operation, "ptz_nudge");
     preset_op = !strcmp(operation, "preset_set") || !strcmp(operation, "preset_goto") ||
-                !strcmp(operation, "preset_remove") || !strcmp(operation, "preset_rename");
-    if (!motion && !preset_op && strcmp(operation, "ptz_stop") &&
+                !strcmp(operation, "preset_remove") || !strcmp(operation, "preset_rename") ||
+                !strcmp(operation, "preset_patrol");
+    int recalibrate = !strcmp(operation, "ptz_recalibrate");
+    if (!motion && !preset_op && !recalibrate && strcmp(operation, "ptz_stop") &&
         strcmp(operation, "night") && strcmp(operation, "ircut") &&
         strcmp(operation, "white_light") && strcmp(operation, "pilot_led") &&
         strcmp(operation, "speaker_enable") && strcmp(operation, "ir_mode"))
@@ -596,12 +613,16 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         for (int i = 0; i < PRESET_COUNT; ++i) if (!state->presets[i].valid) { value = i+1; break; }
         if (!value) { rc = fail(error, capacity, "all preset slots are occupied"); goto done; }
     }
-    if ((motion || (preset_op && strcmp(operation, "preset_remove") && strcmp(operation, "preset_rename"))) &&
+    if ((motion || recalibrate || (preset_op && strcmp(operation, "preset_remove") && strcmp(operation, "preset_rename"))) &&
         motor_open_device(state)) {
         rc = fail(error, capacity, "motor device: %s", strerror(errno)); goto done;
     }
-    if (state->homing && (motion || (preset_op && strcmp(operation, "preset_rename")) || !strcmp(operation, "ptz_stop"))) {
+    if (state->homing && (motion || recalibrate || (preset_op && strcmp(operation, "preset_rename")) || !strcmp(operation, "ptz_stop"))) {
         rc = fail(error, capacity, "pan/tilt homing in progress"); goto done;
+    }
+    if (state->privacy && (motion || recalibrate || !strcmp(operation, "preset_goto") ||
+                           !strcmp(operation, "preset_patrol") || !strcmp(operation, "preset_set"))) {
+        rc = fail(error, capacity, "privacy mode is on"); goto done;
     }
     if (motion) {
         int vx=value*state->pan_sign, vy=value2*state->tilt_sign;
@@ -617,6 +638,7 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             state->lease_until = (vx || vy) ? jipc_now_us() + (nudge ? NUDGE_US : MANUAL_LEASE_US) : 0;
         }
         state->last_error[0] = 0; state->faulted = 0;
+        state->manual_at = jipc_now_us(); state->patrol_move = 0;
         if (generation) *generation = state->generation;
     } else if (!strcmp(operation, "ptz_stop")) {
         if (motor_stop_motion(state)) rc = fail(error, capacity, "motor stop: %s", strerror(errno));
@@ -661,7 +683,15 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             state->presets[value - 1] = previous;
             rc = fail(error, capacity, "remove preset: %s", strerror(errno));
         }
-    } else if (!strcmp(operation, "preset_goto")) {
+    } else if (recalibrate) {
+        /* The same run as at boot, then back to where the head is now. */
+        if (state->replay) { state->homed = 1; state->homed_at = jipc_now_us(); goto done; }
+        if (!motor_read(state) && state->position_trusted) {
+            state->saved_x = state->x; state->saved_y = state->y; state->saved_valid = 1;
+        }
+        state->last_error[0] = 0; state->faulted = 0; state->patrol_move = 0; state->manual_at = jipc_now_us();
+        if (motor_home_begin(state, jipc_now_us())) { int saved = errno; worker_error(state, "motor homing start"); rc = fail(error, capacity, "motor homing: %s", strerror(saved)); }
+    } else if (!strcmp(operation, "preset_goto") || !strcmp(operation, "preset_patrol")) {
         saved_preset *preset = &state->presets[value - 1];
         if (!preset->valid) { rc = fail(error, capacity, "preset slot is empty"); goto done; }
         if (!state->replay && (preset->x > state->pan_max || preset->y > state->tilt_max)) {
@@ -671,7 +701,9 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         state->target_x = preset->x;
         state->target_y = preset->y;
         state->goto_until = jipc_now_us() + PRESET_LIMIT_US;
-        state->goto_active = 1;
+        state->goto_active = 1; state->goto_rate = 0;
+        state->patrol_move = !strcmp(operation, "preset_patrol");
+        if (!state->patrol_move) state->manual_at = jipc_now_us();
         state->last_error[0] = 0;
         state->faulted = 0;
     } else if (!strcmp(operation, "ir_mode")) {
@@ -743,6 +775,121 @@ int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacit
     }
 }
 
+/* Exact moves. x and y are the ONVIF values: position, or a share of the travel,
+ * or of the field of view, with +x to the right and +y up, or motor steps. */
+int jipc_platform_move(jipc_app *app, int kind, double x, double y, double speed, char *error, size_t capacity)
+{
+    platform_state *state;
+    int rc = 0;
+    if (error && capacity) error[0] = 0;
+    pthread_mutex_lock(&platform_lifetime);
+    state = platform_get(app, error, capacity);
+    if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
+    pthread_mutex_lock(&state->mutex);
+    if (app->stop || state->quitting) { rc = fail(error, capacity, "application is stopping"); goto done; }
+    if (motor_open_device(state)) { rc = fail(error, capacity, "motor device: %s", strerror(errno)); goto done; }
+    if (state->homing) { rc = fail(error, capacity, "pan/tilt homing in progress"); goto done; }
+    if (state->privacy) { rc = fail(error, capacity, "privacy mode is on"); goto done; }
+    if (motor_stop_motion(state)) { rc = fail(error, capacity, "motor stop: %s", strerror(errno)); goto done; }
+    double tx, ty;
+    int low = state->replay ? -100 : 0;
+    int high_x = state->replay ? 100 : state->pan_max, high_y = state->replay ? 100 : state->tilt_max;
+    if (kind == JIPC_MOVE_STEPS) { tx = x; ty = y; }
+    else if (state->replay) {
+        double scale = kind == JIPC_MOVE_RELATIVE_FOV ? 50 : 100;
+        tx = (kind == JIPC_MOVE_ABSOLUTE ? 0 : state->x) + x * scale;
+        ty = (kind == JIPC_MOVE_ABSOLUTE ? 0 : state->y) + y * scale;
+    } else if (kind == JIPC_MOVE_ABSOLUTE) {
+        tx = (x * state->pan_sign + 1) / 2 * state->pan_max;
+        ty = (y * state->tilt_sign + 1) / 2 * state->tilt_max;
+    } else {
+        double half_x = kind == JIPC_MOVE_RELATIVE_FOV ? FOV_HALF_PAN : state->pan_max / 2.0;
+        double half_y = kind == JIPC_MOVE_RELATIVE_FOV ? FOV_HALF_TILT : state->tilt_max / 2.0;
+        tx = state->x + x * state->pan_sign * half_x;
+        ty = state->y + y * state->tilt_sign * half_y;
+    }
+    state->target_x = clamp((int)lround(tx), low, high_x);
+    state->target_y = clamp((int)lround(ty), low, high_y);
+    state->goto_rate = speed > 0 ? clamp((int)lround(speed * 900), 100, 900) : 0;
+    int rate = state->goto_rate ? state->goto_rate : MOTOR_RATE;
+    uint64_t distance = (uint64_t)(abs(state->target_x - state->x) + abs(state->target_y - state->y));
+    state->goto_until = jipc_now_us() + distance * 1000000u / (unsigned)rate + UINT64_C(10000000);
+    state->goto_active = 1; state->patrol_move = 0; state->manual_at = jipc_now_us();
+    state->last_error[0] = 0; state->faulted = 0;
+done:
+    pthread_mutex_unlock(&state->mutex);
+    pthread_mutex_unlock(&platform_lifetime);
+    return rc;
+}
+
+int jipc_platform_steps(jipc_app *app, int *x, int *y)
+{
+    pthread_mutex_lock(&platform_lifetime);
+    platform_state *state = platform_get(app, NULL, 0);
+    if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
+    pthread_mutex_lock(&state->mutex);
+    int rc = motor_open_device(state) || motor_read(state) ? -1 : 0;
+    *x = state->x; *y = state->y;
+    pthread_mutex_unlock(&state->mutex);
+    pthread_mutex_unlock(&platform_lifetime);
+    return rc;
+}
+
+int jipc_platform_patrol_goto(jipc_app *app, int slot, char *error, size_t capacity)
+{ return platform_control(app, "preset_patrol", slot, 0, NULL, NULL, NULL, error, capacity); }
+
+int jipc_platform_motion(jipc_app *app, jipc_ptz_motion *motion)
+{
+    pthread_mutex_lock(&platform_lifetime);
+    platform_state *state = platform_get(app, NULL, 0);
+    if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
+    pthread_mutex_lock(&state->mutex);
+    motion->moving = state->moving || state->goto_active || state->vx || state->vy;
+    motion->homing = state->homing;
+    uint64_t now = jipc_now_us();
+    motion->manual_age_s = state->manual_at ? (long)((now - state->manual_at) / 1000000u) : -1;
+    pthread_mutex_unlock(&state->mutex);
+    pthread_mutex_unlock(&platform_lifetime);
+    return 0;
+}
+
+/* Privacy: the head waits at a preset, or looking down at the end of its tilt,
+ * and comes back afterwards. Moves from anyone else are refused meanwhile. */
+int jipc_platform_privacy(jipc_app *app, int on, int slot, char *error, size_t capacity)
+{
+    platform_state *state;
+    int rc = 0;
+    if (error && capacity) error[0] = 0;
+    pthread_mutex_lock(&platform_lifetime);
+    state = platform_get(app, error, capacity);
+    if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
+    pthread_mutex_lock(&state->mutex);
+    int was = state->privacy;
+    if (on) {
+        saved_preset *preset = slot >= 1 && slot <= PRESET_COUNT && state->presets[slot - 1].valid ? &state->presets[slot - 1] : NULL;
+        state->privacy_x = preset ? preset->x : -1;
+        state->privacy_y = preset ? preset->y : state->replay ? 100 : state->tilt_max;
+    }
+    state->privacy = on;
+    if (state->homing) goto done; /* homing's end goes to the right place */
+    if (motor_open_device(state) || motor_stop_motion(state)) { rc = fail(error, capacity, "motor: %s", strerror(errno)); goto done; }
+    if (on) {
+        if (!was && state->known && state->position_trusted) { state->return_x = state->x; state->return_y = state->y; state->return_valid = 1; }
+        state->target_x = state->privacy_x < 0 ? state->x : state->privacy_x;
+        state->target_y = state->privacy_y;
+    } else if (was && state->return_valid) {
+        state->target_x = state->return_x; state->target_y = state->return_y; state->return_valid = 0;
+    } else if (was && state->saved_valid) {
+        state->target_x = state->saved_x; state->target_y = state->saved_y;
+    } else goto done;
+    state->goto_rate = 0; state->patrol_move = 0; state->goto_until = jipc_now_us() + PRESET_LIMIT_US; state->goto_active = 1;
+    state->last_error[0] = 0; state->faulted = 0;
+done:
+    pthread_mutex_unlock(&state->mutex);
+    pthread_mutex_unlock(&platform_lifetime);
+    return rc;
+}
+
 int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, size_t capacity)
 {
     platform_state *state;
@@ -759,6 +906,8 @@ int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, si
     }
     status->pan = state->replay ? state->x : state->pan_sign*(state->x * 200 / state->pan_max - 100);
     status->tilt = state->replay ? state->y : state->tilt_sign*(state->y * 200 / state->tilt_max - 100);
+    status->pan_norm = state->replay ? state->x / 100.0 : state->pan_sign * (2.0 * state->x / state->pan_max - 1);
+    status->tilt_norm = state->replay ? state->y / 100.0 : state->tilt_sign * (2.0 * state->y / state->tilt_max - 1);
     status->moving = state->moving || state->goto_active || state->vx || state->vy;
     status->night = state->night;
     status->white_light = state->white_light;
@@ -788,14 +937,19 @@ int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity)
     y = state->replay ? state->y : state->tilt_sign*(state->y * 200 / state->tilt_max - 100);
     if (jipc_json_escape(state->last_error, escaped, sizeof(escaped)) < 0)
         strcpy(escaped, "\"error encoding platform status\"");
+    /* Unknown for a homing this daemon did not run (an earlier start this boot). */
+    char homed_ago[24] = "null";
+    if (state->homed_at) snprintf(homed_ago, sizeof homed_ago, "%llu", (unsigned long long)((jipc_now_us() - state->homed_at) / 1000000u));
     n = snprintf(out, capacity,
                  "{\"backend\":\"%s\",\"position_known\":%s,\"position_x\":%d,\"position_y\":%d,"
                  "\"moving\":%s,\"preset_motion\":%s,\"homing\":%s,\"homed\":%s,\"night\":%d,\"white_light\":%d,"
+                 "\"privacy\":%s,\"homed_ago_s\":%s,"
                  "\"pilot_led\":%d,\"speaker_enable\":%d,\"manual_timeout_ms\":1200,\"last_error\":%s,\"presets\":[",
                  state->replay ? "replay" : "imp", state->known ? "true" : "false", x, y,
                  (state->moving || state->goto_active || state->vx || state->vy) ? "true" : "false",
                  state->goto_active ? "true" : "false", state->homing ? "true" : "false",
                  state->homed ? "true" : "false", state->night, state->white_light,
+                 state->privacy ? "true" : "false", homed_ago,
                  state->pilot_led, state->speaker_enable, escaped);
     if (n < 0 || (size_t)n >= capacity) goto done;
     used = (size_t)n;

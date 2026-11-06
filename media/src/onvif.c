@@ -252,7 +252,17 @@ static void video_config(jipc_app *app,writer *w,const jipc_config *c,unsigned c
     put(w,"<tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT60S</tt:SessionTimeout></tt:VideoEncoderConfiguration>");
 }
 static void ptz_config(writer *w,const jipc_config *c,const char *tag){
-    put(w,"<%s token=\"ptz0\"><tt:Name>Camera motor</tt:Name><tt:UseCount>%u</tt:UseCount><tt:NodeToken>ptz0</tt:NodeToken><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultPTZTimeout>%s</tt:DefaultPTZTimeout></%s>",tag,2u,c->onvif_nudge?"PT0.35S":"PT1.2S",tag);
+    put(w,"<%s token=\"ptz0\"><tt:Name>Camera motor</tt:Name><tt:UseCount>%u</tt:UseCount><tt:NodeToken>ptz0</tt:NodeToken><tt:DefaultAbsolutePantTiltPositionSpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:DefaultAbsolutePantTiltPositionSpace><tt:DefaultRelativePanTiltTranslationSpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace</tt:DefaultRelativePanTiltTranslationSpace><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultPTZTimeout>%s</tt:DefaultPTZTimeout></%s>",tag,2u,c->onvif_nudge?"PT0.35S":"PT1.2S",tag);
+}
+#define PT_SPACES "http://www.onvif.org/ver10/tptz/PanTiltSpaces/"
+/* tt:PTZSpaces is a sequence too: absolute, relative, continuous, speed. */
+static void ptz_spaces(writer *w){
+    const char *range="<tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange>";
+    put(w,"<tt:AbsolutePanTiltPositionSpace><tt:URI>" PT_SPACES "PositionGenericSpace</tt:URI>%s</tt:AbsolutePanTiltPositionSpace>",range);
+    put(w,"<tt:RelativePanTiltTranslationSpace><tt:URI>" PT_SPACES "TranslationGenericSpace</tt:URI>%s</tt:RelativePanTiltTranslationSpace>",range);
+    put(w,"<tt:RelativePanTiltTranslationSpace><tt:URI>" PT_SPACES "TranslationSpaceFov</tt:URI>%s</tt:RelativePanTiltTranslationSpace>",range);
+    put(w,"<tt:ContinuousPanTiltVelocitySpace><tt:URI>" PT_SPACES "VelocityGenericSpace</tt:URI>%s</tt:ContinuousPanTiltVelocitySpace>",range);
+    put(w,"<tt:PanTiltSpeedSpace><tt:URI>" PT_SPACES "GenericSpeedSpace</tt:URI><tt:XRange><tt:Min>0</tt:Min><tt:Max>1</tt:Max></tt:XRange></tt:PanTiltSpeedSpace>");
 }
 static void profile(jipc_app *app,writer *w,const jipc_config *c,unsigned ch,const char *tag){
     put(w,"<trt:%s token=\"%s\" fixed=\"true\"><tt:Name>Sensor %u %s</tt:Name><tt:VideoSourceConfiguration token=\"source%u\"><tt:Name>Sensor %u</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>sensor%u</tt:SourceToken><tt:Bounds x=\"0\" y=\"0\" width=\"%u\" height=\"%u\"/></tt:VideoSourceConfiguration>",tag,profile_token(ch),ch/2,ch%2?(c->main_only?"main (shared)":"sub"):"main",ch/2,ch/2,ch/2,jipc_video_width(c,(ch/2)*2),jipc_video_height(c,(ch/2)*2));
@@ -348,7 +358,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         put(&w,"<tptz:%sResponse>",op);if(!named(action,"GetCompatibleConfigurations")||ch<2)ptz_config(&w,&c,"tptz:PTZConfiguration");put(&w,"</tptz:%sResponse>",op);
     }else if(named(action,"GetConfigurationOptions")){
         char token[64];if(text_value(&d,d.action,"ConfigurationToken",token,sizeof(token))<0||strcmp(token,"ptz0"))return fault(&w,"InvalidArgVal","Unknown ConfigurationToken");
-        put(&w,"<tptz:GetConfigurationOptionsResponse><tptz:PTZConfigurationOptions><tt:Spaces><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:Spaces><tt:PTZTimeout><tt:Min>%s</tt:Min><tt:Max>%s</tt:Max></tt:PTZTimeout></tptz:PTZConfigurationOptions></tptz:GetConfigurationOptionsResponse>",c.onvif_nudge?"PT0.35S":"PT1.2S",c.onvif_nudge?"PT0.35S":"PT1.2S");
+        put(&w,"<tptz:GetConfigurationOptionsResponse><tptz:PTZConfigurationOptions><tt:Spaces>");ptz_spaces(&w);put(&w,"</tt:Spaces><tt:PTZTimeout><tt:Min>%s</tt:Min><tt:Max>%s</tt:Max></tt:PTZTimeout></tptz:PTZConfigurationOptions></tptz:GetConfigurationOptionsResponse>",c.onvif_nudge?"PT0.35S":"PT1.2S",c.onvif_nudge?"PT0.35S":"PT1.2S");
     }else if(named(action,"GetProfiles")){
         put(&w,"<trt:GetProfilesResponse>");for(unsigned i=0;i<c.sensors*2&&i<4;++i)profile(app,&w,&c,i,"Profiles");put(&w,"</trt:GetProfilesResponse>");
     }else if(named(action,"GetProfile")){
@@ -363,7 +373,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         put(&w,"<trt:GetVideoSourcesResponse>");for(unsigned i=0;i<c.sensors&&i<2;++i)put(&w,"<trt:VideoSources token=\"sensor%u\"><tt:Framerate>%u</tt:Framerate><tt:Resolution><tt:Width>%u</tt:Width><tt:Height>%u</tt:Height></tt:Resolution></trt:VideoSources>",i,c.fps,jipc_video_width(&c,i*2),jipc_video_height(&c,i*2));put(&w,"</trt:GetVideoSourcesResponse>");
     }else if(named(action,"GetNodes")||named(action,"GetNode")){
         if(named(action,"GetNode")){char token[64];if(text_value(&d,d.action,"NodeToken",token,sizeof(token))<0||strcmp(token,"ptz0"))return fault(&w,"InvalidArgVal","Unknown NodeToken");}
-        int many=named(action,"GetNodes");put(&w,"<tptz:%sResponse><tptz:%s token=\"ptz0\" FixedHomePosition=\"false\"><tt:Name>Camera motor</tt:Name><tt:SupportedPTZSpaces><tt:ContinuousPanTiltVelocitySpace><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:ContinuousPanTiltVelocitySpace></tt:SupportedPTZSpaces><tt:MaximumNumberOfPresets>16</tt:MaximumNumberOfPresets><tt:HomeSupported>false</tt:HomeSupported></tptz:%s></tptz:%sResponse>",many?"GetNodes":"GetNode",many?"PTZNode":"PTZNode",many?"PTZNode":"PTZNode",many?"GetNodes":"GetNode");
+        const char *op=named(action,"GetNodes")?"GetNodes":"GetNode";put(&w,"<tptz:%sResponse><tptz:PTZNode token=\"ptz0\" FixedHomePosition=\"false\"><tt:Name>Camera motor</tt:Name><tt:SupportedPTZSpaces>",op);ptz_spaces(&w);put(&w,"</tt:SupportedPTZSpaces><tt:MaximumNumberOfPresets>16</tt:MaximumNumberOfPresets><tt:HomeSupported>true</tt:HomeSupported></tptz:PTZNode></tptz:%sResponse>",op);
     }else if(named(action,"GetStatus")||named(action,"GetPresets")){
         if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
         jipc_ptz_status status;char error[256]={0};
@@ -377,7 +387,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         }else{
             time_t now=time(NULL);struct tm utc;char stamp[32];
             if(!gmtime_r(&now,&utc)||!strftime(stamp,sizeof(stamp),"%Y-%m-%dT%H:%M:%SZ",&utc)||status.pan < -100||status.pan>100||status.tilt < -100||status.tilt>100)return fault(&w,"Action","PTZ position or clock unavailable");
-            put(&w,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.2f\" y=\"%.2f\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt></tt:MoveStatus><tt:Error>",status.pan/100.0,status.tilt/100.0,status.moving?"MOVING":"IDLE");
+            put(&w,"<tptz:GetStatusResponse><tptz:PTZStatus><tt:Position><tt:PanTilt x=\"%.4f\" y=\"%.4f\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/></tt:Position><tt:MoveStatus><tt:PanTilt>%s</tt:PanTilt></tt:MoveStatus><tt:Error>",status.pan_norm,status.tilt_norm,status.moving?"MOVING":"IDLE");
             escaped(&w,status.error);put(&w,"</tt:Error><tt:UtcTime>%s</tt:UtcTime></tptz:PTZStatus></tptz:GetStatusResponse>",stamp);
         }
     }else if(named(action,"ContinuousMove")){
@@ -393,6 +403,40 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(c.onvif_nudge){char error[256];if(jipc_platform_nudge(app,(int)(px*100),(int)(py*100),error,sizeof(error)))return fault(&w,"Action",error);}
         else {int status=control(app,&w,"ptz",(int)(px*100),(int)(py*100));if(status)return status;}
         put(&w,"<tptz:ContinuousMoveResponse/>");
+    }else if(named(action,"AbsoluteMove")||named(action,"RelativeMove")){
+        if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
+        if(ch>=2)return fault(&w,"ActionNotSupported","This sensor has no motor");
+        int rel=named(action,"RelativeMove"),node=child(&d,d.action,rel?"Translation":"Position"),pt=child(&d,node,"PanTilt"),zoom=child(&d,node,"Zoom");
+        char x[64],y[64],space[192];double px,py,speed=0;
+        if(node<0||pt<0||attr_value(&d,pt,"x",x,sizeof(x))<0||attr_value(&d,pt,"y",y,sizeof(y))<0||number(x,&px)<0||number(y,&py)<0)return fault(&w,"InvalidArgVal","PanTilt x and y must be finite in [-1,1]");
+        if(zoom>=0){char z[64];double v;if(attr_value(&d,zoom,"x",z,sizeof(z))<0||number(z,&v)<0||v!=0)return fault(&w,"InvalidArgVal","Zoom is unsupported");}
+        int kind=rel?JIPC_MOVE_RELATIVE:JIPC_MOVE_ABSOLUTE;
+        if(attr_value(&d,pt,"space",space,sizeof(space))==0){
+            if(rel&&!strcmp(space,PT_SPACES "TranslationSpaceFov"))kind=JIPC_MOVE_RELATIVE_FOV;
+            else if(strcmp(space,rel?PT_SPACES "TranslationGenericSpace":PT_SPACES "PositionGenericSpace"))return fault(&w,"InvalidArgVal","Unsupported PanTilt space");
+        }
+        int sp=child(&d,d.action,"Speed"),spt=sp<0?-1:child(&d,sp,"PanTilt");
+        if(spt>=0){
+            double sx=0,sy=0;
+            if((attr_value(&d,spt,"x",x,sizeof(x))==0&&number(x,&sx)<0)||(attr_value(&d,spt,"y",y,sizeof(y))==0&&number(y,&sy)<0))return fault(&w,"InvalidArgVal","Speed must be finite in [0,1]");
+            speed=fabs(sx)>fabs(sy)?fabs(sx):fabs(sy);
+        }
+        char error[256]={0};
+        if(jipc_platform_move(app,kind,px,py,speed,error,sizeof(error))<0)return fault(&w,"Action",error[0]?error:"The motor cannot move");
+        put(&w,"<tptz:%sResponse/>",rel?"RelativeMove":"AbsoluteMove");
+    }else if(named(action,"GotoHomePosition")||named(action,"SetHomePosition")){
+        if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
+        if(ch>=2)return fault(&w,"ActionNotSupported","This sensor has no motor");
+        char error[256]={0};int hx,hy;
+        if(named(action,"SetHomePosition")){
+            if(jipc_platform_steps(app,&hx,&hy)<0||jipc_controls_set_home(app,hx,hy,error,sizeof(error))<0)return fault(&w,"Action",error[0]?error:"The position is unavailable");
+            put(&w,"<tptz:SetHomePositionResponse/>");
+        }else{
+            /* Without a saved home: the middle of the travel. */
+            int status=jipc_controls_home(app,&hx,&hy)?jipc_platform_move(app,JIPC_MOVE_ABSOLUTE,0,0,0,error,sizeof(error)):jipc_platform_move(app,JIPC_MOVE_STEPS,hx,hy,0,error,sizeof(error));
+            if(status<0)return fault(&w,"Action",error[0]?error:"The motor cannot move");
+            put(&w,"<tptz:GotoHomePositionResponse/>");
+        }
     }else if(named(action,"Stop")){
         if(channel(&d,&c,&ch)<0)return fault(&w,"InvalidArgVal","Unknown ProfileToken");
         int status=control(app,&w,"ptz_stop",0,0);if(status)return status;put(&w,"<tptz:StopResponse/>");

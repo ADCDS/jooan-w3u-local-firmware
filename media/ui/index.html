@@ -91,14 +91,29 @@
 <section class="page" id="p-pantilt" hidden>
 <header class="ph"><div><h1 tabindex="-1">Pan/tilt</h1><p>Presets are shared with your NVR over ONVIF.</p></div><span class="mono" role="status" id="pt-pos"></span></header>
 <div class="cols rv">
+<div class="stack">
 <div class="card" id="pt-move"><h2>Move</h2>
 <div class="pad" id="pt-pad"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg>Stop</button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
 <small class="c">Hold an arrow to move, release to stop. Arrow keys work here too.</small>
 <div class="f"><span class="lbl dsk" id="pt-sl">Speed</span><div class="seg" id="pt-speed" aria-labelledby="pt-sl"><button value="30">Slow</button><button value="60">Normal</button><button value="100">Fast</button></div></div>
 <div class="f dsk"><div class="bar"><span class="lbl">Travel</span><small>Calibrated range, presets numbered</small></div><div class="map" id="pt-map" role="img"><div></div></div></div></div>
-<div class="card w2"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
+<div class="card"><h2>Privacy and calibration</h2>
+<div class="row first"><span><b id="pt-prl">Privacy mode</b><small>Blacks out video from both lenses, mutes the microphone and points the pan/tilt lens away from the street. Nothing can steer it meanwhile.</small></span><button class="sw" id="pt-prs" aria-labelledby="pt-prl"></button></div>
+<div class="row"><span><b id="pt-pll">On a schedule</b><small id="pt-pln">Every day, in the camera’s time zone.</small></span><button class="sw" id="pt-pls" aria-labelledby="pt-pll"></button></div>
+<div class="g2 two" id="pt-plf" hidden><div class="f"><label for="pt-pf">From</label><input id="pt-pf" type="time"></div><div class="f"><label for="pt-pu">Until</label><input id="pt-pu" type="time"></div></div>
+<div class="row"><span><b>Recalibrate</b><small id="pt-rcn">Runs both motors to their end stops and back, about 40 seconds. Presets stay where they are.</small></span><button class="btn" id="pt-rc">Recalibrate…</button></div>
+</div>
+</div>
+<div class="stack w2">
+<div class="card"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
 <ul class="presets" id="pt-list"></ul><small class="mob" id="pt-free"></small>
-<div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div></div>
+<div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div>
+<div class="card" id="pt-pat"><div class="row first"><span><h2 id="pt-ptl">Patrol</h2><small id="pt-ptn">Visits these presets in order, then starts again.</small></span><button class="sw" id="pt-pts" aria-labelledby="pt-ptl"></button></div>
+<ol class="stops" id="pt-stops"></ol>
+<small id="pt-ptst" role="status"></small>
+<div class="inl pick"><div class="f"><label for="pt-add">Preset to add</label><select id="pt-add"></select></div><button class="btn" id="pt-addb">Add stop</button></div>
+<label class="chk" for="pt-pz"><input id="pt-pz" type="checkbox"><span>Pause for 2 minutes after someone steers</span></label></div>
+</div></div>
 </section>
 
 <section class="page" id="p-image" hidden>

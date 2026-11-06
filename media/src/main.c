@@ -188,7 +188,9 @@ int main(int argc, char **argv)
         atomic_init(&app->stop, 0); atomic_init(&app->restart, 0);
         pthread_mutex_init(&app->config_mutex, NULL); pthread_mutex_init(&app->control_mutex, NULL);
         atomic_init(&app->backend_ready, 0); atomic_init(&app->control_waiters, 0);
+        atomic_init(&app->privacy_on, 0); atomic_init(&app->privacy_hold, 0);
         if (jipc_mkdirs(config.state_dir, 0700) || jipc_streams_init(app)) { free(app); return 1; }
+        jipc_controls_preload(app);
         if (jipc_ntp_start(app) || jipc_backend_start(app) || jipc_record_start(app) || jipc_rtsp_start(app) || jipc_http_start(app) || jipc_discovery_start(app)) {
             jipc_log("error", "startup failed: %s", app->backend_error[0] ? app->backend_error : "see previous service diagnostics"); result = 1;
         } else {
@@ -207,7 +209,8 @@ int main(int argc, char **argv)
                         pthread_mutex_unlock(&app->streams[i].mutex);
                         if(!stamp||now<stamp||now-stamp>15000000)fresh=0;
                     }
-                    if(!fresh||jipc_watchdog_feed(watchdog_fd)){
+                    /* Frames held for privacy stop the streams on purpose. */
+                    if((!fresh&&!atomic_load(&app->privacy_hold))||jipc_watchdog_feed(watchdog_fd)){
                         jipc_log("error","watchdog health check failed; stopping service");result=1;break;
                     }
                     watchdog_last=now;

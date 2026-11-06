@@ -448,7 +448,7 @@
 	wide.onchange = () => route == 'settings' && go();
 	const LD = {
 		overview: [media, joan, quality, controls],
-		pantilt: [media],
+		pantilt: [media, [controls, 'pt-ptst']],
 		image: [media, config, [controls, 'im-nst']],
 		audio: [media, config],
 		streams: [config, mdns, media, controls],
@@ -631,7 +631,9 @@
 					: !m
 						? ['off', 'Connecting']
 						: m.ready
-							? ['ok', 'Online']
+							? m.platform?.privacy
+								? ['warn', 'Privacy mode']
+								: ['ok', 'Online']
 							: ['warn', 'Starting'],
 			/* the side nav also names the boot mode; a phone header has room for the state only */
 			long = st[1] == 'Online' && (bm == 'native' || bm == 'handoff') ? `Online · ${bm} boot` : st[1],
@@ -927,6 +929,8 @@
 		busy(el) || (el.value = v);
 	}
 	function rControls(x) {
+		privacyShow();
+		patrolShow();
 		const n = x.night,
 			w = x.white_light,
 			wm = w.schedule.enabled ? 'schedule' : w.on ? 'on' : 'off';
@@ -1235,11 +1239,180 @@
 	function pos() {
 		const p = S.m.platform,
 			t = where(p),
-			l = t + ' · ' + (p.homing ? 'calibrating' : p.moving ? 'moving' : 'stopped');
+			l = t + ' · ' + (p.privacy ? 'privacy mode' : p.homing ? 'calibrating' : p.moving ? 'moving' : 'stopped');
 		$$('.pos').forEach(e => (e.textContent = t));
 		$('pt-pos').textContent != l && tx('pt-pos', l);
+		$$('button', $('pt-pad')).forEach(b => (b.disabled = !!p.privacy));
+		$('pt-rc').disabled = !!(p.privacy || p.homing);
+		tx(
+			'pt-rcn',
+			'Runs both motors to their end stops and back, about 40 seconds. Presets stay where they are. ' +
+				(p.homing ? 'Running now.' : p.homed_ago_s != null ? `Last done ${dur(p.homed_ago_s)} ago.` : 'Last done at boot.')
+		);
 		map();
 	}
+	/* Privacy mode and the patrol live in the saved controls; on a schedule, the switch holds until its next edge. */
+	const STOP_DWELL = [5, 10, 15, 30, 60, 120, 300];
+	function patrolShow() {
+		const x = S.x;
+		if (!x?.patrol) return;
+		const T = x.patrol,
+			L = P(),
+			by = new Map(L.map(p => [p.slot, p])),
+			stops = T.stops,
+			live = x.live.patrol || {},
+			nm = s => by.get(s)?.name || 'a deleted preset',
+			k = JSON.stringify([stops, L]);
+		if ($('pt-stops').dataset.k != k) {
+			$('pt-stops').dataset.k = k;
+			$('pt-stops').replaceChildren(
+				...stops.map((s, i) => {
+					const d = h('select', { 'aria-label': `Time at ${nm(s.slot)}` });
+					durs(d, STOP_DWELL, s.dwell_s);
+					d.onchange = () => stopsPut(stops.map((o, j) => (j == i ? { ...o, dwell_s: +d.value } : o)), d);
+					return h(
+						'li',
+						null,
+						h('i', { text: i + 1 }),
+						h('b', { text: nm(s.slot) }),
+						d,
+						h('button', { class: 'btn', 'aria-label': `Remove ${nm(s.slot)}`, onclick: e => stopsPut(stops.filter((_, j) => j != i), e.currentTarget) }, 'Remove')
+					);
+				})
+			);
+			const a = $('pt-add'),
+				was = a.value;
+			a.replaceChildren(...L.map(p => h('option', { value: p.slot }, `${p.slot} · ${p.name}`)));
+			was && L.some(p => p.slot == was) && (a.value = was);
+		}
+		$('pt-addb').disabled = !L.length || stops.length >= 16;
+		busy($('pt-pts')) || sw($('pt-pts'), T.enabled);
+		$('pt-pts').disabled = !stops.length;
+		busy($('pt-pz')) || ($('pt-pz').checked = T.pause_s > 0);
+		/* a move takes about 450 steps a second; the status's scale is 200 units end to end */
+		let secs = 0;
+		stops.forEach((s, i) => {
+			const a = by.get(s.slot),
+				b = by.get(stops[(i + 1) % stops.length].slot);
+			secs += s.dwell_s + (a && b ? ((Math.abs(a.x - b.x) * 20.4 + Math.abs(a.y - b.y) * 6.2) / 450) | 0 : 0);
+		});
+		tx('pt-ptn', 'Visits these presets in order, then starts again.' + (stops.length > 1 ? ` One round takes about ${dur(secs)}.` : ''));
+		const left = Math.max(0, Math.round(live.left_s - age('x') / 1e3));
+		tx(
+			'pt-ptst',
+			!T.enabled
+				? stops.length
+					? ''
+					: 'Add a preset or two to patrol between.'
+				: {
+						moving: `Going to ${nm(live.slot)}.`,
+						dwell: `At ${nm(live.slot)}, for ${dur(left)} more.`,
+						paused: `Paused because someone steered; carries on in ${dur(left)}.`,
+						privacy: 'Waiting: privacy mode is on.',
+						homing: 'Waiting for the calibration to end.',
+						no_stops: 'None of these presets exist any more.'
+					}[live.state] || ''
+		);
+	}
+	function stopsPut(stops, at) {
+		return run(at, async () => {
+			await putX({ patrol: { stops, ...(stops.length ? {} : { enabled: false }) } });
+			patrolShow();
+		});
+	}
+	function privacyShow() {
+		const x = S.x;
+		if (!x?.privacy) return;
+		const c = x.privacy.schedule;
+		busy($('pt-prs')) || sw($('pt-prs'), x.live.privacy);
+		busy($('pt-pls')) || sw($('pt-pls'), c.enabled);
+		$('pt-plf').hidden = !c.enabled;
+		setIn($('pt-pf'), c.from);
+		setIn($('pt-pu'), c.until);
+		tx(
+			'pt-pln',
+			(c.enabled ? `Every day from ${c.from} to ${c.until}` : 'Every day') +
+				(x.live.zone == 'camera' ? ', in the camera’s time zone.' : ', in this device’s time zone.') +
+				(c.enabled ? ' The switch above lasts until the next change.' : '')
+		);
+	}
+	$('pt-prs').onclick = e => {
+		const b = e.currentTarget,
+			on = b.getAttribute('aria-checked') != 'true';
+		if (!on)
+			return run(b, async () => {
+				await putX({ privacy: { on: false } });
+				sw(b, false);
+				toast('Privacy mode off: video is back');
+				media().catch(noop);
+			});
+		sheet({
+			title: 'Turn on privacy mode?',
+			text: 'Video from both lenses goes black and the microphone is muted until you turn it off. Your NVR keeps recording the black picture. The pan/tilt lens points away from the street and comes back afterwards.',
+			ok: 'Turn on',
+			icon: 'pantilt',
+			run: async () => {
+				await putX({ privacy: { on: true } });
+				sw(b, true);
+				toast('Privacy mode on');
+				media().catch(noop);
+			}
+		});
+	};
+	$('pt-pls').onclick = e => {
+		const b = e.currentTarget,
+			on = b.getAttribute('aria-checked') != 'true';
+		run(b, async () => {
+			await putX({ privacy: { schedule: { enabled: on, from: $('pt-pf').value || '22:00', until: $('pt-pu').value || '06:00' } }, ...tz() });
+			sw(b, on);
+			toast(on ? 'Privacy schedule on' : 'Privacy schedule off');
+		});
+	};
+	['pt-pf', 'pt-pu'].forEach(i => {
+		$(i).addEventListener('input', e => (e.target.dataset.d = 1));
+		$(i).onchange = e => {
+			const el = e.target;
+			if (!el.value) return;
+			run(
+				el,
+				async () => {
+					await putX({ privacy: { schedule: { from: $('pt-pf').value, until: $('pt-pu').value } }, ...tz() });
+					delete el.dataset.d;
+					toast('Privacy schedule saved');
+				},
+				el.closest('.g2')
+			);
+		};
+	});
+	$('pt-rc').onclick = () =>
+		sheet({
+			title: 'Recalibrate pan and tilt?',
+			text: 'Both motors run to their end stops and the lens comes back to where it is now, about 40 seconds. Video keeps running, and your presets stay where they are.',
+			ok: 'Recalibrate',
+			icon: 'pantilt',
+			run: async () => {
+				await ctl('ptz_recalibrate', 0, 0);
+				toast('Recalibrating');
+				media().catch(noop);
+			}
+		});
+	$('pt-pts').onclick = e => {
+		const b = e.currentTarget,
+			on = b.getAttribute('aria-checked') != 'true';
+		run(b, async () => {
+			await putX({ patrol: { enabled: on } });
+			sw(b, on);
+			toast(on ? 'Patrol on' : 'Patrol off');
+		});
+	};
+	$('pt-addb').onclick = e => {
+		const slot = +$('pt-add').value;
+		slot && stopsPut([...(S.x?.patrol.stops || []), { slot, dwell_s: 10 }], e.currentTarget);
+	};
+	$('pt-pz').onchange = e => {
+		const b = e.target;
+		run(b, () => putX({ patrol: { pause_s: b.checked ? 120 : 0 } }), $('pt-pat'));
+	};
 	const P = () => S.m?.platform?.presets || [];
 	/* Travel map: pan and tilt, presets included, share the -100..100 scale; tilt up is up. */
 	let lastM = '';
@@ -2717,7 +2890,7 @@
 			body: h(
 				'div',
 				{ class: 'stack s' },
-				L('Erased', ['Picture, night, light and audio settings', 'Presets', 'SSH keys', 'Scheduled restart', 'Both passwords, back to initial values']),
+				L('Erased', ['Picture, night, light and audio settings', 'Presets, patrol and privacy settings', 'SSH keys', 'Scheduled restart', 'Both passwords, back to initial values']),
 				L('Kept', ['Wi-Fi: ' + (S.q?.wifi?.ssid || 'the current network'), 'Local name and allowed networks', 'Time zone and network time', 'The installed firmware']),
 				fld(`Type ${name()} to confirm`, i)
 			),
@@ -3110,7 +3283,7 @@
 		)
 			media().catch(noop);
 		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
-		if (age('x') > (route == 'image' ? 2e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
+		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
 		/* A Wi-Fi trial: every 3 s while one runs; otherwise now and then on Network. */
 		if (age('w') > (joining || (W && !W.end) ? 3e3 : route == 'network' ? 2e4 : 1 / 0)) wifiState().catch(wifiLost);
 		if ((route == 'overview' || route == 'system') && age('j') > 6e4) joan().catch(noop);

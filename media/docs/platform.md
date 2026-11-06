@@ -91,6 +91,59 @@ the boot so restarts and reloads do not repeat it. A native boot requires
 homing. The guarded OEM handoff creates that marker after the OEM's own
 homing, so the setting may stay on.
 
+## Exact moves, recalibration and patrol
+
+ONVIF `AbsoluteMove` and `RelativeMove` go through the same one-axis-at-a-time
+worker as presets, at the requested speed (0 to 1 maps to 100–900 steps per
+second; the default is the presets' 450). `GetStatus` reports the position to
+four decimals and `MoveStatus`. On camera1 (`flip0=3`), +x and +y take the step
+counts down, which turns the view right and up, as ONVIF expects.
+
+`TranslationSpaceFov` is what Frigate's autotracker uses: a value of 1 brings the
+frame's edge to its centre. Half the field of view is 571 pan steps and 293 tilt
+steps, measured from the picture's shift at 1920x1080 (1.68 px per pan step, 1.84
+per tilt step, phase correlation over 12 small moves), so about 92 by 43 degrees
+at the published 330 and 90 degrees of travel.
+
+`ptz_recalibrate` runs the boot's homing sequence on demand and returns to where
+the head was; `homed_ago_s` in the status says when (`null`: at boot, by an
+earlier start of the daemon). `SetHomePosition` saves a home position, kept in the
+controls below; `GotoHomePosition` without one goes to the middle of the travel.
+
+The patrol lives in the controls: `{"patrol":{"enabled":true,"pause_s":120,
+"stops":[{"slot":1,"dwell_s":10},{"slot":2,"dwell_s":10}]}}`. Each stop waits for
+the head to arrive, then stays for `dwell_s` (3 to 3600 s). Any other move, from
+the admin UI, ONVIF or an autotracker, pauses it for `pause_s` and it carries on
+at the same stop. A deleted preset is skipped. `live.patrol` reports `state` (`off`,
+`moving`, `dwell`, `paused`, `privacy`, `homing`, `no_stops`), `slot` and `left_s`.
+Its stops are not written as the last position, so a patrol costs no flash writes.
+
+## Privacy mode
+
+`{"privacy":{"on":true}}` in the controls, or a daily window with
+`{"privacy":{"schedule":{"enabled":true,"from":"22:00","until":"06:00"}}}` in the
+camera's time zone. With a schedule, `on` holds until the window's next edge.
+`live.privacy` is what applies now.
+
+The cover is the ISP: brightness, contrast and saturation at 0 on both lenses.
+Measured on camera1 at midday, every pixel of both streams then reads Y=16,
+U=V=128. An IMP OSD cover would need a change to the video graph, and the pan/tilt
+lens's direct path to the encoder (IVDC) makes it doubtful there. The picture
+settings are not touched in the file: a manual change during privacy mode is kept
+for afterwards and does not reach the lens.
+
+So that no frame can leak, video frames are dropped from before video starts until
+the lenses are black and a second has passed for what was in the pipe, at every
+turn-on and every start of the daemon. If the black-out fails, the frames stay
+dropped and `live.error` says so: a failure pauses the video instead of showing it.
+The hardware watchdog's stream check allows for this.
+
+The microphone is muted, and moves from anyone else are refused (`privacy mode is
+on`). The head goes to `privacy.slot` if that preset exists, and otherwise looks
+down at the end of its tilt travel, on the same pan; it comes back afterwards. On
+camera1's mounting no end stop hides the lens: down shows the wall and the ledge
+below it, up the street.
+
 ## Presets and status
 
 `preset_set`, `preset_goto`, `preset_remove` and `preset_rename` accept slots 1 through 16.

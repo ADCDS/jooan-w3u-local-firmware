@@ -71,13 +71,12 @@ With 0.2.33 and its media layer:
   manual night/IR-cut and white light; one admin UI at `https://<camera>/`
   for phones and computers (`http://<camera>/` redirects there); SSH; Wi-Fi with
   a network list, a static address, stage, commit and rollback; restart, a daily restart and reset
-  to defaults;
+  to defaults; privacy mode; a preset patrol; exact ONVIF moves;
   optional network time from a local server; mDNS; signed updates.
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
   through the speaker from Frigate, the admin UI or the API).
 - **Missing:** a siren; motion and person detection; digital zoom; on-screen timestamp;
-  snapshots in the qualified profile; patrol, auto-tracking and privacy
-  schedules; on-camera recording (off in the qualified profile: record with
+  snapshots in the qualified profile; on-camera recording (off in the qualified profile: record with
   the NVR) and SD-card management; any cloud or phone-app access.
 
 [OEM comparison](docs/OEM-COMPARISON.md) compares this firmware with the
