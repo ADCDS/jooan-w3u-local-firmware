@@ -32,7 +32,7 @@ add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
 add_library(jipc_core STATIC src/util.c src/authlimit.c src/audio.c src/speaker.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
-  src/platform.c src/rtsp.c src/http.c src/joan.c src/onvif.c src/discovery.c src/ntp.c src/record.c
+  src/platform.c src/controls.c src/rtsp.c src/http.c src/joan.c src/onvif.c src/discovery.c src/ntp.c src/record.c
   ${CMAKE_CURRENT_BINARY_DIR}/ui_assets.h)
 target_include_directories(jipc_core PUBLIC include)
 target_include_directories(jipc_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

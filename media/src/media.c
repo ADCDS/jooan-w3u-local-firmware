@@ -544,6 +544,26 @@ static void control_lock(jipc_app *app)
     atomic_fetch_sub(&app->control_waiters, 1);
 }
 
+/* Called with the control lock held. */
+static int night_apply(jipc_app *app, media_state *state, int night, char *error, size_t capacity)
+{
+    if (state->imp) {
+        int rc = jipc_imp_control(state->imp, "isp_night", night, 0, error, capacity);
+        if (rc) return rc;
+    }
+    return jipc_platform_control(app, "night", night, 0, error, capacity);
+}
+
+int jipc_backend_night(jipc_app *app, int night, char *error, size_t capacity)
+{
+    control_lock(app);
+    media_state *state = app->backend_state;
+    int rc = !state || !app->backend_ready ? fail(error, capacity, "media backend is not ready")
+                                           : night_apply(app, state, night ? 1 : 0, error, capacity);
+    pthread_mutex_unlock(&app->control_mutex);
+    return rc;
+}
+
 int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity)
 {
@@ -560,9 +580,18 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
             rc = fail(error, capacity, "invalid stream channel");
         else if (state->imp) rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
         else { state->idr_mask |= 1u << jipc_video_owner(&state->config,(unsigned)value); rc = 0; }
-    } else if (state->imp && !strcmp(operation, "night")) {
-        rc = jipc_imp_control(state->imp, "isp_night", value, value2, error, capacity);
-        if (!rc) rc = jipc_platform_control(app, operation, value, value2, error, capacity);
+    } else if (!strcmp(operation, "night") && (value == 2 || value == 3)) {
+        rc = jipc_controls_patch(app, value == 2 ? "{\"night\":{\"mode\":\"auto\"}}" : "{\"night\":{\"mode\":\"schedule\"}}",
+                                 error, capacity);
+    } else if (!strcmp(operation, "night")) {
+        rc = value != 0 && value != 1 ? fail(error, capacity, "night requires 0 (day), 1 (night), 2 (auto) or 3 (schedule)")
+                                      : night_apply(app, state, value, error, capacity);
+    } else if (!strcmp(operation, "ir_mode")) {
+        rc = value != 0 && value != 1 ? fail(error, capacity, "ir_mode requires 0 (infrared at night) or 1 (always off)")
+                                      : jipc_controls_patch(app, value ? "{\"night\":{\"ir\":\"off\"}}" : "{\"night\":{\"ir\":\"night\"}}",
+                                                            error, capacity);
+    } else if (!strcmp(operation, "white_light_trigger")) {
+        rc = jipc_controls_trigger(app, value, error, capacity);
     } else if (!strcmp(operation, "speaker_enable")) {
         if (value && !jipc_speaker_gate_open(app))
             rc = fail(error, capacity, "the speaker stays muted until the boot hook releases it");
@@ -593,9 +622,12 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     } else if (state->imp && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation") || !strcmp(operation, "sharpness") ||
                !strcmp(operation, "isp_night") || !strcmp(operation, "volume") ||
-               !strcmp(operation, "gain"))) {
+               !strcmp(operation, "gain") || !strcmp(operation, "hue") || !strcmp(operation, "denoise") ||
+               !strcmp(operation, "anti_flicker"))) {
         rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
     } else rc = jipc_platform_control(app, operation, value, value2, error, capacity);
+    /* Manual changes survive a restart. */
+    if (!rc) jipc_controls_note(app, operation, value, value2);
     pthread_mutex_unlock(&app->control_mutex);
     return rc;
 }

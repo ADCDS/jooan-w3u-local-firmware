@@ -64,7 +64,8 @@ typedef struct {
     int (*get_stream)(int, jipc_imp_stream *, int), (*release_stream)(int, jipc_imp_stream *);
     int (*super_frame)(int, jipc_imp_super *);
     imp_one osd_pool, isp_pool, vpubs_pool, vb_pool;
-    imp_byte brightness[2], contrast[2], saturation[2], sharpness[2];
+    imp_byte brightness[2], contrast[2], saturation[2], sharpness[2], hue[2];
+    imp_one temper[2], sinter[2], antiflicker[2];
     imp_one hflip[2], vflip[2], night[2];
     int (*ai_set_attr)(int, jipc_imp_audio_attr *), (*ao_set_attr)(int, jipc_imp_audio_attr *);
     imp_one ai_enable, ai_disable, ao_enable, ao_disable;
@@ -230,6 +231,8 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
         TUNING(brightness, "SetBrightness"); TUNING(contrast, "SetContrast");
         TUNING(saturation, "SetSaturation"); TUNING(sharpness, "SetSharpness");
         TUNING(hflip, "SetISPHflip"); TUNING(vflip, "SetISPVflip"); TUNING(night, "SetISPRunningMode");
+        TUNING(hue, "SetBcshHue"); TUNING(temper, "SetTemperStrength"); TUNING(sinter, "SetSinterStrength");
+        TUNING(antiflicker, "SetAntiFlickerAttr");
 #undef TUNING
     }
     OPTIONAL(ai_set_attr, "IMP_AI_SetPubAttr"); OPTIONAL(ai_enable, "IMP_AI_Enable");
@@ -914,12 +917,30 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
         if (!sensor) atomic_store(&s->mic_levels_changed, 1);
         return 0;
     }
+    if (!strcmp(operation, "anti_flicker")) {
+        /* Both lenses see the same mains-powered lights: 0 off, 1 50 Hz, 2 60 Hz. */
+        if (value < 0 || value > 2) return failure(error, capacity, "anti_flicker requires 0 (off), 1 (50 Hz) or 2 (60 Hz)");
+        for (unsigned i = 0; i < s->sensors; ++i) {
+            if (!s->antiflicker[i]) return failure(error, capacity, "SDK lacks anti-flicker for sensor %u", i);
+            if (sdk_result(s->antiflicker[i](value), "IMP_ISP_Tuning_SetAntiFlickerAttr", error, capacity)) return -1;
+        }
+        return 0;
+    }
     if (sensor < 0 || (unsigned)sensor >= s->sensors) return failure(error, capacity, "invalid sensor index");
+    if (!strcmp(operation, "denoise")) {
+        /* One strength for temporal (temper) and spatial (sinter) noise
+         * reduction; 128 is the library's neutral ratio. */
+        if (value < 0 || value > 255) return failure(error, capacity, "denoise must be in 0..255");
+        if (!s->temper[sensor] || !s->sinter[sensor]) return failure(error, capacity, "SDK lacks noise reduction control");
+        if (sdk_result(s->temper[sensor](value), "IMP_ISP_Tuning_SetTemperStrength", error, capacity)) return -1;
+        return sdk_result(s->sinter[sensor](value), "IMP_ISP_Tuning_SetSinterStrength", error, capacity);
+    }
     imp_byte setter = NULL;
     if (!strcmp(operation, "brightness")) setter = s->brightness[sensor];
     else if (!strcmp(operation, "contrast")) setter = s->contrast[sensor];
     else if (!strcmp(operation, "saturation")) setter = s->saturation[sensor];
     else if (!strcmp(operation, "sharpness")) setter = s->sharpness[sensor];
+    else if (!strcmp(operation, "hue")) setter = s->hue[sensor];
     else if (!strcmp(operation, "hflip") || !strcmp(operation, "vflip")) {
         if (value != 0 && value != 1) return failure(error, capacity, "flip value must be 0 or 1");
         imp_one flip = !strcmp(operation, "hflip") ? s->hflip[sensor] : s->vflip[sensor];

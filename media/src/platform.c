@@ -50,7 +50,7 @@ typedef struct {
     int pan_max, tilt_max, rate;
     uint64_t generation;
     int pan_sign, tilt_sign;
-    int night, white_light, pilot_led, speaker_enable, speaker_used, gpio_used;
+    int night, ir_off, white_light, pilot_led, speaker_enable, speaker_used, gpio_used;
     uint64_t lease_until, goto_until, replay_previous;
     double replay_x, replay_y;
     saved_preset presets[PRESET_COUNT];
@@ -127,7 +127,9 @@ static int gpio_night(platform_state *state, int night)
         }
         if (gpio_output(49, 0) && !rc) { rc = -1; saved = errno; }
         if (gpio_output(50, 0) && !rc) { rc = -1; saved = errno; }
-        if (!rc && gpio_output(59, night)) { rc = -1; saved = errno; }
+        /* The infrared LEDs follow night mode unless ir_mode turned them off
+         * (a lit street at night: the IR-cut filter opens, the LEDs stay dark). */
+        if (!rc && gpio_output(59, night && !state->ir_off)) { rc = -1; saved = errno; }
     }
     if (!rc) state->night = night;
     errno = saved;
@@ -573,7 +575,7 @@ static int platform_control(jipc_app *app, const char *operation, int value,
     if (!motion && !preset_op && strcmp(operation, "ptz_stop") &&
         strcmp(operation, "night") && strcmp(operation, "ircut") &&
         strcmp(operation, "white_light") && strcmp(operation, "pilot_led") &&
-        strcmp(operation, "speaker_enable"))
+        strcmp(operation, "speaker_enable") && strcmp(operation, "ir_mode"))
         return fail(error, capacity, "unsupported platform operation: %s", operation);
     if (motion && (value < -100 || value > 100 || value2 < -100 || value2 > 100))
         return fail(error, capacity, "PTZ velocity must be between -100 and 100");
@@ -672,6 +674,10 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         state->goto_active = 1;
         state->last_error[0] = 0;
         state->faulted = 0;
+    } else if (!strcmp(operation, "ir_mode")) {
+        state->ir_off = value;
+        if (!state->replay && state->night && gpio_output(59, !value))
+            rc = fail(error, capacity, "infrared GPIO: %s", strerror(errno));
     } else if (!strcmp(operation, "night") || !strcmp(operation, "ircut")) {
         pthread_mutex_unlock(&state->mutex);
         if (gpio_night(state, value)) rc = fail(error, capacity, "IR-cut/infrared GPIO: %s", strerror(errno));

@@ -158,6 +158,7 @@ int main(int argc, char **argv)
             jipc_log("error", "startup failed: %s", app->backend_error[0] ? app->backend_error : "see previous service diagnostics"); result = 1;
         } else {
             if (jipc_platform_start(app)) jipc_log("error", "pan/tilt homing failed; PTZ reports the fault");
+            if (jipc_controls_start(app)) jipc_log("error", "controls: cannot start; settings are not applied");
             jipc_log("info", "ready: backend=%s, %u video streams", config.backend, config.sensors * 2);
             while (!interrupted && !reload_requested && !app->restart && (!deadline || jipc_now_us() < deadline)) {
                 int ready = app->backend_ready;
@@ -180,7 +181,7 @@ int main(int argc, char **argv)
             }
         }
         int restart = !result && !interrupted && (!deadline || jipc_now_us() < deadline) && (reload_requested || app->restart);
-        app->stop = 1; jipc_discovery_stop(app); jipc_http_stop(app); jipc_ntp_stop(app); jipc_rtsp_stop(app); jipc_record_stop(app);
+        app->stop = 1; jipc_discovery_stop(app); jipc_http_stop(app); jipc_controls_stop(app); jipc_ntp_stop(app); jipc_rtsp_stop(app); jipc_record_stop(app);
         jipc_backend_stop(app); jipc_platform_stop(app); jipc_streams_destroy(app);
         pthread_mutex_destroy(&app->control_mutex); pthread_mutex_destroy(&app->config_mutex); free(app);
         if (!restart) break;
