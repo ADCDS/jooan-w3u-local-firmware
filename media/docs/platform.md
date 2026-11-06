@@ -107,6 +107,21 @@ step and 2.45 per tilt step. Every reversal first loses about 25 steps to gear
 backlash, so a short move after changing direction falls that much short, and so
 does a return to a preset approached from the other side.
 
+The two lenses see about as much as each other: the pan/tilt lens's picture spans
+roughly nine tenths of the fixed lens's width and all of its height. So the fixed
+lens is not a wider view, only another direction, and aiming from it reaches what it
+shows.
+`tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
+which motor steps centre each point of that picture and stores six numbers per axis
+in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
+lenses are mounted; a change of orientation for either lens needs a new calibration.
+Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
+with 20 stops matched, points of the street land a median of 1.2% of the frame's
+width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside
+the camera does not: the lenses are some way apart, and points on a nearby wall
+landed 20-40% off. Nothing arbitrates with an NVR: while Frigate is auto-tracking, it
+keeps steering, and a click competes with it.
+
 For Frigate's autotracking, `onvif.autotracking` needs a zone in `required_zones`
 and a preset name in `return_preset`, and Frigate polls `GetStatus` without pausing
 while the head moves (56 requests a second measured). Replay protection copes with

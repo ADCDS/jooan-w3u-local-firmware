@@ -1000,7 +1000,20 @@ def main():
             time.sleep(1.5)
             status = json.loads(request("GET", "/api/v1/status")[1])
             assert not status["platform"]["moving"]
-            result["checks"].append("replay PTZ deadman, presets and light control")
+            code,body=request("POST","/api/v1/aim",{"u":0.5,"v":0.5});assert code==409,(code,body)
+            code,body=request("GET","/api/v1/aim");aimed=json.loads(body);assert code==200 and aimed["calibrated"] is False and aimed["view"] is None
+            assert request("POST","/api/v1/aim",{"u":2,"v":0.5})[0]==400
+            assert request("POST","/api/v1/aim",{"x":[0,60,0,0,0,0],"y":[0,0,60,0,0,0]})[0]==200
+            assert request("POST","/api/v1/aim",{"u":0.75,"v":0.25})[0]==200
+            deadline=time.time()+15
+            while time.time()<deadline:
+                aimed=json.loads(request("GET","/api/v1/aim")[1])
+                if aimed["steps"]==[30,-30]:break
+                time.sleep(0.2)
+            assert aimed["steps"]==[30,-30] and aimed["calibrated"] is True,aimed
+            view=aimed["view"];assert abs(view["u"]-0.75)<0.01 and abs(view["v"]-0.25)<0.01,view
+            assert request("POST","/api/v1/aim",{"steps":[0,0]})[0]==200
+            result["checks"].append("replay PTZ deadman, presets, aiming from the fixed lens and light control")
             assert request("POST", "/api/v1/recording", {"enabled": 1})[0] == 200
             time.sleep(2.5)
             assert request("POST", "/api/v1/recording", {"enabled": 0})[0] == 200

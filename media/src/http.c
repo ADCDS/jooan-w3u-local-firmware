@@ -407,6 +407,11 @@ static void dispatch(connection *c,request *r){
         else response(c,200,"application/json",out,strlen(out));
         return;
     }
+    if(!strcmp(r->target,"/api/v1/aim")){
+        if(!strcmp(r->method,"GET")){if(jipc_aim_json(app,out,sizeof(out))<0)error_response(c,500,"Aim status unavailable");else response(c,200,"application/json",out,strlen(out));}
+        else{int status=jipc_aim_post(app,r->body,error,sizeof(error));if(status!=200)error_response(c,status,error[0]?error:"Cannot aim");else response(c,200,"application/json","{\"ok\":true}\n",12);}
+        return;
+    }
     if(!strcmp(r->target,"/api/v1/config")){
         if(!strcmp(r->method,"GET")){if(jipc_config_json(app,out,sizeof(out))<0)error_response(c,500,"Configuration unavailable");else response(c,200,"application/json",out,strlen(out));}
         else if(jipc_config_patch(app,r->body,error,sizeof(error))<0)error_response(c,400,error);

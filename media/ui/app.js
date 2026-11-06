@@ -457,7 +457,7 @@
 	wide.onchange = () => route == 'settings' && go();
 	const LD = {
 		overview: [media, joan, quality, controls],
-		pantilt: [media, [controls, 'pt-ptst']],
+		pantilt: [media, [controls, 'pt-ptst'], aim],
 		image: [media, config, [controls, 'im-nst']],
 		audio: [media, config],
 		streams: [config, mdns, media, controls],
@@ -822,14 +822,16 @@
 		lensCh = () => 2 * lens;
 	let stPaused = 0,
 		stBusy = 0,
+		stWas = 0,
 		stT;
-	const stWants = () =>
+	const stMoving = () => fast > Date.now() || S.m?.platform?.moving,
+		stWants = () =>
 		(route == 'overview'
 			? stPaused
 				? []
 				: [[0, 5e3], [2, 5e3]]
 			: route == 'pantilt'
-				? [[0, fast > Date.now() || S.m?.platform?.moving ? 2e3 : 3e4]]
+				? [[0, stMoving() ? 2e3 : 3e4], ...(S.a?.calibrated ? [[2, 3e4]] : [])]
 				: route == 'image'
 					? [[lensCh(), 3e4]]
 					: []
@@ -842,7 +844,7 @@
 			const im = e.dataset.ch == 'im',
 				ch = im ? lensCh() : +e.dataset.ch,
 				s = STL[ch],
-				p = e.querySelector('p'),
+				p = e.querySelector('.m'),
 				at = e.querySelector('.at'),
 				t = s.at ? hm(new Date(s.at)) : '',
 				old = s.at && dur(Math.round((now - s.at) / 1e3));
@@ -854,12 +856,12 @@
 				if (i.getAttribute('src') != s.url) i.src = s.url;
 				i.alt = `Latest still of the ${ch ? 'fixed' : 'pan/tilt'} lens, from ${t}`;
 			}
-			p.className = '';
+			p.className = 'm';
 			if (priv) {
 				p.textContent = 'Privacy mode is on: no stills.';
 				at.textContent = '';
 			} else if (off && s.url) {
-				p.className = 'old';
+				p.className = 'm old';
 				p.replaceChildren(`Last still, ${old} old`, h('span', { class: 'mono', text: t }));
 				at.textContent = '';
 			} else {
@@ -896,6 +898,12 @@
 	}
 	function stTick() {
 		if (stBusy || off || !csrf || document.hidden || S.m?.platform?.privacy) return;
+		/* the lens has just stopped: show where it ended up */
+		if (stWas && !stMoving()) {
+			STL[0].tried = 0;
+			S['a@'] = 0;
+		}
+		stWas = stMoving();
 		const now = Date.now(),
 			w = stWants()
 				.filter(([ch, every]) => now - (STL[ch].tried || 0) >= every)
@@ -914,6 +922,84 @@
 		stPaused = !stPaused;
 		e.currentTarget.textContent = stPaused ? 'Resume stills' : 'Pause stills';
 		stTick();
+	};
+	/* Aiming from the fixed lens. The two lenses see about as much as each other, so the
+	   dashed frame is most of the picture, and only the part inside it is drawn. */
+	let aimKey = null,
+		aimGo = null,
+		aimErr = '';
+	function aim() {
+		return api(M + 'aim').then(d => {
+			S.a = d;
+			S['a@'] = Date.now();
+			rAim();
+		});
+	}
+	function rAim() {
+		const a = S.a,
+			pl = S.m?.platform,
+			v = a?.view,
+			fr = $('pt-fr'),
+			tg = $('pt-tg');
+		$('pt-aim').hidden = !a?.calibrated;
+		if (!a?.calibrated) return;
+		$('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
+		const x0 = v ? Math.max(0, v.u - v.w / 2) : 1,
+			x1 = v ? Math.min(1, v.u + v.w / 2) : 0,
+			y0 = v ? Math.max(0, v.v - v.h / 2) : 1,
+			y1 = v ? Math.min(1, v.v + v.h / 2) : 0,
+			seen = x1 - x0 > 0.03 && y1 - y0 > 0.03;
+		fr.hidden = !seen;
+		if (seen) {
+			fr.style.left = x0 * 100 + '%';
+			fr.style.top = y0 * 100 + '%';
+			fr.style.width = (x1 - x0) * 100 + '%';
+			fr.style.height = (y1 - y0) * 100 + '%';
+		}
+		if (aimGo && !pl?.moving && Date.now() - aimGo.at > 1500) aimGo = null;
+		const t = aimGo || aimKey;
+		tg.hidden = !t;
+		if (t) {
+			tg.style.left = t.u * 100 + '%';
+			tg.style.top = t.v * 100 + '%';
+			tg.classList.toggle('l', t.u > 0.6);
+			tg.firstChild.textContent = aimGo ? 'Turning here…' : '';
+		}
+		tx('pt-aimn', aimErr || (seen ? '' : 'The pan/tilt lens is looking outside this view.'));
+	}
+	async function aimAt(u, v) {
+		aimGo = { u, v, at: Date.now() };
+		aimKey = null;
+		aimErr = '';
+		fast = Date.now() + 4e3;
+		rAim();
+		try {
+			await api(M + 'aim', { method: 'POST', json: { u, v } });
+			media().catch(noop);
+		} catch (e) {
+			aimGo = null;
+			aimErr = e.message;
+			rAim();
+		}
+	}
+	$('pt-aimb').onclick = e => {
+		const r = e.currentTarget.getBoundingClientRect();
+		/* a keyboard's click has no pointer: the first places the target, the next goes there */
+		if (e.detail) aimAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+		else if (aimKey) aimAt(aimKey.u, aimKey.v);
+		else {
+			aimKey = { u: 0.5, v: 0.5 };
+			rAim();
+		}
+	};
+	$('pt-aimb').onkeydown = e => {
+		const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+		if (!d) return;
+		e.preventDefault();
+		aimKey ||= { u: 0.5, v: 0.5 };
+		aimKey.u = Math.min(1, Math.max(0, aimKey.u + d[0] * 0.04));
+		aimKey.v = Math.min(1, Math.max(0, aimKey.v + d[1] * 0.04));
+		rAim();
 	};
 	/* Camera controls (GET/POST /api/v1/controls): night mode, infrared, white light and
 	   picture, kept by the camera across restarts. POST takes any subset and answers with
@@ -3401,6 +3487,10 @@
 			age('m') > (mv && route == 'pantilt' ? 1e3 : route == 'audio' ? 2e3 : 5e3)
 		)
 			media().catch(noop);
+		if (route == 'pantilt') {
+			rAim();
+			if (age('a') > (mv ? 1e3 : 5e3)) aim().catch(noop);
+		}
 		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
 		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
 		/* A Wi-Fi trial: every 3 s while one runs; otherwise now and then on Network. */
