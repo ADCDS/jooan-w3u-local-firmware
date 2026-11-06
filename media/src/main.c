@@ -39,6 +39,8 @@ static void system_json(cJSON *o, const jipc_config *cfg)
     for (int i = 0; i < 2 && !strcmp(mode, "unknown"); ++i) {
         snprintf(path, sizeof path, "%s/%s", dir ? dir : "/tmp", i ? "jipc-handoff.log" : "jipc-native.log");
         if (!(f = fopen(path, "re"))) continue;
+        /* The end of the log: a long wait for the gateway can push these lines past the first 4 KB. */
+        if (fseek(f, -(long)(sizeof text - 1), SEEK_END)) rewind(f);
         size_t n = fread(text, 1, sizeof text - 1, f); fclose(f); text[n] = 0;
         if (strstr(text, i ? "boot handoff qualified" : "native boot qualified")) mode = i ? "handoff" : "native";
         else if (!i && strstr(text, "qualifying for")) native_trial = 1;

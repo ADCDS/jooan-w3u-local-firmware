@@ -360,7 +360,8 @@ def controls_checks(request, root, connection=None, secret=None):
     assert json.loads(request("GET", "/api/v1/status")[1])["system"]["boot_mode"] == "native"
     (root / "jipc-native.log").write_text("1.00 jipc-native: starting\n")
     assert json.loads(request("GET", "/api/v1/status")[1])["system"]["boot_mode"] == "unknown"
-    (root / "jipc-native.log").write_text(qualified)
+    # A long wait for the gateway writes kilobytes before the line that counts.
+    (root / "jipc-native.log").write_text("waiting for the gateway\n" * 400 + qualified)
     system = json.loads(request("GET", "/api/v1/status")[1])["system"]
     assert system["boot_mode"] == "native" and system["uptime_s"] > 0 and system["memfree_kb"] > 0 and \
         system["state_free_kb"] > 0, system
