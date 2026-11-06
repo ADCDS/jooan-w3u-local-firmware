@@ -1246,7 +1246,7 @@
 		$('pt-rc').disabled = !!(p.privacy || p.homing);
 		tx(
 			'pt-rcn',
-			'Runs both motors to their end stops and back, about 40 seconds. Presets stay where they are. ' +
+			'Runs both motors to their end stops and back, about 30 seconds. Presets stay where they are. ' +
 				(p.homing ? 'Running now.' : p.homed_ago_s != null ? `Last done ${dur(p.homed_ago_s)} ago.` : 'Last done at boot.')
 		);
 		map();
@@ -1387,7 +1387,7 @@
 	$('pt-rc').onclick = () =>
 		sheet({
 			title: 'Recalibrate pan and tilt?',
-			text: 'Both motors run to their end stops and the lens comes back to where it is now, about 40 seconds. Video keeps running, and your presets stay where they are.',
+			text: 'Both motors run to their end stops and the lens comes back to where it is now, about 30 seconds. Video keeps running, and your presets stay where they are.',
 			ok: 'Recalibrate',
 			icon: 'pantilt',
 			run: async () => {

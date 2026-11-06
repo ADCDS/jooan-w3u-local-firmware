@@ -276,10 +276,17 @@ static void position_load(platform_state *state)
     }
     fclose(file);
 }
-static void position_track(platform_state *state, uint64_t now)
+static void position_save(platform_state *state)
 {
     char text[32];
-    int n;
+    int n = snprintf(text, sizeof(text), "%d %d\n", state->x, state->y);
+    if (jipc_atomic_file(state->position_path, text, (size_t)n, 0600)) {
+        jipc_log("warning", "platform: cannot save last position: %s", strerror(errno)); return;
+    }
+    state->saved_x = state->x; state->saved_y = state->y; state->saved_valid = 1;
+}
+static void position_track(platform_state *state, uint64_t now)
+{
     if (state->replay || !state->known || !state->position_trusted || state->faulted ||
         state->homing || state->moving || state->goto_active || state->privacy || state->patrol_move ||
         state->lease_until || (state->saved_valid && state->x == state->saved_x && state->y == state->saved_y)) {
@@ -288,11 +295,7 @@ static void position_track(platform_state *state, uint64_t now)
     if (!state->position_quiet_until) { state->position_quiet_until = now + POSITION_QUIET_US; return; }
     if (now < state->position_quiet_until) return;
     state->position_quiet_until = 0;
-    n = snprintf(text, sizeof(text), "%d %d\n", state->x, state->y);
-    if (jipc_atomic_file(state->position_path, text, (size_t)n, 0600)) {
-        jipc_log("warning", "platform: cannot save last position: %s", strerror(errno)); return;
-    }
-    state->saved_x = state->x; state->saved_y = state->y; state->saved_valid = 1;
+    position_save(state);
 }
 /* The OEM sequence: declare the head centred, run pan into its end stop,
  * then the driver's own reset rams both axes and returns to the reset point. */
@@ -321,10 +324,17 @@ static void home_tick(platform_state *state, uint64_t now)
     if (state->homing == 1 && state->x != HOME_PAN_STEPS) return;
     if (state->homing == 1) {
         int32_t reset[4] = {0, 0, 0, 0};
-        if (ioctl(state->motor_fd, MOTOR_RESET, reset)) { state->homing = 0; worker_error(state, "motor reset"); return; }
         state->homing = 2; state->moving = 1;
-        state->homing_until = now + HOME_STAGE_US; state->homing_settle = now + HOME_SETTLE_US;
         jipc_log("info", "motor homing: driver reset to the reference point");
+        /* The driver's reset does not return until the head has run both axes,
+         * 20 s or more. Nobody else may wait that long for the status: everything
+         * that would move the head or read the driver checks homing first. */
+        pthread_mutex_unlock(&state->mutex);
+        int failed = ioctl(state->motor_fd, MOTOR_RESET, reset), saved = errno;
+        pthread_mutex_lock(&state->mutex);
+        errno = saved;
+        if (failed) { state->homing = 0; worker_error(state, "motor reset"); return; }
+        state->homing_until = now + HOME_STAGE_US; state->homing_settle = now + HOME_SETTLE_US;
         return;
     }
     if (ioctl(state->motor_fd, MOTOR_STOP, 0) || motor_limits(state) || motor_read(state)) {
@@ -685,11 +695,11 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             rc = fail(error, capacity, "remove preset: %s", strerror(errno));
         }
     } else if (recalibrate) {
-        /* The same run as at boot, then back to where the head is now. */
+        /* The same run as at boot, then back to where the head is now, saved in
+         * case the camera restarts first. */
         if (state->replay) { state->homed = 1; state->homed_at = jipc_now_us(); goto done; }
-        if (!motor_read(state) && state->position_trusted) {
-            state->saved_x = state->x; state->saved_y = state->y; state->saved_valid = 1;
-        }
+        if (!motor_read(state) && state->position_trusted && (!state->saved_valid || state->saved_x != state->x || state->saved_y != state->y))
+            position_save(state);
         state->last_error[0] = 0; state->faulted = 0; state->patrol_move = 0; state->manual_at = jipc_now_us();
         if (motor_home_begin(state, jipc_now_us())) { int saved = errno; worker_error(state, "motor homing start"); rc = fail(error, capacity, "motor homing: %s", strerror(saved)); }
     } else if (!strcmp(operation, "preset_goto") || !strcmp(operation, "preset_patrol")) {
@@ -829,7 +839,7 @@ int jipc_platform_steps(jipc_app *app, int *x, int *y)
     platform_state *state = platform_get(app, NULL, 0);
     if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
     pthread_mutex_lock(&state->mutex);
-    int rc = motor_open_device(state) || motor_read(state) ? -1 : 0;
+    int rc = state->homing || motor_open_device(state) || motor_read(state) ? -1 : 0;
     *x = state->x; *y = state->y;
     pthread_mutex_unlock(&state->mutex);
     pthread_mutex_unlock(&platform_lifetime);
@@ -901,7 +911,8 @@ int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, si
     state = platform_get(app, error, capacity);
     if (!state) { pthread_mutex_unlock(&platform_lifetime); return -1; }
     pthread_mutex_lock(&state->mutex);
-    if (motor_open_device(state) || motor_read(state)) {
+    /* During homing the driver may be busy; the last known position will do. */
+    if (!state->homing && (motor_open_device(state) || motor_read(state))) {
         fail(error, capacity, "motor status: %s", strerror(errno));
         goto done;
     }
