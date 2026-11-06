@@ -2434,7 +2434,8 @@
 		let d = null;
 		joining = 1;
 		try {
-			d = await api(J + 'network/ip', { method: 'PUT', json, timeout: 75e3, quiet: 1 });
+			/* Checks and change take seconds; no answer by then means the camera moved and the reply can't reach here. */
+			d = await api(J + 'network/ip', { method: 'PUT', json, timeout: 12e3, quiet: 1 });
 		} catch (x) {
 			if (x.st == 409) no(IP_NO[x.d?.reason] || 'The camera can’t change its address right now.');
 			if (x.kind != 'off') throw x;
