@@ -65,6 +65,8 @@ class SystemOpsTests(unittest.TestCase):
         return self.helper("ssh-add", str(staged))
 
     def test_several_ssh_keys(self) -> None:
+        # No key file yet (a fresh install, or after a reset): an empty list, not a failure.
+        self.assertEqual(self.helper("ssh-list").returncode, 0)
         self.assertEqual(self.add_key(1).returncode, 0)
         self.assertEqual(self.add_key(1).returncode, 0)            # already there: unchanged
         self.assertEqual(self.keys(), [KEY.format(1)])

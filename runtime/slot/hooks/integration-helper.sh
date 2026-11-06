@@ -284,7 +284,7 @@ case "$op" in
     wifi-commit) exec "$control/admin/wifi-transaction.sh" commit ;;
     wifi-rollback) exec "$control/admin/wifi-transaction.sh" rollback ;;
     ssh-list)
-        [ -f "$root/config/ssh/authorized_keys" ] && cat "$root/config/ssh/authorized_keys"
+        [ ! -f "$root/config/ssh/authorized_keys" ] || cat "$root/config/ssh/authorized_keys"
         ;;
     ssh-add)
         key=$(cat "$path")
