@@ -38,8 +38,8 @@ boundary.
   camera can install it over Wi-Fi with no extra hardware (see
   [Installation](docs/INSTALL.md)). In v0.2.21, video still comes from the
   vendor's program, running confined.
-- **Not published: 0.2.22 to 0.2.31.** This repository and its documents
-  describe 0.2.31, which only the maintainer can install today. Its media
+- **Not published: 0.2.22 to 0.2.32.** This repository and its documents
+  describe 0.2.32, which only the maintainer can install today. Its media
   layer needs files rebuilt from each owner's own camera, and there is no
   first-install tool yet.
 
@@ -64,13 +64,13 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.31 and its media layer:
+With 0.2.32 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 640×360 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,
   manual night/IR-cut and white light; one admin UI at `https://<camera>/`
   for phones and computers (`http://<camera>/` redirects there); SSH; Wi-Fi with
-  a network list, stage, commit and rollback; restart, a daily restart and reset
+  a network list, a static address, stage, commit and rollback; restart, a daily restart and reset
   to defaults;
   optional network time from a local server; mDNS; signed updates.
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk

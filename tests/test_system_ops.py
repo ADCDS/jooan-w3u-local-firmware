@@ -164,6 +164,112 @@ class SystemOpsTests(unittest.TestCase):
         self.env["FAKE_WPA_STATUS"] = "wpa_state=COMPLETED\nssid=Home\nfreq=2437"
         self.assertEqual(json.loads(self.helper("network-quality").stdout)["wifi"]["band"], "2.4 GHz")
 
+    def address_fakes(self) -> dict:
+        """A PATH holding only fakes for what the address path can touch, each logged.
+        The hook keeps the caller's PATH, so nothing real may be reachable first."""
+        base = Path(self.temporary.name)
+        log = base / "net.log"
+        for tool in ("ifconfig", "route", "killall", "udhcpc", "arping"):
+            executable(self.bin / tool, "#!/bin/sh\n"
+                       f"printf '%s %s\\n' {tool} \"$*\" >> \"$NET_LOG\"\n"
+                       + ("[ \"$FAKE_ARPING\" != \"$1\" ] || exit 1\n" if tool == "arping" else "")
+                       + ("printf '          inet addr:192.168.20.38  Bcast:192.168.20.255  Mask:255.255.255.0\\n'\n"
+                          if tool == "ifconfig" else ""))
+        executable(base / "json_tool", r"""#!/bin/sh
+key=${4#/}
+sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
+""")
+        path = f"{self.bin}:/bin:/usr/bin"
+        for tool in ("ifconfig", "route", "killall", "udhcpc", "arping", "wpa_cli", "reboot"):
+            self.assertEqual(shutil.which(tool, path=path), str(self.bin / tool), "not faked: refusing to run")
+        return self.env | {"PATH": path, "JOOAN_PATH": path, "NET_LOG": str(log), "FAKE_ARPING": "",
+                           "JOAN_JSON_TOOL": str(base / "json_tool")}
+
+    def test_static_address_hook(self) -> None:
+        env, base = self.address_fakes(), Path(self.temporary.name)
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        log = Path(env["NET_LOG"])
+        def run(fields: str):
+            log.write_text("")
+            (base / "c.json").write_text('{"ssid":"Home","password":"secret-pass"' + fields + "}\n")
+            result = subprocess.run([str(hook), str(base / "c.json")], env=env | {"JOAN_WIFI_KEEP_LINK": "1"},
+                                    text=True, capture_output=True)
+            return result, log.read_text()
+        result, seen = run(',"address":"192.168.20.50","prefix":"24","gateway":"192.168.20.1"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ifconfig wlan0 192.168.20.50 netmask 255.255.255.0 up", seen)
+        self.assertIn("route add default gw 192.168.20.1 dev wlan0", seen)
+        self.assertIn("killall udhcpc", seen)
+        self.assertNotIn("udhcpc -a", seen)
+        result, seen = run(',"address":"10.1.2.3","prefix":"20","gateway":"10.1.0.1"')
+        self.assertIn("netmask 255.255.240.0", seen, result.stderr)
+        # Automatic: DHCP again, and no address of its own.
+        result, seen = run("")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("udhcpc -a", seen)
+        self.assertNotIn("route add", seen)
+        # All three or none, and nothing but numbers.
+        self.assertEqual(run(',"address":"192.168.20.50"')[0].returncode, 1)
+        self.assertEqual(run(',"address":"1;reboot","prefix":"24","gateway":"192.168.20.1"')[0].returncode, 1)
+
+    def test_address_stage(self) -> None:
+        env, base = self.address_fakes(), Path(self.temporary.name)
+        self.env = env
+        admin = base / "control/admin"
+        admin.mkdir(parents=True)
+        env["JL_CONTROL"] = str(base / "control")
+        executable(admin / "wifi-transaction.sh", '#!/bin/sh\nprintf "%s %s\\n" "$JOAN_WIFI_KEEP_LINK" "$1" > "$NET_LOG.tx"\n'
+                   'cp "$2" "$NET_LOG.candidate"\n')
+        def stage(line: str):
+            (base / "line").write_text(line + "\n")
+            result = subprocess.run([str(HELPER), "ip-stage", str(base / "line"), "x"], env=env, text=True, capture_output=True)
+            return result
+        wanted = "static 192.168.20.50 24 192.168.20.1"
+        self.assertEqual(json.loads(stage(wanted).stdout), {"ok": False, "reason": "no-network"})
+        (self.root / "config/wifi.json").write_text('{"ssid":"Home","password":"secret-pass"}\n')
+        env["FAKE_ARPING"] = "-D"
+        self.assertEqual(json.loads(stage(wanted).stdout), {"ok": False, "reason": "address-in-use"})
+        env["FAKE_ARPING"] = "-f"
+        self.assertEqual(json.loads(stage(wanted).stdout), {"ok": False, "reason": "gateway-silent"})
+        self.assertFalse(Path(env["NET_LOG"] + ".candidate").exists(), "a refusal must not start a trial")
+        env["FAKE_ARPING"] = ""
+        (self.root / "state/wifi-trial").mkdir()
+        self.assertEqual(json.loads(stage(wanted).stdout), {"ok": False, "reason": "wifi-trial"})
+        (self.root / "state/wifi-trial").rmdir()
+        result = stage(wanted)
+        self.assertEqual(json.loads(result.stdout), {"ok": True}, result.stderr)
+        self.assertEqual(json.loads(Path(env["NET_LOG"] + ".candidate").read_text()),
+                         {"ssid": "Home", "password": "secret-pass", "address": "192.168.20.50",
+                          "prefix": "24", "gateway": "192.168.20.1"})
+        self.assertTrue(Path(env["NET_LOG"] + ".tx").read_text().startswith("1 "), "the link must stay up")
+        self.assertFalse((self.run / "ip-candidate.json").exists(), "the password must not stay behind")
+        # The address it already has is not a conflict, and going back to automatic needs no checks.
+        log = Path(env["NET_LOG"]); log.write_text("")
+        env["FAKE_ARPING"] = "-D"
+        self.assertEqual(json.loads(stage("static 192.168.20.38 24 192.168.20.1").stdout), {"ok": True})
+        log.write_text("")
+        self.assertEqual(json.loads(stage("dhcp").stdout), {"ok": True})
+        self.assertNotIn("arping", log.read_text())
+        self.assertEqual(json.loads(Path(env["NET_LOG"] + ".candidate").read_text()), {"ssid": "Home", "password": "secret-pass"})
+
+    def test_address_readout(self) -> None:
+        self.env = self.address_fakes()
+        (self.root / "config/wifi.json").write_text('{"ssid":"Home","password":"secret-pass"}\n')
+        (self.run / "default-gateway").write_text("192.168.20.1 wlan0\n")
+        result = self.helper("ip-get")
+        self.assertEqual(json.loads(result.stdout), {"mode": "dhcp", "address": "192.168.20.38", "prefix": 24,
+                                                     "gateway": "192.168.20.1"}, result.stderr)
+        (self.root / "config/wifi.json").write_text('{"ssid":"Home","password":"x","address":"192.168.20.38","prefix":"24","gateway":"192.168.20.1"}\n')
+        self.assertEqual(json.loads(self.helper("ip-get").stdout)["mode"], "static")
+        # A trial says which address it proposes; the password stays out of it.
+        trial = self.root / "state/wifi-trial"
+        trial.mkdir()
+        (trial / "deadline").write_text("999999999\n")
+        (trial / "candidate.json").write_text('{"ssid":"Home","password":"secret-pass","address":"192.168.20.50","prefix":"24","gateway":"192.168.20.1"}')
+        result = self.helper("wifi-state")
+        self.assertEqual(json.loads(result.stdout)["static"], "192.168.20.50", result.stderr)
+        self.assertNotIn("secret", result.stdout)
+
     def test_reset_to_defaults(self) -> None:
         """The helper only marks and restarts; the boot erases exactly the list."""
         media = Path(self.temporary.name) / "media"

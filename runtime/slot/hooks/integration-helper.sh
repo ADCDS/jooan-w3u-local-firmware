@@ -156,12 +156,14 @@ network_quality() {
     wifi_freq=$(printf '%s\n' "$status" | awk -F= '$1=="freq"{print $2;exit}')
     case "$wifi_freq" in ''|*[!0-9]*) wifi_freq=null; wifi_band=null ;;
         *) if [ "$wifi_freq" -ge 4900 ]; then wifi_band='"5 GHz"'; else wifi_band='"2.4 GHz"'; fi ;; esac
+    wifi_addr=$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p')
+    case "$wifi_addr" in ''|*[!0-9.]*) wifi_addr=null ;; *) wifi_addr="\"$wifi_addr\"" ;; esac
     wifi_gw=null
     if [ -r "$run/default-gateway" ] && read -r gw_addr _gw_dev < "$run/default-gateway"; then
         case "$gw_addr" in *[!0-9.]*|'') : ;; *) wifi_gw="\"$gw_addr\"" ;; esac
     fi
-    printf '{"wifi":{"associated":%s,"ssid":%s,"signal_dbm":%s,"rate_mbps":%s,"frequency_mhz":%s,"band":%s,"gateway":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s},' \
-        "$wifi_associated" "$wifi_ssid" "$net_signal" "$net_rate" "$wifi_freq" "$wifi_band" "$wifi_gw" \
+    printf '{"wifi":{"associated":%s,"ssid":%s,"signal_dbm":%s,"rate_mbps":%s,"frequency_mhz":%s,"band":%s,"address":%s,"gateway":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s},' \
+        "$wifi_associated" "$wifi_ssid" "$net_signal" "$net_rate" "$wifi_freq" "$wifi_band" "$wifi_addr" "$wifi_gw" \
         "$(net_counter "$net_sys/wlan0/statistics/rx_bytes")" "$(net_counter "$net_sys/wlan0/statistics/tx_bytes")" \
         "$(net_counter "$net_sys/wlan0/statistics/rx_packets")" "$(net_counter "$net_sys/wlan0/statistics/tx_packets")"
     printf '"ethernet":{"link":%s,"speed_mbps":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s}}\n' \
@@ -271,13 +273,66 @@ case "$op" in
             joined=false; printf '%s\n' "$status" | grep -qx 'wpa_state=COMPLETED' && joined=true
             addr=$(printf '%s\n' "$status" | awk -F= '$1=="ip_address"{print $2;exit}')
             case "$addr" in *[!0-9.]*|'') addr=null ;; *) addr="\"$addr\"" ;; esac
-            printf '{"pending":true,"seconds_left":%s,"ssid":%s,"joined":%s,"address":%s}\n' "$left" "${ssid:-null}" "$joined" "$addr"
+            static=$(sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([0-9.]*\)".*/\1/p' "$root/state/wifi-trial/candidate.json" 2>/dev/null | head -n 1)
+            case "$static" in '') static=null ;; *) static="\"$static\"" ;; esac
+            printf '{"pending":true,"seconds_left":%s,"ssid":%s,"joined":%s,"address":%s,"static":%s}\n' "$left" "${ssid:-null}" "$joined" "$addr" "$static"
         else
             last=null
             [ ! -e "$root/state/wifi-committed" ] || last='"committed"'
             [ ! -e "$root/state/wifi-rolled-back" ] || last='"rolled_back"'
             printf '{"pending":false,"last":%s}\n' "$last"
         fi
+        ;;
+    ip-get)
+        # How the camera gets its address, and what it has now.
+        mode=dhcp
+        ! grep -q '"address"' "$root/config/wifi.json" 2>/dev/null || mode=static
+        line=$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*Mask:\([0-9.]*\).*/\1 \2/p')
+        addr=${line%% *} mask=${line##* } bits=null
+        case "$addr" in ''|*[!0-9.]*) addr=null ;; *)
+            bits=$(printf '%s\n' "$mask" | awk -F. '{ n = 0; for (i = 1; i <= 4; i++) { v = $i + 0; while (v > 0) { n += v % 2; v = int(v / 2) } } print n }')
+            addr="\"$addr\"" ;; esac
+        gw=null
+        if [ -r "$run/default-gateway" ] && read -r gw_addr _gw_dev < "$run/default-gateway"; then
+            case "$gw_addr" in *[!0-9.]*|'') : ;; *) gw="\"$gw_addr\"" ;; esac
+        fi
+        printf '{"mode":"%s","address":%s,"prefix":%s,"gateway":%s}\n' "$mode" "$addr" "$bits" "$gw"
+        ;;
+    ip-stage)
+        # $path: "dhcp" or "static <address> <prefix> <gateway>", checked by the
+        # daemon. The same 90 s trial as a new network, without touching the link.
+        # Whatever can be found out first is, so a mistake costs nothing: an address
+        # that something else answers on, or a gateway that does not answer.
+        blocker=$(restart_blocker)
+        if [ -n "$blocker" ]; then printf '{"ok":false,"reason":"%s"}\n' "$blocker"; exit 0; fi
+        wifi_json=$root/config/wifi.json
+        if [ ! -f "$wifi_json" ]; then printf '{"ok":false,"reason":"no-network"}\n'; exit 0; fi
+        address='' prefix='' gateway=''
+        read -r mode address prefix gateway < "$path" || exit 1
+        if [ "$mode" = static ]; then
+            current=$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p')
+            if [ "$address" != "$current" ] && ! arping -D -q -c 2 -w 3 -I wlan0 "$address" >/dev/null 2>&1; then
+                printf '{"ok":false,"reason":"address-in-use"}\n'; exit 0
+            fi
+            if ! arping -f -q -c 3 -w 3 -I wlan0 "$gateway" >/dev/null 2>&1; then
+                printf '{"ok":false,"reason":"gateway-silent"}\n'; exit 0
+            fi
+        fi
+        json_tool=${JOAN_JSON_TOOL:-/mnt/mtd/run/json_debug}
+        ssid=$("$json_tool" -c r -k /ssid "$wifi_json" 2>/dev/null | sed 's/^[^ ]* [^ ]* //')
+        password=$("$json_tool" -c r -k /password "$wifi_json" 2>/dev/null | sed 's/^[^ ]* [^ ]* //')
+        [ -n "$ssid" ] && [ -n "$password" ] || exit 1
+        candidate=$run/ip-candidate.json
+        rm -f "$candidate"
+        ( umask 077
+          { printf '{"ssid":"%s","password":"%s"' "$ssid" "$password"
+            [ "$mode" != static ] || printf ',"address":"%s","prefix":"%s","gateway":"%s"' "$address" "$prefix" "$gateway"
+            printf '}\n'; } > "$candidate" )
+        rc=0
+        JOAN_WIFI_KEEP_LINK=1 "$control/admin/wifi-transaction.sh" apply "$candidate" >/dev/null 2>&1 || rc=$?
+        rm -f "$candidate"
+        [ "$rc" = 0 ] || exit 1
+        printf '{"ok":true}\n'
         ;;
     network-quality) network_quality ;;
     wifi-stage) exec "$control/admin/wifi-transaction.sh" apply "$path" ;;

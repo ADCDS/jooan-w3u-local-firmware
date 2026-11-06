@@ -84,8 +84,11 @@ int jipc_joan_stream(const char *method, const char *path, const char *type,
     if (length > total || (length < total && !pull)) return -1;
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
-    /* An upload's reply waits for the platform to verify the package. */
-    struct timeval timeout = {pull ? 4 * JOAN_TIMEOUT_S : JOAN_TIMEOUT_S, 0};
+    /* An upload's reply waits for the platform to verify the package, and
+     * joining a network or changing the address for the Wi-Fi trial to start. */
+    int slow = !strcmp(method, "POST") && !strcmp(path, "/api/v1/network/wifi");
+    slow = slow || (!strcmp(method, "PUT") && !strcmp(path, "/api/v1/network/ip"));
+    struct timeval timeout = {pull || slow ? 5 * JOAN_TIMEOUT_S : JOAN_TIMEOUT_S, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
     struct sockaddr_in address = {.sin_family = AF_INET, .sin_port = htons((uint16_t)joan_port()),

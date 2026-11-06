@@ -189,9 +189,17 @@
 <p class="muted" id="wc-p"></p><ul class="health steps" id="wc-st" hidden></ul><div class="acts col"><button class="btn pri" id="wc-keep"></button><button class="btn" id="wc-back"></button></div>
 <p class="banner" role="note"><svg><use href="#i-warn"/></svg><span id="wc-nt"></span></p></div></div>
 <div class="stack">
-<div class="card"><h2>IP address</h2>
+<div class="card"><h2 id="nw-iph">IP address</h2>
+<div class="seg" id="nw-ipm" aria-labelledby="nw-iph"><button value="dhcp">Automatic (DHCP)</button><button value="static">Static</button></div>
 <dl class="kv"><div><dt>Address</dt><dd class="mono" id="nw-ad">—</dd></div><div><dt>Gateway</dt><dd class="mono" id="nw-gw">—</dd></div></dl>
-<small>The router assigns this address. A static address is not available in this firmware yet; to keep this one, reserve it in the router.</small></div>
+<form id="nw-ipf" class="stack s" novalidate hidden>
+<div class="f"><label for="nw-ipa">Address</label><input id="nw-ipa" class="raw" inputmode="decimal" maxlength="15" autocomplete="off"></div>
+<div class="f"><label for="nw-ipp">Prefix</label><input id="nw-ipp" class="raw" inputmode="numeric" maxlength="2" autocomplete="off" aria-describedby="nw-iph2"><small id="nw-iph2">24 means 255.255.255.0.</small></div>
+<div class="f"><label for="nw-ipg">Gateway</label><input id="nw-ipg" class="raw" inputmode="decimal" maxlength="15" autocomplete="off"></div>
+<small>The camera first checks that nothing else uses the address and that the gateway answers. You then have 90 seconds to keep it.</small>
+<div class="acts"><button class="btn pri">Test this address</button><button type="button" class="btn" id="nw-ipc">Cancel</button></div>
+</form>
+<small>To keep this address, reserving it in the router is safer than Static: a wrong static address makes the camera unreachable.</small></div>
 <div class="card"><h2>Local name</h2>
 <form id="nw-name" class="stack s" novalidate><div class="f"><label for="nw-host">Name on this network</label><div class="suffix"><input id="nw-host" class="raw" maxlength="63" aria-describedby="nw-hh"><span class="mono">.local</span></div><small id="nw-hh">Letters, digits and hyphens. Applies after the next restart.</small></div>
 <div class="acts"><button class="btn">Save name</button></div><small id="nw-res" role="status"></small></form></div>

@@ -28,11 +28,13 @@ architecture. In a native boot, as observed on the verified unit:
 | `0.0.0.0:5353/udp` | `joan-daemon` | mDNS/DNS-SD; answers only peers on a directly attached IPv4 subnet |
 | `127.0.0.2:1883/tcp` | `joan-daemon` | Loopback TLS MQTT sink for the OEM application; idle in native mode |
 | `127.0.0.4:9443/tcp` | `joan-daemon` | Loopback stub that accepts and closes the OEM application's port-443 connections; idle in native mode |
-| `<camera IP>:18443/tcp` | `jooanipc-open` | HTTPS REST and ONVIF/PTZ; HTTP Basic or WS-Security |
-| `<camera IP>:18554/tcp` | `jooanipc-open` | RTSP; Digest authentication |
+| `0.0.0.0:18443/tcp` | `jooanipc-open` | HTTPS REST and ONVIF/PTZ; HTTP Basic or WS-Security |
+| `0.0.0.0:18554/tcp` | `jooanipc-open` | RTSP; Digest authentication |
 
-The media daemon binds the address set by `bind` in its `camera.ini` (the
-deployed unit uses the camera's IP; the example configuration uses `0.0.0.0`).
+The media daemon binds the address set by `bind` in its `camera.ini`. The
+deployed unit uses `0.0.0.0`, so the admin UI stays reachable while a Wi-Fi or
+address change is on trial; the camera has no route to anything but its own
+network and the allowed ones.
 RTSP clients that choose RTP over UDP get per-session UDP ports. Nothing
 listens on TCP/554, 8554, 8899 or 443 in a native boot.
 
