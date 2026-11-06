@@ -93,7 +93,8 @@ fails latches `boot-trial` and leaves the guarded OEM application running. The
 platform and SSH still answer, and the HTTPS UI does not. To recover:
 
 1. Read why it failed in `/tmp/jooanipc-open.log`, or in a log mirrored off the camera
-   if the board has reset since. Grep for `startup failed` and `health check`.
+   if the board has reset since. Grep for `startup failed` and `health check`, and the
+   kernel's messages for `Process `: an oops means the cause may not be the release.
 2. Undo the cause, if it is a saved setting. For example, in
    `/opt/jooanipc-open/state/controls.json`.
 3. `cd /opt/jooanipc-open && rm -f native-failed native-trial boot-trial && sync`
@@ -101,6 +102,14 @@ platform and SSH still answer, and the HTTPS UI does not. To recover:
 
 This happened on the test camera on 2026-11-06, twice, with a release that could not
 start with privacy mode on. It was recovered this way in about 5 minutes each time.
+
+It happened a third time that day with a sound release: `IMP_ISP_Open failed (-1)`. A
+monitoring script read `/proc/jz/isp/isp-m0` over SSH while the board was booting. Read
+after the ISP module has loaded and before the daemon has opened the ISP, that file
+oopses the driver (`Process awk` in the kernel's messages), and the daemon's open a
+second later failed. A native boot is in that state for 30 s or more while it waits for
+Wi-Fi. Anything that samples that file must first see `"ready":true` in
+`/api/v1/status`.
 
 Signed uninstall is destructive removal, not restoration of predecessor state.
 It removes the Web UI, route pruning, the process guard, project SSH, and the

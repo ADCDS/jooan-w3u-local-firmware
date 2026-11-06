@@ -174,7 +174,7 @@ def preflight_problems(facts, platform, local, appfs, config):
         problems.append("jooanipc-open did not qualify on this boot (reboot to fall back first)")
     files = config.get("files", {})
     # A bundle may create (any content) or delete (None) the native marker.
-    native_after = files[NATIVE] is not None if NATIVE in files else facts.get("native") == "yes"
+    native_after = native_expected(facts, config)
     if native_after and facts.get("wifi_json") != "yes":
         problems.append(f"native boot needs a committed Wi-Fi network ({WIFI_JSON}); without it the boot "
                         "fails after 300 s and latches native-failed. Commit one through the platform first")
@@ -191,6 +191,12 @@ def preflight_problems(facts, platform, local, appfs, config):
             problems.append(f"release {appfs['release']} changes libimp, but the bundle has no matching "
                             "imp_md5 and imp_sha256")
     return problems
+
+
+def native_expected(facts, config):
+    """Whether the camera should boot native once this bundle is in."""
+    files = (config or {}).get("files", {})
+    return files[NATIVE] is not None if NATIVE in files else facts.get("native") == "yes"
 
 
 class InstallerStopped(Exception):
@@ -451,6 +457,9 @@ def main():
         subprocess.run(args.nvr_start, shell=True, check=True)
     if abs(skew) > 5 or not result["media_ready"]:
         raise SystemExit("verification failed: see the values above")
+    if native_expected(facts, config) and mode != "native":
+        raise SystemExit(f"installed, but this boot fell back to the {mode} path ({result['native_failed']}): "
+                         "see 'A media change that stops native boot' in docs/RECOVERY.md")
     log("done")
     return 0
 

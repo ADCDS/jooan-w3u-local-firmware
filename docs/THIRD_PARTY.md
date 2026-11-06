@@ -76,6 +76,9 @@ The release build uses:
   toolchain is not committed or included in releases, and its SDK terms apply.
 
 Host tools also use the Python standard library and normal system utilities.
+The timestamp's font in `media/src/overlay.c` is font8x8 by Daniel Hepper, in the
+public domain.
+
 The media daemon's dependencies (cJSON, Mbed TLS 3.6.7 built into the
 program, and the external OpenIMP `libimp.so` with its `libatomic.so.1`) are
 covered in [media/docs/third-party.md](../media/docs/third-party.md).

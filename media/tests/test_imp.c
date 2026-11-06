@@ -393,6 +393,61 @@ static int graph_super(int ch,jipc_imp_super *attr)
 { CHECK(ch<2&&attr->i_bits==0x40000*8);return remember(1070+ch); }
 static int graph_start(int ch){CHECK(graph_enabled==((1u<<0)|(1u<<1)|(1u<<5)));return remember(1080+ch);}
 static int graph_fd(int ch){CHECK(graph_enabled==35);remember(1090+ch);return 50+ch;}
+/* The frame source reaches each encoder through an OSD group, and comes apart in
+ * the reverse order; a region is made once and stays where it is told. */
+static int ov_binds[8][4],ov_bind_count,ov_unbinds,ov_stopped,ov_destroyed,ov_rgn_set,ov_rgn_shown,ov_rgn_made,ov_rgn_gone,ov_last_rect[4],ov_last_fmt;
+static int ov_bind(jipc_imp_cell *a,jipc_imp_cell *b){int *r=ov_binds[ov_bind_count++];r[0]=a->device;r[1]=a->group;r[2]=b->device;r[3]=b->group;return 0;}
+static int ov_unbind(jipc_imp_cell *a,jipc_imp_cell *b){int *r=ov_binds[--ov_bind_count];CHECK(r[0]==a->device&&r[1]==a->group&&r[2]==b->device&&r[3]==b->group);++ov_unbinds;return 0;}
+static int ov_group(int g){CHECK(g==0||g==1);return 0;}
+static int ov_stop(int g){(void)g;++ov_stopped;return 0;}
+static int ov_group_destroy(int g){(void)g;++ov_destroyed;return 0;}
+static int ov_create(void *a){CHECK(!a);return ov_rgn_made++;}
+static int ov_destroy(int h){(void)h;++ov_rgn_gone;return 0;}
+static int ov_register(int h,int g,void *a){(void)h;(void)g;CHECK(a);return 0;}
+static int ov_unregister(int h,int g){(void)h;(void)g;return 0;}
+static int ov_set(int h,void *a){(void)h;int32_t *w=a;CHECK(w[0]==7);for(int i=0;i<4;++i)ov_last_rect[i]=w[1+i];ov_last_fmt=w[7];++ov_rgn_set;return 0;}
+static int ov_show(int h,int g,int on){(void)h;(void)g;ov_rgn_shown=on;return 0;}
+static void test_overlay_graph(void)
+{
+    imp_state *s=cleanup_state();ordinary_sources=2;
+    s->sensors=2;s->main_only=s->openimp_fullframe=1;s->width[0]=1920;s->height[0]=1080;
+    s->width[1]=640;s->height[1]=360;s->fps=s->gop=15;s->bitrate[0]=3072;s->bitrate[2]=768;
+    s->fs_create=graph_create_source;s->fs_set=graph_set_source;s->group_create=graph_group;
+    s->enc_create=graph_encoder;s->enc_register=graph_register;s->fs_enable=graph_enable;s->super_frame=graph_super;s->start=graph_start;s->get_fd=graph_fd;
+    s->bind=ov_bind;s->unbind=ov_unbind;
+    s->osd_group_create=ov_group;s->osd_group_destroy=ov_group_destroy;s->osd_group_start=ov_group;s->osd_group_stop=ov_stop;
+    s->osd_rgn_create=ov_create;s->osd_rgn_destroy=ov_destroy;s->osd_rgn_register=ov_register;s->osd_rgn_unregister=ov_unregister;s->osd_rgn_set=ov_set;s->osd_rgn_show=ov_show;
+    graph_enabled=0;graph_fail_enable=0;call_count=0;char error[256];
+    CHECK(!video_graph_open(s,error,sizeof(error)));
+    /* lens 0: FS 1 -> OSD 0 -> encoder group 0; lens 1: FS 5 -> OSD 1 -> encoder group 1 */
+    CHECK(ov_bind_count==4);
+    CHECK(ov_binds[0][0]==0&&ov_binds[0][1]==source_channel(s,0)&&ov_binds[0][2]==4&&ov_binds[0][3]==0);
+    CHECK(ov_binds[1][0]==4&&ov_binds[1][1]==0&&ov_binds[1][2]==1&&ov_binds[1][3]==enc_groups[0]);
+    CHECK(ov_binds[2][0]==0&&ov_binds[2][1]==source_channel(s,2)&&ov_binds[2][2]==4&&ov_binds[2][3]==1);
+    CHECK(ov_binds[3][0]==4&&ov_binds[3][1]==1&&ov_binds[3][2]==1&&ov_binds[3][3]==enc_groups[2]);
+    CHECK(!s->bound[0]&&!s->bound[2]);
+    /* No text yet: no region, and hiding it is harmless. */
+    CHECK(!jipc_imp_overlay(s,0,NULL,0,error,sizeof(error))&&!ov_rgn_made);
+    /* First text: one region, in the corner asked for, shown. */
+    CHECK(!jipc_imp_overlay(s,0,"2026-11-06 14:42:08",JIPC_OVERLAY_TOP_LEFT,error,sizeof(error)));
+    CHECK(ov_rgn_made==1&&ov_rgn_set==1&&ov_rgn_shown==1&&ov_last_fmt==17);
+    CHECK(ov_last_rect[0]==24&&ov_last_rect[1]==24&&!((ov_last_rect[2]-ov_last_rect[0]+1)%16));
+    /* The next second: the same region. */
+    CHECK(!jipc_imp_overlay(s,0,"2026-11-06 14:42:09",JIPC_OVERLAY_BOTTOM_RIGHT,error,sizeof(error)));
+    CHECK(ov_rgn_made==1&&ov_rgn_set==2);
+    CHECK(ov_last_rect[2]==1920-24-1&&ov_last_rect[3]==1080-24-1);
+    /* The small lens has its own region, at a smaller scale and margin, inside its frame. */
+    CHECK(!jipc_imp_overlay(s,1,"2026-11-06 14:42:09 0123456789abcdef",JIPC_OVERLAY_TOP_RIGHT,error,sizeof(error)));
+    CHECK(ov_rgn_made==2&&ov_last_rect[2]==640-16-1&&ov_last_rect[1]==16&&ov_last_rect[0]>=16);
+    /* What does not fit is refused, and a lens that is not there is ignored. */
+    CHECK(jipc_imp_overlay(s,1,"2026-11-06 14:42:09 0123456789abcdefgh",0,error,sizeof(error))<0);
+    CHECK(!jipc_imp_overlay(s,2,"x",0,error,sizeof(error))&&ov_rgn_made==2);
+    /* Hidden, then all of it comes apart. */
+    CHECK(!jipc_imp_overlay(s,0,NULL,0,error,sizeof(error))&&!ov_rgn_shown);
+    CHECK(!jipc_imp_overlay(s,0,"2026-11-06 14:42:10",0,error,sizeof(error))&&ov_rgn_shown==1);
+    jipc_imp_close(s);
+    CHECK(!ov_bind_count&&ov_unbinds==4&&ov_stopped==2&&ov_destroyed==2&&ov_rgn_gone==2);
+}
 static void test_main_only_graph(void)
 {
     for(int partial=0;partial<2;++partial){
@@ -570,7 +625,7 @@ static void test_provider(void)
 
 int main(void)
 {
-    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone(); test_main_only_graph(); test_main_only_delivery(); test_main_only_still();
+    test_provider(); test_cleanup(); test_packs(); test_speaker(); test_microphone(); test_main_only_graph(); test_overlay_graph(); test_main_only_delivery(); test_main_only_still();
     puts("IMP offline adapter contracts passed");
     return 0;
 }

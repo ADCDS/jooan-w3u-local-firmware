@@ -64,6 +64,12 @@ typedef struct {
     int (*get_stream)(int, jipc_imp_stream *, int), (*release_stream)(int, jipc_imp_stream *);
     int (*super_frame)(int, jipc_imp_super *);
     imp_one osd_pool, isp_pool, vpubs_pool, vb_pool;
+    imp_one osd_group_create, osd_group_destroy, osd_group_start, osd_group_stop;
+    int (*osd_rgn_create)(void *), (*osd_rgn_destroy)(int), (*osd_rgn_register)(int, int, void *),
+        (*osd_rgn_unregister)(int, int), (*osd_rgn_set)(int, void *), (*osd_rgn_show)(int, int, int);
+    /* Per lens. osd_bound: 1 frame source to OSD, 2 and OSD to encoder. osd_rgn: handle + 1. */
+    int osd_group[2], osd_bound[2], osd_started[2], osd_rgn[2], osd_shown[2];
+    unsigned char *osd_pixels;
     imp_byte brightness[2], contrast[2], saturation[2], sharpness[2];
     imp_one temper[2], sinter[2], antiflicker[2];
     imp_one hflip[2], vflip[2], night[2];
@@ -224,6 +230,11 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
     OPTIONAL(set_fps_sec, "IMP_ISP_Tuning_SetSensorFPS_Sec");
     OPTIONAL(osd_pool, "IMP_OSD_SetPoolSize"); OPTIONAL(isp_pool, "IMP_OSD_SetPoolSize_ISP");
     OPTIONAL(vpubs_pool, "IMP_Set_Vpubs_Size"); OPTIONAL(vb_pool, "IMP_Set_Vbmpool1_Size");
+    OPTIONAL(osd_group_create, "IMP_OSD_CreateGroup"); OPTIONAL(osd_group_destroy, "IMP_OSD_DestroyGroup");
+    OPTIONAL(osd_group_start, "IMP_OSD_Start"); OPTIONAL(osd_group_stop, "IMP_OSD_Stop");
+    OPTIONAL(osd_rgn_create, "IMP_OSD_CreateRgn"); OPTIONAL(osd_rgn_destroy, "IMP_OSD_DestroyRgn");
+    OPTIONAL(osd_rgn_register, "IMP_OSD_RegisterRgn"); OPTIONAL(osd_rgn_unregister, "IMP_OSD_UnRegisterRgn");
+    OPTIONAL(osd_rgn_set, "IMP_OSD_SetRgnAttr"); OPTIONAL(osd_rgn_show, "IMP_OSD_ShowRgn");
     const char *const suffix[2] = {"", "_Sec"};
     for (unsigned i = 0; i < 2; ++i) {
         char symbol[96];
@@ -283,6 +294,18 @@ void jipc_imp_close(void *state)
     for (int i = 3; i >= 0; --i)
         if (s->fs_enabled[i]) cleanup_result("FrameSource_DisableChn", s->fs_disable(source_channel(s, i)));
     if (s->workspace_enabled) cleanup_result("FrameSource_DisableWorkspace", s->fs_disable(0));
+    for (int lens = 1; lens >= 0; --lens) {
+        if (s->osd_rgn[lens]) {
+            if (s->osd_shown[lens]) cleanup_result("OSD_ShowRgn", s->osd_rgn_show(s->osd_rgn[lens] - 1, lens, 0));
+            cleanup_result("OSD_UnRegisterRgn", s->osd_rgn_unregister(s->osd_rgn[lens] - 1, lens));
+            cleanup_result("OSD_DestroyRgn", s->osd_rgn_destroy(s->osd_rgn[lens] - 1));
+        }
+        if (s->osd_started[lens]) cleanup_result("OSD_Stop", s->osd_group_stop(lens));
+        jipc_imp_cell source = {0, source_channel(s, (unsigned)lens * 2), 0}, osd = {4, lens, 0}, destination = {1, enc_groups[lens * 2], 0};
+        if (s->osd_bound[lens] >= 2) cleanup_result("System_UnBind", s->unbind(&osd, &destination));
+        if (s->osd_bound[lens] >= 1) cleanup_result("System_UnBind", s->unbind(&source, &osd));
+        if (s->osd_group[lens]) cleanup_result("OSD_DestroyGroup", s->osd_group_destroy(lens));
+    }
     for (int i = 3; i >= 0; --i) {
         jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
         if (s->bound[i]) cleanup_result("System_UnBind", s->unbind(&source, &destination));
@@ -307,6 +330,7 @@ void jipc_imp_close(void *state)
     if (s->lock_fd >= 0) close(s->lock_fd);
     if (s->mic_mutex_ready) pthread_mutex_destroy(&s->mic_mutex);
     free(s->frame);
+    free(s->osd_pixels);
     free(s);
 }
 
@@ -379,6 +403,19 @@ static int video_graph_open(imp_state *s, char *error, size_t capacity)
         STEP(s->enc_create(enc_channels[i], &encoder), "IMP_Encoder_CreateChn"); s->enc_created[i] = 1;
         STEP(s->enc_register(enc_groups[i], enc_channels[i]), "IMP_Encoder_RegisterChn"); s->registered[i] = 1;
         jipc_imp_cell source = {0, source_channel(s, i), 0}, destination = {1, enc_groups[i], 0};
+        /* Frame source, OSD, encoder: what the OSD draws is in the video and the
+         * stills. With nothing shown it costs nothing measurable, so the stage is
+         * always there and turning the timestamp on does not restart the video. */
+        if (s->main_only && s->osd_group_create && s->osd_group_destroy && s->osd_group_start && s->osd_group_stop &&
+            s->osd_rgn_create && s->osd_rgn_destroy && s->osd_rgn_register && s->osd_rgn_unregister && s->osd_rgn_set && s->osd_rgn_show) {
+            int lens = (int)(i / 2);
+            jipc_imp_cell osd = {4, lens, 0};
+            STEP(s->osd_group_create(lens), "IMP_OSD_CreateGroup"); s->osd_group[lens] = 1;
+            STEP(s->bind(&source, &osd), "IMP_System_Bind"); s->osd_bound[lens] = 1;
+            STEP(s->bind(&osd, &destination), "IMP_System_Bind"); s->osd_bound[lens] = 2;
+            STEP(s->osd_group_start(lens), "IMP_OSD_Start"); s->osd_started[lens] = 1;
+            continue;
+        }
         STEP(s->bind(&source, &destination), "IMP_System_Bind"); s->bound[i] = 1;
     }
     if (s->openimp_fullframe) {
@@ -955,6 +992,45 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
     if (!setter) return failure(error, capacity, "SDK lacks requested image control");
     if (value < 0 || value > 255) return failure(error, capacity, "image control must be in 0..255");
     return sdk_result(setter((unsigned char)value), operation, error, capacity);
+}
+
+int jipc_imp_overlay(void *state, unsigned sensor, const char *text, int corner, char *error, size_t capacity)
+{
+    imp_state *s = state;
+    if (sensor >= s->sensors || sensor > 1 || s->osd_bound[sensor] != 2) return 0; /* no OSD stage in this profile */
+    int lens = (int)sensor;
+    if (!text) {
+        if (s->osd_shown[lens] && sdk_result(s->osd_rgn_show(s->osd_rgn[lens] - 1, lens, 0), "IMP_OSD_ShowRgn", error, capacity)) return -1;
+        s->osd_shown[lens] = 0;
+        return 0;
+    }
+    if (!s->osd_pixels && !(s->osd_pixels = malloc(JIPC_OVERLAY_BYTES))) return failure(error, capacity, "cannot allocate the timestamp picture");
+    if (!s->osd_rgn[lens]) {
+        int handle = s->osd_rgn_create(NULL);
+        if (handle < 0) return failure(error, capacity, "IMP_OSD_CreateRgn failed: %d", handle);
+        s->osd_rgn[lens] = handle + 1;
+        int32_t group[9] = {0}; /* IMPOSDGrpRgnAttr, hidden */
+        if (sdk_result(s->osd_rgn_register(handle, lens, group), "IMP_OSD_RegisterRgn", error, capacity)) return -1;
+    }
+    unsigned big = s->height[lens] >= 720, scale = big ? 3 : 2, margin = big ? 24 : 16, width, height;
+    if (jipc_overlay_render(text, scale, s->osd_pixels, JIPC_OVERLAY_BYTES, &width, &height) ||
+        width + 2 * margin > s->width[lens] || height + 2 * margin > s->height[lens])
+        return failure(error, capacity, "the timestamp does not fit lens %u", sensor);
+    int right = corner == JIPC_OVERLAY_TOP_RIGHT || corner == JIPC_OVERLAY_BOTTOM_RIGHT;
+    int bottom = corner == JIPC_OVERLAY_BOTTOM_LEFT || corner == JIPC_OVERLAY_BOTTOM_RIGHT;
+    int x = (int)(right ? s->width[lens] - width - margin : margin), y = (int)(bottom ? s->height[lens] - height - margin : margin);
+    /* IMPOSDRgnAttr, 428 bytes: type, rect, line, format, data. */
+    int32_t attr[107] = {0};
+    attr[0] = 7; /* OSD_REG_PIC */
+    attr[1] = x; attr[2] = y; attr[3] = x + (int)width - 1; attr[4] = y + (int)height - 1;
+    attr[7] = 17; /* BGRA */
+    memcpy(&attr[8], &s->osd_pixels, sizeof s->osd_pixels);
+    if (sdk_result(s->osd_rgn_set(s->osd_rgn[lens] - 1, attr), "IMP_OSD_SetRgnAttr", error, capacity)) return -1;
+    if (!s->osd_shown[lens]) {
+        if (sdk_result(s->osd_rgn_show(s->osd_rgn[lens] - 1, lens, 1), "IMP_OSD_ShowRgn", error, capacity)) return -1;
+        s->osd_shown[lens] = 1;
+    }
+    return 0;
 }
 
 int jipc_imp_snapshot(void *state, unsigned channel, pthread_mutex_t *control,

@@ -247,6 +247,7 @@ def control_defaults():
             "pilot_led": False, "mic_mute": False, "anti_flicker": "off", "utc_offset_min": 0,
             "picture": [dict.fromkeys(PICTURE, 128) for _ in range(2)],
             "patrol": {"enabled": False, "pause_s": 120, "stops": []},
+            "overlay": {"enabled": False, "position": "top-left", "format": "ymd", "name": ""},
             "privacy": {"on": False, "slot": 0, "schedule": {"enabled": False, "from": "22:00", "until": "06:00"}}}
 
 
@@ -331,6 +332,21 @@ def controls_patch(current, o):
                 whole(s, q, "dwell_s", 3, 3600)
                 stops.append(q)
             d["stops"] = stops
+    if "overlay" in o:
+        v, d = o["overlay"], nxt["overlay"]
+        if not isinstance(v, dict): raise Invalid("overlay must be an object")
+        flag(v, d, "enabled")
+        if "position" in v:
+            if v["position"] not in ("top-left", "top-right", "bottom-left", "bottom-right"):
+                raise Invalid("position must be top-left, top-right, bottom-left or bottom-right")
+            d["position"] = v["position"]
+        if "format" in v:
+            if v["format"] not in ("ymd", "dmy", "mdy"): raise Invalid("format must be ymd, dmy or mdy")
+            d["format"] = v["format"]
+        if "name" in v:
+            if not isinstance(v["name"], str) or len(v["name"]) > 16 or any(not " " <= c <= "~" for c in v["name"]):
+                raise Invalid("name must be plain text of at most 16 characters")
+            d["name"] = v["name"]
     if "privacy" in o:
         v, d = o["privacy"], nxt["privacy"]
         if not isinstance(v, dict): raise Invalid("privacy must be an object")

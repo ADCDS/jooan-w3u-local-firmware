@@ -61,6 +61,7 @@ JA-A12 storage budget and required boot dependencies.
 | Lights and night | White light (manual, schedule, timed trigger), day/night (manual, automatic from the ISP exposure, schedule), infrared mode, pilot LED; remembered across restarts |
 | Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
 | Stills | Hardware JPEG of either lens over HTTPS and ONVIF, one at a time, refused during privacy mode |
+| Timestamp | Burned into both lenses' video and stills by an OSD stage, off by default: corner, date format, camera name |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
 Motion/person detection, autotracking (an NVR can do it through ONVIF),
