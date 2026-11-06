@@ -2064,7 +2064,7 @@
 		s.innerHTML = BARS.map((p, i) => `<path d="${p}"${i < n ? '' : ' class="off"'}/>`).join('');
 		return s;
 	}
-	/* Nearby networks: scanned when asked, since a scan takes 3-4 s. Hidden networks are not
+	/* Nearby networks: scanned when asked, since a scan takes 5-10 s. Hidden networks are not
 	   listed, so a name can still be typed. The camera only joins networks with a password. */
 	let nets = null,
 		joinOpen = 0,

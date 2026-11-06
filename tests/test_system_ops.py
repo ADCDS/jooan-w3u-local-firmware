@@ -36,15 +36,17 @@ class SystemOpsTests(unittest.TestCase):
                    "[ \"$1\" = -iwlan0 ] || exit 2\n"
                    "case \"$2\" in\n"
                    "  status) printf '%s\\n' \"$FAKE_WPA_STATUS\" ;;\n"
-                   "  scan) echo OK ;;\n"
-                   "  scan_results) printf '%b' \"$FAKE_SCAN\" ;;\n"
+                   "  scan) : > \"$FAKE_SCANNED\"; echo OK ;;\n"
+                   # The table only changes once the scan has ended: until then, the old one.
+                   "  scan_results) if [ -e \"$FAKE_SCANNED\" ]; then printf '%b' \"$FAKE_SCAN\"; else printf '%b' \"$FAKE_OLD_SCAN\"; fi ;;\n"
                    "  *) exit 2 ;;\n"
                    "esac\n")
         # The helper honours JOOAN_PATH; make sure its `reboot` is the fake before any test runs.
         self.assertEqual(shutil.which("reboot", path=f"{self.bin}:/bin:/usr/bin"), str(self.bin / "reboot"))
         self.env = os.environ | {"JOOAN_PATH": f"{self.bin}:/bin:/usr/bin", "JL_ROOT": str(self.root),
                                  "JL_RUN": str(self.run), "FAKE_WPA_STATUS": "wpa_state=COMPLETED\nssid=Home",
-                                 "FAKE_SCAN": "", "JL_NET_SYSFS": str(base / "sys"),
+                                 "FAKE_SCAN": "", "FAKE_OLD_SCAN": "", "FAKE_SCANNED": str(base / "scanned"),
+                                 "JL_NET_SYSFS": str(base / "sys"),
                                  "JL_NET_WIRELESS": str(base / "wireless")}
 
     def tearDown(self) -> None:
@@ -75,6 +77,9 @@ class SystemOpsTests(unittest.TestCase):
         self.assertEqual(self.helper("ssh-delete", ident="x").returncode, 2)
         self.assertEqual(self.helper("ssh-delete", ident="all").returncode, 0)
         self.assertEqual(self.keys(), [])
+        # Removing every key leaves an empty file, and adding must still work.
+        self.assertEqual(self.add_key(1).returncode, 0)
+        self.assertEqual(self.keys(), [KEY.format(1)])
         bad = Path(self.temporary.name) / "bad"
         bad.write_text("ssh-rsa AAAA user@host\n")
         self.assertEqual(self.helper("ssh-add", str(bad)).returncode, 1)
@@ -109,6 +114,8 @@ class SystemOpsTests(unittest.TestCase):
         self.assertTrue(self.rebooted.exists(), "the delayed reboot did not run")
 
     def test_wifi_scan(self) -> None:
+        self.env["FAKE_OLD_SCAN"] = ("bssid / frequency / signal level / flags / ssid\\n"
+                                     "aa:aa:aa:aa:aa:02\\t5180\\t-61\\t[WPA2-PSK-CCMP][ESS]\\tHome\\n")
         self.env["FAKE_SCAN"] = ("bssid / frequency / signal level / flags / ssid\\n"
                                  "aa:aa:aa:aa:aa:01\\t2437\\t-80\\t[WPA2-PSK-CCMP][ESS]\\tHome\\n"
                                  "aa:aa:aa:aa:aa:02\\t5180\\t-60\\t[WPA2-PSK-CCMP][ESS]\\tHome\\n"
@@ -117,7 +124,8 @@ class SystemOpsTests(unittest.TestCase):
         result = self.helper("wifi-scan")
         self.assertEqual(result.returncode, 0, result.stderr)
         networks = json.loads(result.stdout)
-        self.assertEqual([n["ssid"] for n in networks], ["Cafe ?Free?", "Home"])   # strongest first, no hidden
+        # Strongest first, no hidden, and the fresh table rather than the old one.
+        self.assertEqual([n["ssid"] for n in networks], ["Cafe ?Free?", "Home"])
         home = networks[1]
         self.assertEqual((home["signal_dbm"], home["frequency_mhz"], home["secure"], home["in_use"]),
                          (-60, 5180, True, True))

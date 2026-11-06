@@ -216,10 +216,19 @@ case "$op" in
         exec "$0" restart-schedule
         ;;
     wifi-scan)
-        # wpa_supplicant scans on its own; ask for a fresh one, then list the
-        # strongest entry per network. Only names, signal, band and security.
+        # Ask for a fresh scan, then list the strongest entry per network: only
+        # names, signal, band and security. A scan takes 5 to 7 seconds on this
+        # chip and the table changes all at once when it ends, so wait for that
+        # (the old table is what comes back before then). The caller allows 15 s.
+        scan_table() { wpa_cli -iwlan0 scan_results 2>/dev/null | awk -F'\t' 'NR>1{print $1,$3}'; }
+        before=$(scan_table)
         wpa_cli -iwlan0 scan >/dev/null 2>&1 || :
-        sleep 3
+        tries=0
+        while [ "$tries" -lt 10 ]; do
+            sleep 1
+            tries=$((tries + 1))
+            [ "$(scan_table)" = "$before" ] || break
+        done
         current=$(wpa_cli -iwlan0 status 2>/dev/null | awk -F= '$1=="ssid"{print $2;exit}')
         wpa_cli -iwlan0 scan_results 2>/dev/null | awk -F'\t' 'NR>1 && NF>=5 && $5!="" {
             if (!($5 in best) || $3+0 > sig[$5]) { best[$5]=$2; sig[$5]=$3+0; sec[$5]=($4 ~ /WPA|WEP|RSN/) } }
@@ -277,7 +286,8 @@ case "$op" in
         blob=$(printf '%s\n' "$key" | awk '{print $2}')
         if [ -f "$keys" ] && awk -v b="$blob" '$2==b{f=1} END{exit !f}' "$keys"; then exit 0; fi
         [ ! -f "$keys" ] || [ "$(grep -c . "$keys")" -lt 8 ] || exit 1
-        { [ ! -f "$keys" ] || grep . "$keys"; printf '%s\n' "$key"; } > "$keys.new"
+        # grep fails on an empty list, which is what removing every key leaves.
+        { [ ! -f "$keys" ] || grep . "$keys" || :; printf '%s\n' "$key"; } > "$keys.new"
         chmod 600 "$keys.new"
         mv "$keys.new" "$keys"
         sync
