@@ -688,6 +688,15 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     return rc;
 }
 
+int jipc_backend_overlay(jipc_app *app, unsigned lens, const char *text, int corner, char *error, size_t capacity)
+{
+    control_lock(app);
+    media_state *state = app->backend_state;
+    int rc = state && app->backend_ready && state->imp ? jipc_imp_overlay(state->imp, lens, text, corner, error, capacity) : 0;
+    pthread_mutex_unlock(&app->control_mutex);
+    return rc;
+}
+
 int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
                           char *error, size_t capacity)
 {

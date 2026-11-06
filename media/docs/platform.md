@@ -107,6 +107,17 @@ step and 2.45 per tilt step. Every reversal first loses about 25 steps to gear
 backlash, so a short move after changing direction falls that much short, and so
 does a return to a preset approached from the other side.
 
+`overlay` in `/api/v1/controls` burns a timestamp into both lenses' video and
+stills: `enabled`, `position` (a corner), `format` (`ymd`, `dmy`, `mdy`) and `name`
+(plain text, at most 16 characters). It is redrawn on each second in the camera's
+time zone, and shows nothing until the clock has been set. An OSD group sits between
+the frame source and the encoder of each lens all the time, in `main_only`; the IPU
+blends the picture into each frame. Measured on camera1 with both lenses drawing: the
+daemon went from 36% to 38% of the CPU, with no frames lost. The pictures take about
+310 KiB of reserved memory, only once it has been turned on. The ISP's own OSD is not
+used: on camera1 its calls succeed and nothing reaches the channels the encoders read.
+Changing digits look like motion to an NVR, so mask that corner in its motion detection.
+
 The two lenses see about as much as each other: the pan/tilt lens's picture spans
 roughly nine tenths of the fixed lens's width and all of its height. So the fixed
 lens is not a wider view, only another direction, and aiming from it reaches what it
@@ -148,6 +159,8 @@ Its stops are not written as the last position, so a patrol costs no flash write
 `{"privacy":{"schedule":{"enabled":true,"from":"22:00","until":"06:00"}}}` in the
 camera's time zone. With a schedule, `on` holds until the window's next edge.
 `live.privacy` is what applies now.
+
+A timestamp burned into the picture, when it is on, stays on the black picture.
 
 The cover is the ISP: brightness, contrast and saturation at 0 on both lenses.
 Measured on camera1 at midday, every pixel of both streams then reads Y=16,
@@ -243,7 +256,9 @@ Night modes (`night` `value`, or `night.mode`): 0 `day`, 1 `night`, 2 `auto`,
 3 `schedule` (night from `from` until `until`, local time by
 `utc_offset_min`; the admin UI sends the browser's offset). In `auto` the
 daemon reads lens 0's `ISP EV value` from the kernel's
-`/proc/jz/isp/isp-m0` every 5 s (higher is darker). It switches to night
+`/proc/jz/isp/isp-m0` every 5 s (higher is darker), and only with the video running:
+read before the daemon has opened the ISP, that file oopses the driver, so nothing
+else should read it during a boot either. It switches to night
 when the level stays at or above `night_ev` for `wait_s`, and back to day
 when it stays at or below `day_ev` (lower, for hysteresis) for `wait_s`.
 At least 5 minutes pass between automatic switches, because a switch changes

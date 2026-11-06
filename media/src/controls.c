@@ -33,6 +33,8 @@ typedef struct {
     int night_mode, ir_off, night_ev, day_ev, wait_s, night_from, night_until;
     int white_light, wl_schedule, wl_from, wl_until, trigger_s;
     int pilot_led, mic_mute, anti_flicker, utc_offset_min;
+    int overlay_on, overlay_corner, overlay_format;
+    char overlay_name[JIPC_OVERLAY_NAME + 1];
     picture pic[2];
     int patrol_on, patrol_pause_s, patrol_count;
     patrol_stop stops[PATROL_STOPS];
@@ -62,6 +64,8 @@ typedef struct {
     uint64_t privacy_override_until, covered_at;
     /* Patrol: where it is and what it is doing, for the status too. */
     int patrol_index, patrol_phase, patrol_skipped;
+    int overlay_shown;
+    long long overlay_second;
     uint64_t patrol_until;
     const char *patrol_state;
     int patrol_left_s;
@@ -258,6 +262,34 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
             }
         }
     }
+    cJSON *overlay = cJSON_GetObjectItemCaseSensitive(root, "overlay");
+    if (overlay) {
+        static const char *const corners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
+        static const char *const formats[] = {"ymd", "dmy", "mdy"};
+        if (!cJSON_IsObject(overlay)) return snprintf(error, capacity, "overlay must be an object"), -1;
+        if (get_bool(overlay, "enabled", &next.overlay_on, error, capacity)) return -1;
+        cJSON *item = cJSON_GetObjectItemCaseSensitive(overlay, "position");
+        if (item) {
+            int found = -1;
+            for (int i = 0; cJSON_IsString(item) && i < 4; ++i) if (!strcmp(item->valuestring, corners[i])) found = i;
+            if (found < 0) return snprintf(error, capacity, "position must be top-left, top-right, bottom-left or bottom-right"), -1;
+            next.overlay_corner = found;
+        }
+        item = cJSON_GetObjectItemCaseSensitive(overlay, "format");
+        if (item) {
+            int found = -1;
+            for (int i = 0; cJSON_IsString(item) && i < 3; ++i) if (!strcmp(item->valuestring, formats[i])) found = i;
+            if (found < 0) return snprintf(error, capacity, "format must be ymd, dmy or mdy"), -1;
+            next.overlay_format = found;
+        }
+        item = cJSON_GetObjectItemCaseSensitive(overlay, "name");
+        if (item) {
+            int fits = cJSON_IsString(item) && strlen(item->valuestring) <= JIPC_OVERLAY_NAME;
+            for (const char *p = fits ? item->valuestring : ""; *p; ++p) if (*p < 32 || *p > 126) fits = 0;
+            if (!fits) return snprintf(error, capacity, "name must be plain text of at most %d characters", JIPC_OVERLAY_NAME), -1;
+            snprintf(next.overlay_name, sizeof next.overlay_name, "%s", item->valuestring);
+        }
+    }
     cJSON *privacy = cJSON_GetObjectItemCaseSensitive(root, "privacy");
     if (privacy) {
         if (!cJSON_IsObject(privacy)) return snprintf(error, capacity, "privacy must be an object"), -1;
@@ -363,6 +395,15 @@ static char *settings_json(const settings *s, int with_version)
             cJSON_AddNumberToObject(stop, "dwell_s", s->stops[i].dwell_s);
             cJSON_AddItemToArray(stops, stop);
         }
+    }
+    cJSON *overlay = cJSON_AddObjectToObject(root, "overlay");
+    if (overlay) {
+        static const char *const corners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
+        static const char *const formats[] = {"ymd", "dmy", "mdy"};
+        cJSON_AddBoolToObject(overlay, "enabled", s->overlay_on);
+        cJSON_AddStringToObject(overlay, "position", corners[s->overlay_corner]);
+        cJSON_AddStringToObject(overlay, "format", formats[s->overlay_format]);
+        cJSON_AddStringToObject(overlay, "name", s->overlay_name);
     }
     cJSON *privacy = cJSON_AddObjectToObject(root, "privacy");
     if (privacy) {
@@ -524,6 +565,23 @@ static void patrol_tick(controls_state *c, const settings *s, int privacy, uint6
     pthread_mutex_unlock(&c->mutex);
 }
 
+/* The timestamp, redrawn on each new second. Nothing until the clock has been set:
+ * a wrong date in a recording is worse than none. */
+static void overlay_tick(controls_state *c, const settings *s)
+{
+    char text[64], error[160] = {0};
+    long long now = (long long)time(NULL);
+    int show = s->overlay_on && now >= 1600000000LL;
+    if (!show && !c->overlay_shown) return;
+    if (show && now == c->overlay_second) return;
+    c->overlay_second = now;
+    c->overlay_shown = show;
+    if (show) jipc_overlay_text(text, sizeof text, now, s->utc_offset_min, s->overlay_format, s->overlay_name);
+    for (unsigned lens = 0; lens < 2; ++lens)
+        if (jipc_backend_overlay(c->app, lens, show ? text : NULL, s->overlay_corner, error, sizeof error) < 0)
+            set_error(c, "overlay", error);
+}
+
 static void *engine(void *opaque)
 {
     controls_state *c = opaque;
@@ -645,12 +703,14 @@ static void *engine(void *opaque)
         if (do_picture) apply_picture(c, &s, privacy);
         if (!privacy) atomic_store(&app->privacy_hold, 0);
         patrol_tick(c, &s, privacy, now);
+        overlay_tick(c, &s);
 
         pthread_mutex_lock(&c->mutex);
         if (!atomic_load(&c->quit) && !c->apply_picture) {
             struct timespec until;
             clock_gettime(CLOCK_REALTIME, &until);
             until.tv_sec += 1;
+            if (s.overlay_on) until.tv_nsec = 0; /* the timestamp changes on the second */
             pthread_cond_timedwait(&c->wake, &c->mutex, &until);
         }
         pthread_mutex_unlock(&c->mutex);

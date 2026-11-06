@@ -1123,9 +1123,22 @@
 		}
 		busy(el) || (el.value = v);
 	}
+	/* The name on the picture: what its small font can draw. */
+	const ovName = () => name().replace(/[^ -~]/g, '').slice(0, 16);
+	function ovShow(o) {
+		$('im-ovc').hidden = !o;
+		if (!o) return;
+		busy($('im-ovs')) || sw($('im-ovs'), o.enabled);
+		$('im-ovf').hidden = $('im-ovb').hidden = !o.enabled;
+		setIn($('im-ovp'), o.position);
+		setIn($('im-ovm'), o.format);
+		busy($('im-ovn')) || ($('im-ovn').checked = !!o.name);
+		tx('im-ovt', `Add the camera name (${o.name || ovName()})`);
+	}
 	function rControls(x) {
 		privacyShow();
 		patrolShow();
+		ovShow(x.overlay);
 		const n = x.night,
 			w = x.white_light,
 			wm = w.schedule.enabled ? 'schedule' : w.on ? 'on' : 'off';
@@ -1314,6 +1327,11 @@
 		stShow();
 		stTick();
 	});
+	const putO = (b, overlay) => run(b, () => putX({ overlay }), $('im-ovc')).then(() => ovShow(S.x?.overlay));
+	$('im-ovs').onclick = e => putO(e.currentTarget, { enabled: e.currentTarget.getAttribute('aria-checked') != 'true' });
+	$('im-ovp').onchange = e => putO(e.target, { position: e.target.value });
+	$('im-ovm').onchange = e => putO(e.target, { format: e.target.value });
+	$('im-ovn').onchange = e => putO(e.target, { name: e.target.checked ? ovName() : '' });
 	$('im-reset').onclick = act(async () => {
 		const p = Object.fromEntries(PIC.map(op => [op, 128]));
 		await putX(picOf(lens, p));

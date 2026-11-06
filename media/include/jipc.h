@@ -235,6 +235,14 @@ int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *er
 /* Boot homing when motor_home=1 (no OEM bootstrap); once per boot. */
 int jipc_platform_start(jipc_app *app);
 int jipc_platform_move(jipc_app *app, int kind, double x, double y, double speed, char *error, size_t capacity);
+/* The timestamp burned into the picture (src/overlay.c). */
+enum { JIPC_OVERLAY_YMD, JIPC_OVERLAY_DMY, JIPC_OVERLAY_MDY };
+enum { JIPC_OVERLAY_TOP_LEFT, JIPC_OVERLAY_TOP_RIGHT, JIPC_OVERLAY_BOTTOM_LEFT, JIPC_OVERLAY_BOTTOM_RIGHT };
+/* 19 for the date and time, a space, 16 for a name; at scale 3, 880 by 30 by 4 bytes. */
+enum { JIPC_OVERLAY_NAME = 16, JIPC_OVERLAY_CHARS = 36, JIPC_OVERLAY_BYTES = 880 * 30 * 4 };
+size_t jipc_overlay_text(char *out, size_t capacity, long long utc, int offset_minutes, int format, const char *name);
+int jipc_overlay_render(const char *text, unsigned scale, unsigned char *pixels, size_t capacity, unsigned *width, unsigned *height);
+int jipc_backend_overlay(jipc_app *app, unsigned lens, const char *text, int corner, char *error, size_t capacity);
 /* Aiming from the fixed lens's picture (src/aim.c). u and v run from 0 to 1 across it. */
 typedef struct { double x[6], y[6]; } jipc_aim;
 void jipc_aim_steps(const jipc_aim *aim, double u, double v, double *x, double *y);

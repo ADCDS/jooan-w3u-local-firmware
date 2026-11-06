@@ -36,6 +36,10 @@ assert any("sequence 58" in p for p in problems(platform={"release_sequence": 58
 assert any("bundle expects" in p for p in problems({"appfs_md5": "b" * 32}, appfs=APPFS))
 assert any("did not qualify" in p for p in problems({"qualified": "0"}))
 assert any("64 KiB" in p for p in problems({"opt_free": "10"}))
+# Whether ending on the fallback is a failure depends on what the camera should do.
+assert ic.native_expected({"native": "yes"}, {}) and not ic.native_expected({"native": "no"}, {})
+assert ic.native_expected({"native": "no"}, {"files": {ic.NATIVE: ""}})
+assert not ic.native_expected({"native": "yes"}, {"files": {ic.NATIVE: None}})
 # A release with another libimp must bring the sums the boot checks it against.
 SAME = APPFS | {"release": "11111111-904d60a6"}
 NEW = APPFS | {"release": "22222222-8b374e7a"}

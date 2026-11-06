@@ -511,6 +511,15 @@ def ptz_checks(request, connection, secret):
     assert move("AbsoluteMove", "Position", 0.1, 0.1)[0] == 200
     before = settle()
     mute_before = json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"]
+    # The timestamp's settings: off until asked for, checked and kept. Replay has no picture to draw on.
+    assert controls()["overlay"] == {"enabled": False, "position": "top-left", "format": "ymd", "name": ""}
+    for bad in ({"position": "middle"}, {"format": "iso"}, {"name": "a" * 17}, {"name": "caf\u00e9"}, {"name": 7}, {"enabled": 1}):
+        assert request("POST", "/api/v1/controls", {"overlay": bad})[0] == 400, bad
+    assert request("POST", "/api/v1/controls", {"overlay": {"enabled": True, "position": "bottom-right", "format": "dmy", "name": "camera1"}})[0] == 200
+    assert controls()["overlay"] == {"enabled": True, "position": "bottom-right", "format": "dmy", "name": "camera1"}
+    assert request("POST", "/api/v1/controls", {"overlay": {"enabled": False}})[0] == 200
+    assert controls()["overlay"]["enabled"] is False and controls()["overlay"]["name"] == "camera1"
+
     assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
     wait_for(lambda: controls()["live"]["privacy"] and platform()["privacy"], 3, "privacy mode")
     assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is True
