@@ -450,7 +450,41 @@ jl_record_crash() {
         > "$jl_crash_dir/${1:-runtime}-$(date +%s).log" 2>&1
 }
 
-jl_uptime() { cut -d. -f1 /proc/uptime; }
+jl_uptime() { cut -d. -f1 "${JL_PROC_UPTIME:-/proc/uptime}"; }
+
+# Scheduled restart: config/restart-schedule holds "HH:MM" in the camera's
+# time zone (the vendor config's GmtTz, which PUT /api/v1/timezone writes).
+# Once a day: only with a plausible clock, never in the first hour after a
+# boot (so it cannot repeat), and never during an update, a Wi-Fi trial or a
+# boot trial.
+jl_scheduled_restart() {
+    [ -r "$JL_ROOT/config/restart-schedule" ] || return 0
+    IFS= read -r jl_rs_at < "$JL_ROOT/config/restart-schedule" || return 0
+    case "$jl_rs_at" in [0-2][0-9]:[0-5][0-9]) ;; *) return 0 ;; esac
+    [ "$(jl_uptime)" -ge 3600 ] || return 0
+    jl_rs_now=$(date +%s 2>/dev/null) || return 0
+    case "$jl_rs_now" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$jl_rs_now" -ge 1700000000 ] || return 0
+    jl_rs_off=0
+    jl_rs_tz=$(sed -n 's/.*"GmtTz"[[:space:]]*:[[:space:]]*"GMT\([+-]\)\([0-9][0-9]\):\([0-9][0-9]\)".*/\1 \2 \3/p' \
+        "${JL_OEM_CONFIG:-/opt/conf/config.json}" 2>/dev/null | head -n 1)
+    if [ -n "$jl_rs_tz" ]; then
+        set -- $jl_rs_tz
+        jl_rs_h=${2#0} jl_rs_m=${3#0}
+        jl_rs_off=$(( ${jl_rs_h:-0} * 60 + ${jl_rs_m:-0} ))
+        [ "$1" = + ] || jl_rs_off=$((0 - jl_rs_off))
+    fi
+    jl_rs_local=$(( ((jl_rs_now / 60 + jl_rs_off) % 1440 + 1440) % 1440 ))
+    jl_rs_h=${jl_rs_at%%:*} jl_rs_m=${jl_rs_at#*:}
+    jl_rs_h=${jl_rs_h#0} jl_rs_m=${jl_rs_m#0}
+    [ "$jl_rs_local" = $(( ${jl_rs_h:-0} * 60 + ${jl_rs_m:-0} )) ] || return 0
+    [ ! -d "$JL_RUN/state.lock" ] && [ ! -e "$JL_STATE/wifi-trial" ] || return 0
+    if [ -r "$JL_STATE/selection" ] && read -r _jl_rs_stable jl_rs_pending _jl_rs_x < "$JL_STATE/selection" &&
+       [ "${jl_rs_pending:--}" != - ]; then return 0; fi
+    jl_log "scheduled restart at $jl_rs_at"
+    sync
+    reboot
+}
 
 # The SKW6316's own firmware can crash: the driver logs an assert ending in
 # DUMPDONE and then refuses every transmit, so the camera stays associated
@@ -463,6 +497,31 @@ jl_uptime() { cut -d. -f1 /proc/uptime; }
 # camera. Never during maintenance or a Wi-Fi trial.
 jl_netdog_ok=0
 jl_netdog_down=
+# Flight recorder: the board loses its RAM logs at a reset and has been
+# resetting a few times a day for reasons not yet understood. Keep a short,
+# bounded trail in flash: one line per boot with the address the CPU was reset
+# at (the kernel's "RESET ERROR PC"), and the kernel's last lines when the
+# gateway stops answering, at most three times per boot.
+jl_note_boot() {
+    jl_fr=$JL_STATE/reset-history
+    jl_fr_pc=$(dmesg 2>/dev/null | sed -n 's/.*RESET ERROR PC:\([0-9a-fA-F]*\).*/\1/p' | head -n 1)
+    jl_fr_nd=0
+    [ ! -r "$JL_STATE/netdog-reboots" ] || IFS= read -r jl_fr_nd < "$JL_STATE/netdog-reboots" || :
+    { [ ! -r "$jl_fr" ] || tail -n 19 "$jl_fr"
+      printf '%s pc=%s netdog=%s\n' "$(date +%s)" "${jl_fr_pc:--}" "${jl_fr_nd:-0}"; } > "$jl_fr.new" 2>/dev/null &&
+        chmod 600 "$jl_fr.new" && mv -f "$jl_fr.new" "$jl_fr" || :
+}
+jl_net_loss_count=0
+jl_net_loss_armed=1
+jl_note_net_loss() {
+    [ "$jl_net_loss_armed" = 1 ] && [ "$jl_net_loss_count" -lt 3 ] || return 0
+    jl_net_loss_armed=0 jl_net_loss_count=$((jl_net_loss_count + 1))
+    { date; printf 'uptime %s\n' "$(jl_uptime)"
+      wpa_cli -iwlan0 status 2>/dev/null | grep -E '^(wpa_state|freq|bssid)='
+      dmesg 2>/dev/null | tail -c 3500; } > "$JL_STATE/net-loss.log.new" 2>&1 &&
+        chmod 600 "$JL_STATE/net-loss.log.new" && mv -f "$JL_STATE/net-loss.log.new" "$JL_STATE/net-loss.log" || :
+}
+
 jl_net_watchdog() {
     if [ -d "$JL_RUN/state.lock" ] || [ -e "$JL_STATE/wifi-trial" ] ||
        [ ! -r "$JL_RUN/default-gateway" ] ||
@@ -472,13 +531,14 @@ jl_net_watchdog() {
     fi
     jl_netdog_now=$(jl_uptime)
     if arping -c 1 -w 2 -I "$jl_netdog_dev" "$jl_netdog_gw" >/dev/null 2>&1; then
-        jl_netdog_ok=1 jl_netdog_down=
+        jl_netdog_ok=1 jl_netdog_down= jl_net_loss_armed=1
         if [ "$jl_netdog_now" -ge 1800 ] && [ -f "$JL_STATE/netdog-reboots" ]; then
             rm -f "$JL_STATE/netdog-reboots"
         fi
         return 0
     fi
     [ -n "$jl_netdog_down" ] || jl_netdog_down=$jl_netdog_now
+    [ $((jl_netdog_now - jl_netdog_down)) -lt 10 ] || jl_note_net_loss || :
     jl_netdog_limit=${JL_NETDOG_DOWN:-300}
     dmesg 2>/dev/null | grep -q DUMPDONE && jl_netdog_limit=30
     [ $((jl_netdog_now - jl_netdog_down)) -ge "$jl_netdog_limit" ] || return 0

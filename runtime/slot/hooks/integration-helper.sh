@@ -151,8 +151,17 @@ network_quality() {
     [ "$link" = true ] && [ -r "$net_sys/eth0/speed" ] && IFS= read -r speed < "$net_sys/eth0/speed" || :
     case "$speed" in ''|*[!0-9]*|???????*) speed=null ;; esac
     [ "$speed" = null ] || speed=$(awk -v n="$speed" 'BEGIN {if(n+0>0)printf "%d",n+0;else printf "null"}')
-    printf '{"wifi":{"associated":%s,"ssid":%s,"signal_dbm":%s,"rate_mbps":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s},' \
-        "$wifi_associated" "$wifi_ssid" "$net_signal" "$net_rate" \
+    # Band from wpa_supplicant's frequency (iwconfig reports nonsense here);
+    # the gateway the platform recorded for the network watchdog.
+    wifi_freq=$(printf '%s\n' "$status" | awk -F= '$1=="freq"{print $2;exit}')
+    case "$wifi_freq" in ''|*[!0-9]*) wifi_freq=null; wifi_band=null ;;
+        *) if [ "$wifi_freq" -ge 4900 ]; then wifi_band='"5 GHz"'; else wifi_band='"2.4 GHz"'; fi ;; esac
+    wifi_gw=null
+    if [ -r "$run/default-gateway" ] && read -r gw_addr _gw_dev < "$run/default-gateway"; then
+        case "$gw_addr" in *[!0-9.]*|'') : ;; *) wifi_gw="\"$gw_addr\"" ;; esac
+    fi
+    printf '{"wifi":{"associated":%s,"ssid":%s,"signal_dbm":%s,"rate_mbps":%s,"frequency_mhz":%s,"band":%s,"gateway":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s},' \
+        "$wifi_associated" "$wifi_ssid" "$net_signal" "$net_rate" "$wifi_freq" "$wifi_band" "$wifi_gw" \
         "$(net_counter "$net_sys/wlan0/statistics/rx_bytes")" "$(net_counter "$net_sys/wlan0/statistics/tx_bytes")" \
         "$(net_counter "$net_sys/wlan0/statistics/rx_packets")" "$(net_counter "$net_sys/wlan0/statistics/tx_packets")"
     printf '"ethernet":{"link":%s,"speed_mbps":%s,"rx_bytes":%s,"tx_bytes":%s,"rx_packets":%s,"tx_packets":%s}}\n' \
@@ -160,7 +169,96 @@ network_quality() {
         "$(net_counter "$net_sys/eth0/statistics/rx_packets")" "$(net_counter "$net_sys/eth0/statistics/tx_packets")"
 }
 
+# SSIDs leave only as printable, JSON-safe text (as network_quality does).
+json_ssid() {
+    awk '{ s=substr($0,1,64); out=""; for(i=1;i<=length(s);i++) { c=substr(s,i,1)
+           if (c !~ /^[A-Za-z0-9 .,_-]$/) c="?"; out=out c }
+           if (length(out)) printf "\"%s\"",out; else printf "null" }'
+}
+
+# Refuse a restart while anything must not be interrupted: maintenance (an
+# update or a media install holds the state lock), a Wi-Fi trial, or a boot
+# trial of a new runtime. Prints the reason, or nothing when it is safe.
+restart_blocker() {
+    [ ! -d "$run/state.lock" ] || { echo update; return; }
+    [ ! -e "$root/state/wifi-trial" ] || { echo wifi-trial; return; }
+    if [ -r "$root/state/selection" ] && read -r _stable sel_pending _x < "$root/state/selection" &&
+       [ "${sel_pending:--}" != - ]; then echo boot-trial; return; fi
+}
+
 case "$op" in
+    restart)
+        blocker=$(restart_blocker)
+        if [ -n "$blocker" ]; then printf '{"ok":false,"reason":"%s"}\n' "$blocker"; exit 0; fi
+        printf '{"ok":true}\n'
+        # The reply goes out first; the helper's process group is only killed
+        # on timeout, so this survives the helper exiting.
+        ( trap '' HUP; sleep 2; sync; reboot ) </dev/null >/dev/null 2>&1 &
+        ;;
+    restart-schedule)
+        at=-
+        [ ! -r "$root/config/restart-schedule" ] || IFS= read -r at < "$root/config/restart-schedule" || at=-
+        case "$at" in [0-2][0-9]:[0-5][0-9]) printf '{"enabled":true,"time":"%s"}\n' "$at" ;;
+            *) printf '{"enabled":false,"time":null}\n' ;; esac
+        ;;
+    restart-schedule-set)
+        case "$id" in
+            off) rm -f "$root/config/restart-schedule" ;;
+            [0-2][0-9]:[0-5][0-9])
+                [ "${id%%:*}" -le 23 ] || exit 2
+                mkdir -p "$root/config" && chmod 700 "$root/config"
+                printf '%s\n' "$id" > "$root/config/restart-schedule.new" &&
+                    chmod 600 "$root/config/restart-schedule.new" &&
+                    mv -f "$root/config/restart-schedule.new" "$root/config/restart-schedule" || exit 1 ;;
+            *) exit 2 ;;
+        esac
+        sync
+        exec "$0" restart-schedule
+        ;;
+    wifi-scan)
+        # wpa_supplicant scans on its own; ask for a fresh one, then list the
+        # strongest entry per network. Only names, signal, band and security.
+        wpa_cli -iwlan0 scan >/dev/null 2>&1 || :
+        sleep 3
+        current=$(wpa_cli -iwlan0 status 2>/dev/null | awk -F= '$1=="ssid"{print $2;exit}')
+        wpa_cli -iwlan0 scan_results 2>/dev/null | awk -F'\t' 'NR>1 && NF>=5 && $5!="" {
+            if (!($5 in best) || $3+0 > sig[$5]) { best[$5]=$2; sig[$5]=$3+0; sec[$5]=($4 ~ /WPA|WEP|RSN/) } }
+            END { for (s in best) printf "%s\t%s\t%s\t%s\n", sig[s], best[s], sec[s], s }' |
+            sort -rn | head -n 30 | {
+                printf '['; first=1
+                while IFS="$(printf '\t')" read -r sig freq secure ssid; do
+                    name=$(printf '%s\n' "$ssid" | json_ssid)
+                    [ "$name" != null ] || continue
+                    use=false; [ "$ssid" != "$current" ] || use=true
+                    [ "$first" = 1 ] || printf ','; first=0
+                    case "$sig" in -[0-9]*|[0-9]*) : ;; *) sig=null ;; esac
+                    case "$freq" in *[!0-9]*|'') freq=null ;; esac
+                    printf '{"ssid":%s,"signal_dbm":%s,"frequency_mhz":%s,"secure":%s,"in_use":%s}' \
+                        "$name" "$sig" "$freq" "$([ "$secure" = 1 ] && echo true || echo false)" "$use"
+                done
+                printf ']\n'
+            }
+        ;;
+    wifi-state)
+        # The Wi-Fi trial as the countdown sees it: seconds left, the proposed
+        # network, and whether the camera is on it with an address.
+        if [ -d "$root/state/wifi-trial" ]; then
+            deadline=0; IFS= read -r deadline < "$root/state/wifi-trial/deadline" || :
+            now=$(cut -d. -f1 /proc/uptime)
+            case "$deadline:$now" in *[!0-9:]*|:*|*:) left=null ;; *) left=$((deadline - now)); [ "$left" -ge 0 ] || left=0 ;; esac
+            ssid=$(sed -n 's/.*"ssid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$root/state/wifi-trial/candidate.json" 2>/dev/null | head -n 1 | json_ssid)
+            status=$(wpa_cli -iwlan0 status 2>/dev/null || :)
+            joined=false; printf '%s\n' "$status" | grep -qx 'wpa_state=COMPLETED' && joined=true
+            addr=$(printf '%s\n' "$status" | awk -F= '$1=="ip_address"{print $2;exit}')
+            case "$addr" in *[!0-9.]*|'') addr=null ;; *) addr="\"$addr\"" ;; esac
+            printf '{"pending":true,"seconds_left":%s,"ssid":%s,"joined":%s,"address":%s}\n' "$left" "${ssid:-null}" "$joined" "$addr"
+        else
+            last=null
+            [ ! -e "$root/state/wifi-committed" ] || last='"committed"'
+            [ ! -e "$root/state/wifi-rolled-back" ] || last='"rolled_back"'
+            printf '{"pending":false,"last":%s}\n' "$last"
+        fi
+        ;;
     network-quality) network_quality ;;
     wifi-stage) exec "$control/admin/wifi-transaction.sh" apply "$path" ;;
     wifi-commit) exec "$control/admin/wifi-transaction.sh" commit ;;
@@ -174,13 +272,26 @@ case "$op" in
         case "$key" in *'\n'*|*'\r'*) exit 1 ;; esac
         mkdir -p "$root/config/ssh"
         chmod 700 "$root/config/ssh"
-        printf '%s\n' "$key" > "$root/config/ssh/authorized_keys.new"
-        chmod 600 "$root/config/ssh/authorized_keys.new"
-        mv "$root/config/ssh/authorized_keys.new" "$root/config/ssh/authorized_keys"
+        keys=$root/config/ssh/authorized_keys
+        # Up to 8 keys; adding a key already present changes nothing.
+        blob=$(printf '%s\n' "$key" | awk '{print $2}')
+        if [ -f "$keys" ] && awk -v b="$blob" '$2==b{f=1} END{exit !f}' "$keys"; then exit 0; fi
+        [ ! -f "$keys" ] || [ "$(grep -c . "$keys")" -lt 8 ] || exit 1
+        { [ ! -f "$keys" ] || grep . "$keys"; printf '%s\n' "$key"; } > "$keys.new"
+        chmod 600 "$keys.new"
+        mv "$keys.new" "$keys"
         sync
         ;;
     ssh-delete)
-        [ "$id" != - ] || exit 2
+        # id: "all", or the 1-based line of the key to remove.
+        keys=$root/config/ssh/authorized_keys
+        case "$id" in
+            all) : ;;
+            [1-8]) [ -f "$keys" ] || exit 1
+                   grep . "$keys" | awk -v n="$id" 'NR!=n' > "$keys.new" || :
+                   chmod 600 "$keys.new"; mv "$keys.new" "$keys"; sync; exit 0 ;;
+            *) exit 2 ;;
+        esac
         : > "$root/config/ssh/authorized_keys.new"
         chmod 600 "$root/config/ssh/authorized_keys.new"
         mv "$root/config/ssh/authorized_keys.new" "$root/config/ssh/authorized_keys"

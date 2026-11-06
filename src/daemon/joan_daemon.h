@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define JOAN_VERSION "0.2.27"
+#define JOAN_VERSION "0.2.28"
 #define JOAN_MAX_BODY (16u * 1024u)
 #define JOAN_MAX_UPDATE_BODY 2097344u
 #define JOAN_MAX_HEADERS 16384u
@@ -48,6 +48,7 @@ typedef struct {
 typedef struct {
     int authenticated;
     int must_change;
+    int remember; /* on login: keep this sign-in for 30 days, across restarts */
     char token[JOAN_TOKEN_HEX + 1];
     char csrf[JOAN_TOKEN_HEX + 1];
 } JoanAuthz;
@@ -74,7 +75,8 @@ int joan_auth_login(const JoanConfig *cfg, const char *remote,
 int joan_auth_request(const JoanRequest *req, int require_csrf, JoanAuthz *out);
 int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
                               const char *old_password, const char *new_password);
-void joan_auth_logout(const JoanAuthz *auth);
+void joan_auth_logout(const JoanConfig *cfg, const JoanAuthz *auth);
+void joan_auth_forget_all(const JoanConfig *cfg);
 
 int joan_run_helper(const JoanConfig *cfg, const char *operation,
                     const char *argument_path, const char *id,

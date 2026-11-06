@@ -59,6 +59,11 @@ MEDIA_CONFIG = {
     "sensors": 2, "flip0": 3, "flip1": 3, "record_seconds": 300, "record_max_mb": 512, "audio": True,
     "recording": False, "allow_plain_http": False, "discovery": False, "discovery_port": 3702,
     "watchdog": True, "onvif_nudge": True, "main_only": True, "motor_home": True}
+# Nearby networks (name, dBm, MHz, secure), and the address a Wi-Fi trial gets.
+SCAN = [("HomeNet-IoT", -54, 5180, True), ("HomeNet", -57, 5220, True), ("Neighbour-2G", -68, 2437, True),
+        ("Caf? 5G", -74, 5745, True), ("Cafe ?Free?", -79, 2412, False)]  # "?": the scan's stand-in for other characters
+TRIAL_ADDRESS = "192.168.1.40"
+REMEMBER_SECONDS = 30 * 24 * 3600
 PRESETS = {1: ["Gate", -46, 65], 2: ["Street", 20, 64], 3: ["Driveway", 33, 22], 4: ["Yard", 3, 100]}
 # What POST /api/v1/config may change; everything else is local-only or unknown.
 STRINGS = {"username": 33, "password": 129}  # C buffer sizes, NUL included
@@ -69,6 +74,7 @@ NO_RESTART = {"username", "password", "recording", "record_seconds", "record_max
 # The platform's versioned routes, by implementation name (src/daemon/http.c `route`).
 V1 = {"v1/setup/password": "password", "v1/status": "status", "v1/network/mdns": "mdns",
       "v1/network/routes": "routes", "v1/network/quality": "network-quality", "v1/time": "time",
+      "v1/network/wifi/scan": "wifi/scan", "v1/system/restart": "restart", "v1/system/restart-schedule": "restart-schedule",
       "v1/timezone": "timezone", "v1/ssh/authorized-keys": "ssh/keys"}
 
 
@@ -208,7 +214,7 @@ EV_READ = 5.0  # in automatic mode the daemon reads the ISP exposure every 5 s
 
 
 def control_defaults():
-    return {"night": {"mode": "day", "ir": "night", "night_ev": 30000, "day_ev": 15000, "wait_s": 60,
+    return {"night": {"mode": "day", "ir": "night", "night_ev": 30000, "day_ev": 5000, "wait_s": 60,
                       "from": "18:30", "until": "06:00"},
             "white_light": {"on": False, "trigger_s": 120,
                             "schedule": {"enabled": False, "from": "19:00", "until": "23:00"}},
@@ -313,6 +319,11 @@ class Mock:
         self.ntp = {"server": "gateway", "resolved": "192.168.1.1", "attempts": 1, "offset": 760454.303,
                     "synced": now - 2637, "due": None}
         self.ssid, self.trial, self.staged = "HomeNet-IoT", None, None
+        self.wifi_last = None  # how the last Wi-Fi trial ended: "committed" or "rolled_back"
+        self.remembered = {}  # "stay signed in": token -> [csrf, until, warning]; survives restarts
+        self.restart_time = None  # the daily restart, "HH:MM" in the camera's time zone
+        self.zone = None if args.no_camera_zone else time.localtime().tm_gmtoff // 60  # GmtTz, in minutes
+        self.system_boot = now - 9000
         self.q0, self.qbase = now, (43163730, 1260796158, 649133, 1093779)
         # media daemon
         self.config, self.media_password, self.recording = dict(MEDIA_CONFIG), args.password, False
@@ -341,8 +352,11 @@ class Mock:
 
     def rebooted(self):
         end, self.reboot_at = self.down[1], None
-        self.sessions.clear()  # they live in the platform daemon's memory
+        self.sessions.clear()  # they live in the platform daemon's memory (remembered ones come back)
+        if self.trial:  # a reboot during a trial recovers the old network
+            self.wifi_last = "rolled_back"
         self.staged = self.trial = None
+        self.system_boot = end
         if self.release:
             (self.version, self.sequence), self.release = self.release, None
         self.hostname = self.hostname_next
@@ -369,10 +383,13 @@ class Mock:
         self.speaker_advance(now)
         t = self.trial
         if t and now >= t["deadline"]:  # never committed: the helper rolls back and reboots
-            self.trial = None
+            self.trial, self.wifi_last = None, "rolled_back"
             self.reboot(t["deadline"], 20)
         if self.reboot_at is not None and now >= self.reboot_at:
             self.rebooted()
+        if (self.restart_time and self.reboot_at is None and not self.trial and now - self.system_boot >= 3600
+                and int((now // 60 + (self.zone or 0)) % 1440) == hhmm(self.restart_time)):
+            self.reboot(now, self.args.restart_seconds)  # jl_scheduled_restart: UTC without a camera zone
         if self.restart_at is not None and now >= self.restart_at:
             self.media_boot(self.restart_at + self.args.restart_outage, 0)
         self.controls_tick(now)
@@ -398,6 +415,8 @@ class Mock:
 
     def controls_tick(self, now):
         c, e, n = self.controls, self.ce, self.controls["night"]
+        if self.zone is not None:  # the camera's time zone wins over utc_offset_min
+            c["utc_offset_min"] = self.zone
         if n["mode"] == "auto" and now - e["ev_at"] >= EV_READ:
             e["ev_at"], e["ev"] = now, self.exposure(now)
         night = e["night"]
@@ -415,7 +434,8 @@ class Mock:
             e["cond"] = (e["cond"] or now) if want else 0.0
             e["reason"] = ("auto: night; day at level %d or below" % n["day_ev"] if night
                            else "auto: day; night at level %d or above" % n["night_ev"])
-            if want and now - e["cond"] >= n["wait_s"]:
+            # the hold stops flapping when a switch changes the reading itself
+            if want and now - e["cond"] >= n["wait_s"] and (not e["switched"] or now - e["switched"] >= self.args.auto_hold):
                 night, e["cond"] = 1 - night, 0.0
                 e["reason"] = "auto: level %d %s %d for %d s" % (e["ev"], ">=" if night else "<=",
                                                                  n["night_ev"] if night else n["day_ev"], n["wait_s"])
@@ -476,9 +496,13 @@ class Mock:
         return {**json.loads(json.dumps(c)), "live": {
             "night": "unknown" if e["night"] < 0 else ("day", "night")[e["night"]], "reason": e["reason"],
             "level": e["ev"] if auto else None, "since_s": int(now - e["switched"]) if e["switched"] else 0,
-            "pending_s": int(now - e["cond"]) if e["cond"] else 0, "white_light": e["white"] == 1,
+            "pending_s": int(now - e["cond"]) if e["cond"] else 0,
+            "hold_left_s": int(self.args.auto_hold - (now - e["switched"]))
+            if auto and e["switched"] and now - e["switched"] < self.args.auto_hold else 0,
+            "white_light": e["white"] == 1,
             "trigger_left_s": math.ceil(e["trigger_until"] - now) if e["trigger_until"] > now else 0,
-            "local_minutes": self.local_minutes(now), "error": ""}}
+            "local_minutes": self.local_minutes(now), "zone": "browser" if self.zone is None else "camera",
+            "error": ""}}
 
     def ptz_advance(self, now):
         m, g = self.motion, self.goto
@@ -517,6 +541,13 @@ class Mock:
                 s[1] = now
                 break
             self.sessions.pop(candidate, None)
+        if not s:  # not in memory (idle or restarted): a remembered sign-in comes back as a fresh session
+            for candidate in h.joan_cookies():
+                found = self.remembered.get(candidate)
+                if found and found[1] >= now:
+                    token, s = candidate, [found[0], now, found[2]]
+                    self.sessions[token] = s
+                    break
         if not s:
             raise perr(401, "authentication_required", "authentication required") if platform else \
                 merr(401, "Authentication required")
@@ -543,8 +574,15 @@ class Mock:
             del self.sessions[min(self.sessions, key=lambda k: self.sessions[k][1])]
         token, csrf, warning = secrets.token_hex(32), secrets.token_hex(32), self.password == "admin"
         self.sessions[token] = [csrf, now, warning]
-        return ok({"ok": True, "csrf": csrf, "default_password_warning": warning}, ctype="application/json",
-                  headers=[("Set-Cookie", "joan_session=%s; Path=/; HttpOnly; SameSite=Strict" % token)])
+        remember = re.search(rb'"remember"[ \t]*:[ \t]*true', h.body or b"") is not None  # at most 8 are kept
+        if remember:
+            if len(self.remembered) >= 8:
+                del self.remembered[min(self.remembered, key=lambda k: self.remembered[k][1])]
+            self.remembered[token] = [csrf, now + REMEMBER_SECONDS, warning]
+        return ok({"ok": True, "csrf": csrf, "default_password_warning": warning, "remember": remember},
+                  ctype="application/json",
+                  headers=[("Set-Cookie", "joan_session=%s; Path=/; HttpOnly; SameSite=Strict%s"
+                            % (token, "; Max-Age=%d" % REMEMBER_SECONDS if remember else ""))])
 
     def pause(self, seconds):
         """Let other requests run while a slow helper (Wi-Fi join, package verify) works."""
@@ -586,7 +624,7 @@ class Mock:
         if rest == "v1/session":
             name = {"POST": "login", "DELETE": "logout"}.get(m, "session-info")
         elif rest == "v1/network/wifi":
-            name = {"POST": "wifi/stage", "PUT": "wifi/commit"}.get(m, "wifi/rollback")
+            name = {"POST": "wifi/stage", "PUT": "wifi/commit", "GET": "wifi/state"}.get(m, "wifi/rollback")
         elif rest == "v1/update":
             name = "firmware/stage" if m == "POST" else "firmware/apply"
         else:
@@ -610,6 +648,7 @@ class Mock:
             return ok({"authenticated": True, "csrf": s[0], "default_password_warning": s[2]})
         if name == "logout" and m in ("POST", "DELETE"):
             self.sessions.pop(token, None)
+            self.remembered.pop(token, None)
             return Reply(204, headers=[("Set-Cookie", "joan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")])
         if name == "time" and m == "GET":
             return ok({"epoch": int(now + self.clock_offset), "ntp": self.ntp_status(now)})
@@ -620,6 +659,7 @@ class Mock:
             t = tz and re.fullmatch(r"GMT[+-](\d\d):(\d\d)", tz)
             if tz is None: return perr(400, "invalid_json", "gmt_tz required")
             if not t or int(t[1]) > 14 or int(t[2]) > 59: return perr(400, "invalid_timezone", "bad gmt_tz")
+            self.zone = (-1 if tz[3] == "-" else 1) * (int(t[1]) * 60 + int(t[2]))  # schedules follow it
             return ok({"ok": True, "gmt_tz": tz})
         if name == "password" and m == "POST":
             old, new = jfield(body, "old_password"), jfield(body, "new_password")
@@ -630,7 +670,23 @@ class Mock:
                 return perr(400, "password_rejected", "password change was rejected")
             self.password = new
             self.sessions.clear()
+            self.remembered.clear()  # a new password signs out everywhere
             return ok({"ok": True, "login_required": True, "rtsp_password_sync": "unavailable"})
+        if name == "restart" and m == "POST":  # restart_blocker(): never during an update or a trial
+            why = "update" if self.release else "wifi-trial" if self.trial else self.args.restart_blocked
+            if why: return ok({"ok": False, "reason": why}, 409)
+            self.reboot(now + 2, self.args.restart_seconds)
+            return ok({"ok": True})
+        if name == "restart-schedule":
+            if m == "PUT":
+                when = jfield(body, "time", 8)
+                if when is None:
+                    return perr(400, "invalid_json", "time is required: HH:MM, or empty for no scheduled restart")
+                if when and not (re.fullmatch(r"[0-2]\d:[0-5]\d", when) and int(when[:2]) <= 23):
+                    return perr(400, "invalid_time", "time must be HH:MM (00:00 to 23:59)")
+                self.restart_time = when or None
+            if m in ("GET", "PUT"):
+                return ok({"enabled": self.restart_time is not None, "time": self.restart_time})
         if name.startswith("wifi/"):
             return self.wifi(name, h, now)
         if name == "mdns" and m == "GET":
@@ -692,31 +748,52 @@ class Mock:
 
     def wifi(self, name, h, now):
         m, body = h.command, h.body
+        if name == "wifi/scan" and m == "GET":
+            self.pause(3.5)  # a fresh scan, then the strongest entry per network; hidden ones are not listed
+            current = self.trial["ssid"] if self.trial else self.ssid
+            seen = {n[0] for n in SCAN}
+            found = sorted(SCAN + ([] if current in seen else [(current, -60, 5180, True)]), key=lambda n: -n[1])
+            return ok([{"ssid": n[0], "signal_dbm": n[1], "frequency_mhz": n[2], "secure": n[3],
+                        "in_use": n[0] == current} for n in found])
+        if name == "wifi/state" and m == "GET":
+            t = self.trial
+            if not t:
+                return ok({"pending": False, "last": self.wifi_last})
+            return ok({"pending": True, "seconds_left": max(0, int(t["deadline"] - now)), "ssid": t["ssid"],
+                       "joined": t["joined"], "address": t["address"]})
         if name == "wifi/stage" and m == "POST":
             if not body: return bare(400, "configuration required")
-            try:
+            try:  # wifi-apply.sh: printable ASCII without " or \, a password of 8 to 63 characters (no open networks)
                 o = json.loads(body)
-                ssid, psk = o["ssid"], o.get("password", "")
-                good = (isinstance(ssid, str) and 1 <= len(ssid.encode()) <= 32 and isinstance(psk, str)
-                        and (psk == "" or 8 <= len(psk) <= 63 or re.fullmatch("[0-9A-Fa-f]{64}", psk)))
+                ssid, psk = o["ssid"], o["password"]
+                good = all(isinstance(v, str) and re.fullmatch(r'[ !#-\[\]-~]+', v) for v in (ssid, psk)) \
+                    and len(ssid) <= 32 and 8 <= len(psk) <= 63
             except (ValueError, KeyError, TypeError, AttributeError):
                 good = False
-            self.pause(3)  # scan, join, DHCP on the new network
-            if not good: return integration()
+            if not good:
+                self.pause(1)
+                return integration()
+            # The trial is durable before the camera touches the network, so any browser can already see it.
+            self.wifi_last = None
+            t = self.trial = {"id": hexid(), "ssid": ssid, "deadline": h.started + 90, "joined": False, "address": None}
+            self.pause(1.5)  # scan and associate
+            t["joined"] = True
+            self.pause(1.5)  # DHCP on the new network
+            t["address"] = TRIAL_ADDRESS
             now = time.time()
-            self.trial = {"id": hexid(), "ssid": ssid, "deadline": h.started + 90}
             if self.args.wifi_mode == "lost":  # the camera left for a network this client cannot reach
                 self.down = (now, now + 15)
                 raise Drop()
-            return ok({"ok": True, "id": self.trial["id"], "deadline_seconds": round(self.trial["deadline"] - now)})
+            return ok({"ok": True, "id": t["id"]})
         if (name == "wifi/commit" and m in ("POST", "PUT")) or (name == "wifi/rollback" and m in ("POST", "DELETE")):
             i, t = jfield(body, "id", 65), self.trial
-            if i is None: return bare(400, "id required")
-            if not t or t["id"] != i or now >= t["deadline"]: return integration()
+            if i is None: return bare(400, "id required")  # present, as on the camera; its value is not checked
+            if not t or now >= t["deadline"]: return integration()
             self.trial = None
             if name == "wifi/commit":
-                self.ssid = t["ssid"]
+                self.ssid, self.wifi_last = t["ssid"], "committed"
             else:
+                self.wifi_last = "rolled_back"
                 self.reboot(now + 0.5, 20)
             return ok({"ok": True, "id": i})
         return perr(404, "route_not_found", "route not found")
@@ -730,12 +807,20 @@ class Mock:
             line = body.decode("utf-8", "replace").rstrip("\r\n")
             if not line.startswith("ssh-ed25519 ") or "\n" in line or "\r" in line or len(line.split()) < 2:
                 return integration()
-            self.ssh_keys = line + "\n"
+            keys = self.ssh_keys.splitlines()
+            if not any(k.split()[1] == line.split()[1] for k in keys):  # a key already present changes nothing
+                if len(keys) >= 8: return integration()  # up to 8 keys
+                self.ssh_keys += line + "\n"
             return ok({"ok": True, "id": hexid()})
         if m == "DELETE":
             i = jfield(body, "id", 65)
             if i is None: return bare(400, "id required")
-            self.ssh_keys = ""
+            if i == "all":
+                self.ssh_keys = ""
+            elif re.fullmatch("[1-8]", i) and self.ssh_keys:  # the 1-based line of the key to remove
+                self.ssh_keys = "".join(k + "\n" for n, k in enumerate(self.ssh_keys.splitlines(), 1) if n != int(i))
+            else:
+                return integration()
             return ok({"ok": True, "id": i})
         return perr(404, "route_not_found", "route not found")
 
@@ -743,8 +828,8 @@ class Mock:
         t, (rx, tx, rxp, txp) = now - self.q0, self.qbase
         dbm = round(-65 + 5 * math.sin(t / 23) + 2 * math.sin(t / 5.3))
         return {"wifi": {"associated": True, "ssid": self.trial["ssid"] if self.trial else self.ssid,
-                         "signal_dbm": dbm, "rate_mbps": 72.2 if dbm > -62 else 52.0,
-                         "rx_bytes": str(rx + int(t * 16000)), "tx_bytes": str(tx + int(t * 420000)),
+                         "signal_dbm": dbm, "rate_mbps": 72.2 if dbm > -62 else 52.0, "frequency_mhz": 5180,
+                         "band": "5 GHz", "gateway": "192.168.1.1", "rx_bytes": str(rx + int(t * 16000)), "tx_bytes": str(tx + int(t * 420000)),
                          "rx_packets": str(rxp + int(t * 240)), "tx_packets": str(txp + int(t * 330))},
                 "ethernet": {"link": False, "speed_mbps": None, "rx_bytes": "0", "tx_bytes": "168",
                              "rx_packets": "0", "tx_packets": "2"}}
@@ -830,9 +915,12 @@ class Mock:
         audio = {"enabled": c["audio"], "microphone": mic, "speaker": speaker}
         if not self.args.old_audio:
             audio["muted"], audio["level"] = self.muted, self.level(now) if c["audio"] else None
+        system = {} if self.args.no_system else {"system": {
+            "uptime_s": int(now - self.system_boot), "memfree_kb": 6963, "state_free_kb": 100, "boot_mode": "native"}}
         return {"version": "0.1.0", "backend": "imp", "hardware_profile": "JA-A12-T23N-CV2005-CV2005S1",
-                "hardware_validated": False, "uptime_seconds": round(up, 6), "ready": True, "backend_error": "",
-                "recording": self.recording, "record_error": "", "restart_pending": self.restart_at is not None,
+                "hardware_validated": False, "uptime_seconds": round(up, 6), **system, "ready": True,
+                "backend_error": "", "recording": self.recording, "record_error": "",
+                "restart_pending": self.restart_at is not None,
                 "streams": streams, "platform": platform, "clock": {"source": "none"},
                 "audio": audio}
 
@@ -1200,6 +1288,15 @@ def main():
     p.add_argument("--restart-outage", type=float, default=0, metavar="SECONDS",
                    help="after a config change that restarts services, stop answering this long (the real daemon "
                         "restarts its HTTP server too); 0: restart_pending for 3 s instead")
+    p.add_argument("--no-system", action="store_true", help="status without \"system\" (older firmware)")
+    p.add_argument("--no-camera-zone", action="store_true",
+                   help="the camera has no time zone: schedules use utc_offset_min (zone \"browser\")")
+    p.add_argument("--auto-hold", type=float, default=300, metavar="SECONDS",
+                   help="the least time between automatic day/night switches")
+    p.add_argument("--restart-seconds", type=float, default=20, metavar="SECONDS",
+                   help="how long a requested or scheduled restart keeps the camera away")
+    p.add_argument("--restart-blocked", choices=("update", "boot-trial"),
+                   help="system/restart refuses with this reason (a Wi-Fi trial refuses by itself)")
     p.add_argument("--ui-dir", default=os.path.normpath(os.path.join(here, "..", "ui")))
     args = p.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)

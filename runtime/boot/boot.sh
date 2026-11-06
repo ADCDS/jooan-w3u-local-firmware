@@ -13,6 +13,7 @@ printf '%s\n' "$$" > "$JL_RUN/supervisor.pid"
 # No RTC: lift the clock to the last persisted time before the runtime (and any
 # recording) starts, so files are not stamped years in the past.
 jl_restore_time || jl_log 'clock restore failed'
+jl_note_boot || :
 
 # OEM initialization may start services/routes after local.rc has returned.
 # This independent watcher survives runtime/controller failure.
@@ -149,6 +150,7 @@ while :; do
         jl_ensure_wifi "$jl_running" || :
     fi
     jl_net_watchdog || :
+    jl_scheduled_restart || :
     # Persist the clock about every 30 minutes; NOR flash tolerates few writes.
     jl_time_ticks=$((jl_time_ticks + 1))
     if [ "$jl_time_ticks" -ge 360 ]; then

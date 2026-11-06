@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <sys/statvfs.h>
 #include "jipc.h"
 #include "jipc_watchdog.h"
 #include "cJSON.h"
@@ -15,6 +16,34 @@
 static volatile sig_atomic_t interrupted, reload_requested;
 static void signal_handler(int number)
 { if (number == SIGHUP) reload_requested = 1; else interrupted = 1; }
+/* The board's health for the admin UI: boot mode (from the boot scripts'
+ * logs), system uptime, free memory, free space where settings live. */
+static void system_json(cJSON *o, const jipc_config *cfg)
+{
+    cJSON *sys = cJSON_AddObjectToObject(o, "system");
+    if (!sys) return;
+    double up = 0; FILE *f = fopen("/proc/uptime", "re");
+    if (f) { if (fscanf(f, "%lf", &up) != 1) up = 0; fclose(f); }
+    cJSON_AddNumberToObject(sys, "uptime_s", (double)(long long)up);
+    long memfree = -1; char line[128];
+    if ((f = fopen("/proc/meminfo", "re"))) {
+        while (fgets(line, sizeof line, f)) if (sscanf(line, "MemFree: %ld kB", &memfree) == 1) break;
+        fclose(f);
+    }
+    if (memfree >= 0) cJSON_AddNumberToObject(sys, "memfree_kb", (double)memfree);
+    struct statvfs fs;
+    if (!statvfs(cfg->state_dir, &fs)) cJSON_AddNumberToObject(sys, "state_free_kb", (double)((unsigned long long)fs.f_bavail * fs.f_frsize / 1024u));
+    const char *dir = getenv("JIPC_BOOT_LOG_DIR"), *mode = "unknown";
+    char path[300], text[4096];
+    for (int i = 0; i < 2 && !strcmp(mode, "unknown"); ++i) {
+        snprintf(path, sizeof path, "%s/%s", dir ? dir : "/tmp", i ? "jipc-handoff.log" : "jipc-native.log");
+        if (!(f = fopen(path, "re"))) continue;
+        size_t n = fread(text, 1, sizeof text - 1, f); fclose(f); text[n] = 0;
+        if (strstr(text, i ? "boot handoff qualified" : "native boot qualified")) mode = i ? "handoff" : "native";
+    }
+    cJSON_AddStringToObject(sys, "boot_mode", mode);
+}
+
 int jipc_status_json(jipc_app *app, char *out, size_t capacity)
 {
     jipc_config cfg; jipc_config_copy(app, &cfg); cJSON *o = cJSON_CreateObject(); if (!o) return -1;
@@ -22,6 +51,7 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     cJSON_AddStringToObject(o, "hardware_profile", "JA-A12-T23N-CV2005-CV2005S1");
     cJSON_AddBoolToObject(o, "hardware_validated", 0);
     cJSON_AddNumberToObject(o, "uptime_seconds", (double)(jipc_now_us() - app->started_us) / 1000000.0);
+    system_json(o, &cfg);
     pthread_mutex_lock(&app->config_mutex);
     cJSON_AddBoolToObject(o, "ready", app->backend_ready && !app->stop);
     cJSON_AddStringToObject(o, "backend_error", app->backend_error);

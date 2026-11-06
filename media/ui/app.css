@@ -71,7 +71,7 @@ main{padding:32px 40px 64px;min-width:0}
 #top .brand{padding:0}
 #top .logo{width:36px;height:36px}
 .bare .pill{background:none;padding:0;min-height:0}
-.menu{padding:0;gap:0}
+.card.menu{padding:0;gap:0}
 .menu a{gap:14px;min-height:76px;padding:0 16px;text-decoration:none;color:var(--ink);border-top:1px solid var(--line)}
 .menu a:first-child{border:0}
 .menu span{flex:1;min-width:0}
@@ -203,7 +203,24 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .bars i.on{background:var(--accent)}
 .talk-box .bars{height:16px}
 .chk{display:flex;align-items:center;gap:12px;min-height:44px;font-weight:400}
-.chk input{width:22px;height:22px;margin:0;accent-color:var(--accent);flex:none}
+.chk input,.signin .chk input{width:22px;height:22px;min-height:0;margin:0;padding:0;accent-color:var(--accent);flex:none}
+/* Wi-Fi: signal bars, the scan list with the join form under the chosen network, trial steps */
+.sig{width:22px;height:22px;color:var(--strong)}
+.sig path{fill:currentColor;stroke:none}
+.sig .off{opacity:.25}
+#nw-sc{padding:0}
+.nets{list-style:none;padding:0;border-top:1px solid var(--line)}
+.nets li{border-bottom:1px solid var(--line)}
+.nets .open{background:var(--sunk)}
+.nets form{padding:2px 12px 14px 38px}
+.net{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:8px 4px;border:0;background:none;color:inherit;text-align:left}
+.net>span:not(.pill){display:flex;flex:1;flex-direction:column;min-width:0}
+.nw>.btn{flex:none}
+.net>svg:last-child:not(.sig){width:16px;height:16px;color:var(--muted)}
+.net:disabled{cursor:default}
+.steps{grid-template-columns:minmax(0,1fr);width:100%;max-width:420px;text-align:left}
+#sy-keys>li>svg{flex:none;color:var(--muted)}
+#sy-keys>li>span{flex:1;min-width:0}
 .lnk{align-self:flex-start;display:inline-flex;align-items:center;min-height:44px;font-weight:600}
 #st-pwr button{min-width:72px}
 #st-pwr code{letter-spacing:.12em}
@@ -220,7 +237,7 @@ pre{margin:0;padding:14px;background:var(--sunk);border-top:1px solid var(--line
 .stats div{display:flex;flex-direction:column;gap:2px}
 .stats dd{font-size:18px;line-height:1.3;font-weight:650}
 .fp{overflow-wrap:anywhere}
-#se-ver{padding:0 4px}
+#se-ver{padding:0 2px}
 .empty{align-items:center;gap:12px;text-align:center;padding:12px 0}
 .empty .logo{width:56px;height:56px;border-radius:50%}
 .empty p{max-width:320px}
@@ -302,6 +319,7 @@ main{padding:4px 16px calc(96px + env(safe-area-inset-bottom))}
 .presets .btn:first-child{min-width:64px}
 .presets .btn+.btn{border:0}
 .presets .free,.dsk{display:none!important}
+.nets form{padding:2px 8px 14px}
 .night button{padding:0 4px;font-size:15px;white-space:nowrap}
 #p-network .cols>.stack{order:1}
 }

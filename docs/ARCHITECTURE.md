@@ -236,15 +236,15 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Card format / capacity | ✗ |
 | **Time** | |
 | Set clock (from phone / UTC) | ✓ manually, or by optional SNTP from a local server |
-| Time zone | ~ stored in the OEM configuration; only the OEM application's OSD uses it, on its next start |
+| Time zone | ✓ stored in the OEM configuration; scheduled restarts and the media daemon's schedules follow it (the OEM application's OSD also uses it, on its next start) |
 | **Network** | |
 | Wi-Fi credentials | ✓ transactional stage / commit / roll back; prefers 5 GHz, falls back to 2.4 GHz when 5 GHz is weak/absent |
-| Wi-Fi scan (nearby APs) | ✗ |
-| Signal / RSSI readout | ✓ `/api/v1/network/quality` (signal, rate, counters) |
+| Wi-Fi scan (nearby APs) | ✓ `/api/v1/network/wifi/scan` and in the admin UI |
+| Signal / RSSI readout | ✓ `/api/v1/network/quality` (signal, rate, band, gateway, counters) |
 | **System** | |
 | Firmware update | ✓ signed, sequence-gated (platform); the media layer is updated by its installer |
 | Change password | ✓ (synchronized to SSH) |
-| Reboot | ✗ (only implicitly, when a signed update is applied) |
+| Reboot | ✓ button and API, refused during an update or a trial; optional daily restart at a set time |
 | Device info / UID | ~ version and state in `/api/v1/status` |
 
 Beyond the OEM app, the retrofit adds a local maintenance **Web UI**, **SSH**
@@ -294,6 +294,13 @@ within about 20 seconds.
 Heavy memory pressure can also stall the board before any OOM kill, until the
 hardware watchdog resets it without a log. Installing an update while an NVR
 pulled both streams has reproduced this; stop the NVR during an update.
+
+`dmesg` does not survive a reboot, so the supervisor keeps two small files in
+its state directory. `reset-history` gets one line per boot (time, the reset
+address the kernel reports in `dmesg`, and the network watchdog's reboot count;
+last 20 boots). `net-loss.log` gets the clock, uptime, Wi-Fi state and the tail
+of `dmesg` when the gateway has been unreachable for 10 seconds, at most 3 times
+per boot.
 
 ## Package format
 

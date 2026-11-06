@@ -232,7 +232,7 @@ Authenticated REST endpoints:
 | --- | --- |
 | `GET /` and `GET /ui/<file>` | The admin UI, without credentials |
 | `/api/joan/<path>` | Relayed to the platform's `/api/<path>` on loopback (GET, POST, PUT, DELETE) |
-| `GET /api/v1/status` | Backend readiness, streams, platform state and recording errors |
+| `GET /api/v1/status` | Backend readiness, streams, platform state, recording errors, and `system` (`uptime_s`, `memfree_kb`, `state_free_kb`, `boot_mode`: `native`, `handoff` or `unknown`) |
 | `GET /api/v1/controls` | Remembered camera controls (night, lights, picture, anti-flicker, mute) and their live state; `POST` takes any part, validated (see [platform controls](docs/platform.md#remembered-controls-and-automatic-daynight)) |
 | `GET /api/v1/config` | Configuration with password redacted |
 | `GET /api/v1/config/password` | The stream account (`username`, `password`), only for the admin UI's own signed-in fetch (`X-Requested-With: jipc-ui`, same origin); `403` for Basic and anything else |

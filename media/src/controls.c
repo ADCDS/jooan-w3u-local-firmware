@@ -45,22 +45,28 @@ typedef struct {
     uint64_t dirty_since;
     int active_night, active_white; /* -1 = not applied yet */
     int ev, ev_valid;
-    uint64_t ev_at, cond_since, trigger_until, switched_at, wl_override_until;
+    uint64_t ev_at, cond_since, trigger_until, switched_at, wl_override_until, auto_hold_us;
     int wl_override;
-    char path[600], proc[256], reason[96], error[160];
+    int zone_valid, zone_min;
+    uint64_t zone_at;
+    char path[600], proc[256], oem_config[256], reason[96], error[160];
 } controls_state;
 
 static pthread_mutex_t lifetime = PTHREAD_MUTEX_INITIALIZER;
 #define EV_READ_US UINT64_C(5000000)
 #define SAVE_DELAY_US UINT64_C(3000000)
+#define AUTO_HOLD_S 300 /* at least this long between automatic switches */
 
 static void defaults(settings *s)
 {
     memset(s, 0, sizeof *s);
     s->night_mode = NIGHT_DAY;
-    /* Placeholders until calibrated on the camera: EV rises as the scene
-     * darkens; night above night_ev, day again below day_ev. */
-    s->night_ev = 30000; s->day_ev = 15000; s->wait_s = 60;
+    /* EV rises as the scene darkens: night above night_ev, day again below
+     * day_ev. Measured at dawn on camera1: with the IR-cut filter open the
+     * sky's infrared makes the level read about 3.6x lower than in day mode
+     * at the same light, so day_ev must stay under night_ev / 3.6 or the
+     * switch back to day immediately reads dark again and flaps. */
+    s->night_ev = 30000; s->day_ev = 5000; s->wait_s = 60;
     s->night_from = 18 * 60 + 30; s->night_until = 6 * 60;
     s->wl_from = 19 * 60; s->wl_until = 23 * 60; s->trigger_s = 120;
     for (int i = 0; i < 2; ++i)
@@ -88,6 +94,28 @@ static int in_window(int now, int from, int until)
 {
     if (from == until) return 0;
     return from < until ? now >= from && now < until : now >= from || now < until;
+}
+
+/* The camera's own time zone: the platform's PUT /api/v1/timezone stores it
+ * as "GMT-03:00" in the vendor config (/IpcParam/TimeZomeCfg/GmtTz). */
+static int camera_zone(const char *path, int *minutes)
+{
+    FILE *file = fopen(path, "re");
+    if (!file) return -1;
+    char text[256];
+    int found = -1;
+    while (fgets(text, sizeof text, file)) {
+        const char *at = strstr(text, "\"GmtTz\"");
+        if (!at || !(at = strstr(at + 7, "GMT"))) continue;
+        char sign; int h, m;
+        if (sscanf(at, "GMT%c%2d:%2d", &sign, &h, &m) == 3 && (sign == '+' || sign == '-') && h <= 14 && m <= 59) {
+            *minutes = (sign == '-' ? -1 : 1) * (h * 60 + m);
+            found = 0;
+        }
+        break;
+    }
+    fclose(file);
+    return found;
 }
 
 static int local_minutes(const settings *s)
@@ -351,6 +379,13 @@ static void *engine(void *opaque)
         }
         int first = !c->applied, do_picture = first || c->apply_picture;
         c->applied = 1; c->apply_picture = 0;
+        if (c->oem_config[0] && (!c->zone_at || now - c->zone_at >= UINT64_C(60000000))) {
+            int minutes;
+            c->zone_at = now;
+            c->zone_valid = !camera_zone(c->oem_config, &minutes);
+            if (c->zone_valid) c->zone_min = minutes;
+        }
+        if (c->zone_valid) c->s.utc_offset_min = c->zone_min; /* the camera's zone wins */
         settings s = c->s;
         /* Exposure: only read while automatic mode needs it. */
         if (s.night_mode == NIGHT_AUTO && c->proc[0] && (!c->ev_at || now - c->ev_at >= EV_READ_US)) {
@@ -384,7 +419,9 @@ static void *engine(void *opaque)
                 else if (!c->cond_since) c->cond_since = now;
                 if (night) snprintf(c->reason, sizeof c->reason, "auto: night; day at level %d or below", s.day_ev);
                 else snprintf(c->reason, sizeof c->reason, "auto: day; night at level %d or above", s.night_ev);
-                if (want && now - c->cond_since >= (uint64_t)s.wait_s * 1000000u) {
+                /* The hold stops flapping when a switch changes the reading itself. */
+                if (want && now - c->cond_since >= (uint64_t)s.wait_s * 1000000u &&
+                    (!c->switched_at || now - c->switched_at >= c->auto_hold_us)) {
                     night = !night;
                     c->cond_since = 0;
                     snprintf(c->reason, sizeof c->reason, "auto: level %d %s %d for %d s", c->ev,
@@ -458,6 +495,12 @@ int jipc_controls_start(jipc_app *app)
     jipc_config_copy(app, &config);
     snprintf(c->path, sizeof c->path, "%s/controls.json", config.state_dir);
     /* JIPC_ISP_PROC: a test hook in the environment, never a camera.ini key. */
+    /* JIPC_AUTO_HOLD_S: test hook for the hold between automatic switches. */
+    const char *hold = getenv("JIPC_AUTO_HOLD_S");
+    c->auto_hold_us = (uint64_t)(hold && *hold ? atoi(hold) : AUTO_HOLD_S) * 1000000u;
+    /* JIPC_OEM_CONFIG: test hook for the vendor config holding the zone. */
+    const char *oem = getenv("JIPC_OEM_CONFIG");
+    snprintf(c->oem_config, sizeof c->oem_config, "%s", oem ? oem : "/opt/conf/config.json");
     const char *proc = getenv("JIPC_ISP_PROC");
     snprintf(c->proc, sizeof c->proc, "%s", proc ? proc : strcmp(config.backend, "imp") ? "" : "/proc/jz/isp/isp-m0");
     load(c);
@@ -610,10 +653,13 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity)
             cJSON_AddNumberToObject(live, "since_s", c->switched_at ? (double)((now - c->switched_at) / 1000000u) : 0);
             cJSON_AddNumberToObject(live, "pending_s",
                 c->cond_since ? (double)((now - c->cond_since) / 1000000u) : 0);
+            cJSON_AddNumberToObject(live, "hold_left_s", c->s.night_mode == NIGHT_AUTO && c->switched_at &&
+                now - c->switched_at < c->auto_hold_us ? (double)((c->auto_hold_us - (now - c->switched_at)) / 1000000u) : 0);
             cJSON_AddBoolToObject(live, "white_light", c->active_white == 1);
             cJSON_AddNumberToObject(live, "trigger_left_s",
                 c->trigger_until && now < c->trigger_until ? (double)((c->trigger_until - now + 999999u) / 1000000u) : 0);
             cJSON_AddNumberToObject(live, "local_minutes", local_minutes(&c->s));
+            cJSON_AddStringToObject(live, "zone", c->zone_valid ? "camera" : "browser");
             cJSON_AddStringToObject(live, "error", c->error);
         }
     }

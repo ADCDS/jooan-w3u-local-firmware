@@ -38,8 +38,8 @@ boundary.
   camera can install it over Wi-Fi with no extra hardware (see
   [Installation](docs/INSTALL.md)). In v0.2.21, video still comes from the
   vendor's program, running confined.
-- **Not published: 0.2.22 to 0.2.24.** This repository and its documents
-  describe 0.2.24, which only the maintainer can install today. Its media
+- **Not published: 0.2.22 to 0.2.28.** This repository and its documents
+  describe 0.2.28, which only the maintainer can install today. Its media
   layer needs files rebuilt from each owner's own camera, and there is no
   first-install tool yet.
 
@@ -64,21 +64,20 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.24 and its media layer:
+With 0.2.28 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 640×360 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,
   manual night/IR-cut and white light; one admin UI at `https://<camera>/`
   for phones and computers (`http://<camera>/` redirects there); SSH; Wi-Fi with
-  stage, commit and rollback; optional network time from a local server;
-  mDNS; signed updates.
+  a network list, stage, commit and rollback; restart and a daily restart;
+  optional network time from a local server; mDNS; signed updates.
 - **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
   through the speaker from Frigate, the admin UI or the API).
 - **Missing:** a siren; motion and person detection; digital zoom; on-screen timestamp;
   snapshots in the qualified profile; patrol, auto-tracking and privacy
   schedules; on-camera recording (off in the qualified profile: record with
-  the NVR) and SD-card management; Wi-Fi scanning; a reboot button; any cloud
-  or phone-app access.
+  the NVR) and SD-card management; any cloud or phone-app access.
 
 [OEM comparison](docs/OEM-COMPARISON.md) compares this firmware with the
 vendor firmware item by item.

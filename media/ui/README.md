@@ -21,10 +21,27 @@ xz, which keeps at least 48 KiB of the partition free.
   UI queues the rest and retries a 503 "busy" once.
 - 401 means signed out. A failed or timed-out request means the camera is not
   answering: a banner retries `GET /api/joan/v1/session` every 10 s.
-- Talk posts audio/PCMA in 2000–4000-byte chunks. SSH key `DELETE` sends
-  `{"id":"all"}`. Updates: `POST /api/joan/v1/update` (raw package, XHR), then
-  `PUT {"id"}`. Wi-Fi staging may return `deadline_seconds`; otherwise the
-  90 s window counts from the request.
+- Talk posts audio/PCMA in 2000–4000-byte chunks. Updates:
+  `POST /api/joan/v1/update` (raw package, XHR), then `PUT {"id"}`.
+- Sign-in sends `"remember":true` for the camera's 30-day cookie; the password
+  is never stored.
+- SSH keys: `GET` gives one key per line; `DELETE {"id":"<line>"}` removes one,
+  so the UI finds a key's line in a fresh list first. `POST` adds (at most 8;
+  a 502 means full).
+- `POST /api/joan/v1/system/restart` answers 409 with a `reason` while an update
+  or a trial runs; afterwards the offline banner waits. The daily restart is
+  `GET`/`PUT /api/joan/v1/system/restart-schedule`, in the camera's time zone.
+- Wi-Fi: `GET /api/joan/v1/network/wifi/scan` only when asked (3–4 s); the camera
+  joins only networks with a password. `GET /api/joan/v1/network/wifi` drives
+  the trial's countdown and steps on any device, so a page load brings a pending
+  trial back; `PUT`/`DELETE` need an `id` but act on the one running trial, so a
+  second device sends a stand-in. The local countdown (localStorage) is only
+  for when the camera can't be reached.
+- Status `system` (`uptime_s`, `memfree_kb`, `state_free_kb`, `boot_mode`) feeds
+  the nav state, Overview and Health; without it, those rows stay hidden.
+- Controls `live.zone` "camera" means schedules run in the camera's time zone;
+  "browser" means the UI sends `utc_offset_min` with each schedule.
+  `live.hold_left_s` is the least wait before the next automatic switch.
 - Media controls are `POST /api/v1/control {"operation","value","value2"[,"name"]}`:
   pan/tilt `ptz` at ±30/60/100 (Slow/Normal/Fast), `preset_set` into any slot
   1–16, `preset_rename` (name only; 409 for a duplicate name or an empty slot),
