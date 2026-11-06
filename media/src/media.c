@@ -137,6 +137,7 @@ int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
                        const void *data, size_t bytes, uint64_t pts_us, int keyframe)
 {
     if (source >= JIPC_VIDEO_STREAMS || (main_only && (source & 1))) return -1;
+    if (atomic_load(&app->privacy_hold)) return 0;
     if (jipc_publish(app,source,data,bytes,pts_us,keyframe,JIPC_H264)) return -1;
     return main_only ? jipc_publish(app,source+1,data,bytes,pts_us,keyframe,JIPC_H264) : 0;
 }
@@ -569,7 +570,8 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
 {
     if (!operation) return fail(error, capacity, "missing control operation");
     /* Motors and their deadlines never wait on the encoder/JPEG SDK gate. */
-    if (!strcmp(operation, "ptz") || !strcmp(operation, "ptz_stop") || !strncmp(operation, "preset_", 7))
+    if (!strcmp(operation, "ptz") || !strcmp(operation, "ptz_stop") || !strcmp(operation, "ptz_recalibrate") ||
+        !strncmp(operation, "preset_", 7))
         return jipc_platform_control(app, operation, value, value2, error, capacity);
     control_lock(app);
     media_state *state = app->backend_state;
@@ -599,7 +601,7 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     } else if (!strcmp(operation, "mic_mute")) {
         if (!state->config.audio) rc = fail(error, capacity, "audio is off");
         else if (value != 0 && value != 1) rc = fail(error, capacity, "mic_mute requires 0 or 1");
-        else { atomic_store(&app->mic_muted, value); rc = 0; }
+        else { atomic_store(&app->mic_muted, value || atomic_load(&app->privacy_on)); rc = 0; }
     } else if (!strcmp(operation, "volume") && value2 == 1) {
         rc = jipc_speaker_set_volume(app, value, error, capacity);
     } else if (state->imp && (!strcmp(operation, "flip") || !strcmp(operation, "hflip") || !strcmp(operation, "vflip"))) {
@@ -619,6 +621,16 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
             char patch[32];snprintf(patch,sizeof(patch),"{\"flip%d\":%u}",value2,flip);
             rc=jipc_config_patch(app,patch,error,capacity);
         }
+    } else if (!strcmp(operation, "privacy_cover")) {
+        /* Black on a lens: measured on camera1 in daylight, every pixel of both
+         * lenses reads Y=16 U=V=128 with these three at 0. */
+        rc = 0;
+        static const char *const cover[] = {"brightness", "contrast", "saturation"};
+        for (unsigned i = 0; state->imp && !rc && i < 3; ++i)
+            rc = jipc_imp_control(state->imp, cover[i], 0, value, error, capacity);
+    } else if (atomic_load(&app->privacy_on) && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
+               !strcmp(operation, "saturation"))) {
+        rc = 0; /* kept for afterwards; the lens stays black */
     } else if (state->imp && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation") || !strcmp(operation, "sharpness") ||
                !strcmp(operation, "isp_night") || !strcmp(operation, "volume") ||
@@ -637,6 +649,7 @@ int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
 {
     if (!frame) return fail(error, capacity, "missing snapshot result");
     memset(frame, 0, sizeof *frame);
+    if (atomic_load(&app->privacy_on)) return fail(error, capacity, "privacy mode is on");
     control_lock(app);
     media_state *state = app->backend_state;
     int rc = !state || !app->backend_ready ? fail(error, capacity, "media backend is not ready") :

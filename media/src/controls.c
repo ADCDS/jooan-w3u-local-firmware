@@ -3,7 +3,7 @@
  * light, pilot LED, microphone mute, picture per lens, anti-flicker), kept
  * in state_dir/controls.json, and the engine that applies them: automatic
  * day/night from the ISP's exposure value, the night and white-light
- * schedules, and the timed white-light trigger.
+ * schedules, the timed white-light trigger, the patrol and privacy mode.
  *
  * Lock order: app->control_mutex (taken by jipc_backend_control) before the
  * controls mutex. The engine never calls into the backend while holding its
@@ -26,11 +26,18 @@ static const char *const flicker_names[] = {"off", "50", "60"};
 
 /* No hue: the camera's ISP driver rejects V4L2 hue (BCSH) controls. */
 typedef struct { int brightness, contrast, saturation, sharpness, denoise; } picture;
+typedef struct { int slot, dwell_s; } patrol_stop;
+enum { PATROL_STOPS = 16 };
+enum { PATROL_GO, PATROL_MOVING, PATROL_DWELL };
 typedef struct {
     int night_mode, ir_off, night_ev, day_ev, wait_s, night_from, night_until;
     int white_light, wl_schedule, wl_from, wl_until, trigger_s;
     int pilot_led, mic_mute, anti_flicker, utc_offset_min;
     picture pic[2];
+    int patrol_on, patrol_pause_s, patrol_count;
+    patrol_stop stops[PATROL_STOPS];
+    int privacy_on, privacy_schedule, privacy_from, privacy_until, privacy_slot;
+    int home_set, home_x, home_y;
 } settings;
 
 typedef struct {
@@ -49,6 +56,15 @@ typedef struct {
     int wl_override;
     int zone_valid, zone_min;
     uint64_t zone_at;
+    /* Privacy: what is applied, a manual change until the schedule's next edge,
+     * and when the black-out was confirmed (frames are held until a moment later). */
+    int active_privacy, privacy_override;
+    uint64_t privacy_override_until, covered_at;
+    /* Patrol: where it is and what it is doing, for the status too. */
+    int patrol_index, patrol_phase, patrol_skipped;
+    uint64_t patrol_until;
+    const char *patrol_state;
+    int patrol_left_s;
     char path[600], proc[256], oem_config[256], reason[96], error[160];
 } controls_state;
 
@@ -69,6 +85,8 @@ static void defaults(settings *s)
     s->night_ev = 30000; s->day_ev = 5000; s->wait_s = 60;
     s->night_from = 18 * 60 + 30; s->night_until = 6 * 60;
     s->wl_from = 19 * 60; s->wl_until = 23 * 60; s->trigger_s = 120;
+    s->patrol_pause_s = 120;
+    s->privacy_from = 22 * 60; s->privacy_until = 6 * 60;
     for (int i = 0; i < 2; ++i)
         s->pic[i] = (picture){128, 128, 128, 128, 128};
 }
@@ -217,6 +235,53 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
             return -1;
         }
     }
+    cJSON *patrol = cJSON_GetObjectItemCaseSensitive(root, "patrol");
+    if (patrol) {
+        if (!cJSON_IsObject(patrol)) return snprintf(error, capacity, "patrol must be an object"), -1;
+        if (get_bool(patrol, "enabled", &next.patrol_on, error, capacity) ||
+            get_int(patrol, "pause_s", 0, 3600, &next.patrol_pause_s, error, capacity)) return -1;
+        cJSON *stops = cJSON_GetObjectItemCaseSensitive(patrol, "stops");
+        if (stops) {
+            if (!cJSON_IsArray(stops) || cJSON_GetArraySize(stops) > PATROL_STOPS)
+                return snprintf(error, capacity, "stops must be a list of at most %d", PATROL_STOPS), -1;
+            memset(next.stops, 0, sizeof next.stops);
+            next.patrol_count = 0;
+            cJSON *stop;
+            cJSON_ArrayForEach(stop, stops) {
+                patrol_stop *q = &next.stops[next.patrol_count];
+                q->dwell_s = 10;
+                if (!cJSON_IsObject(stop) || !cJSON_GetObjectItemCaseSensitive(stop, "slot"))
+                    return snprintf(error, capacity, "each stop needs a slot"), -1;
+                if (get_int(stop, "slot", 1, 16, &q->slot, error, capacity) ||
+                    get_int(stop, "dwell_s", 3, 3600, &q->dwell_s, error, capacity)) return -1;
+                next.patrol_count++;
+            }
+        }
+    }
+    cJSON *privacy = cJSON_GetObjectItemCaseSensitive(root, "privacy");
+    if (privacy) {
+        if (!cJSON_IsObject(privacy)) return snprintf(error, capacity, "privacy must be an object"), -1;
+        if (get_bool(privacy, "on", &next.privacy_on, error, capacity) ||
+            get_int(privacy, "slot", 0, 16, &next.privacy_slot, error, capacity)) return -1;
+        cJSON *schedule = cJSON_GetObjectItemCaseSensitive(privacy, "schedule");
+        if (schedule && (!cJSON_IsObject(schedule) ||
+                         get_bool(schedule, "enabled", &next.privacy_schedule, error, capacity) ||
+                         get_time(schedule, "from", &next.privacy_from, error, capacity) ||
+                         get_time(schedule, "until", &next.privacy_until, error, capacity))) {
+            if (!error[0]) snprintf(error, capacity, "schedule must be an object");
+            return -1;
+        }
+    }
+    cJSON *home = cJSON_GetObjectItemCaseSensitive(root, "home");
+    if (home) {
+        if (!cJSON_IsObject(home) || !cJSON_GetObjectItemCaseSensitive(home, "x") || !cJSON_GetObjectItemCaseSensitive(home, "y") ||
+            get_int(home, "x", -100, 8600, &next.home_x, error, capacity) ||
+            get_int(home, "y", -100, 2000, &next.home_y, error, capacity)) {
+            if (!error[0]) snprintf(error, capacity, "home needs x and y");
+            return -1;
+        }
+        next.home_set = 1;
+    }
     if (get_bool(root, "pilot_led", &next.pilot_led, error, capacity) ||
         get_bool(root, "mic_mute", &next.mic_mute, error, capacity) ||
         get_name(root, "anti_flicker", flicker_names, 3, &next.anti_flicker, error, capacity) ||
@@ -286,6 +351,35 @@ static char *settings_json(const settings *s, int with_version)
         cJSON_AddNumberToObject(p, "denoise", s->pic[i].denoise);
         cJSON_AddItemToArray(pictures, p);
     }
+    cJSON *patrol = cJSON_AddObjectToObject(root, "patrol");
+    if (patrol) {
+        cJSON_AddBoolToObject(patrol, "enabled", s->patrol_on);
+        cJSON_AddNumberToObject(patrol, "pause_s", s->patrol_pause_s);
+        cJSON *stops = cJSON_AddArrayToObject(patrol, "stops");
+        for (int i = 0; stops && i < s->patrol_count; ++i) {
+            cJSON *stop = cJSON_CreateObject();
+            if (!stop) break;
+            cJSON_AddNumberToObject(stop, "slot", s->stops[i].slot);
+            cJSON_AddNumberToObject(stop, "dwell_s", s->stops[i].dwell_s);
+            cJSON_AddItemToArray(stops, stop);
+        }
+    }
+    cJSON *privacy = cJSON_AddObjectToObject(root, "privacy");
+    if (privacy) {
+        hhmm(s->privacy_from, a); hhmm(s->privacy_until, b);
+        cJSON_AddBoolToObject(privacy, "on", s->privacy_on);
+        cJSON_AddNumberToObject(privacy, "slot", s->privacy_slot);
+        cJSON *schedule = cJSON_AddObjectToObject(privacy, "schedule");
+        if (schedule) {
+            cJSON_AddBoolToObject(schedule, "enabled", s->privacy_schedule);
+            cJSON_AddStringToObject(schedule, "from", a);
+            cJSON_AddStringToObject(schedule, "until", b);
+        }
+    }
+    if (s->home_set) {
+        cJSON *home = cJSON_AddObjectToObject(root, "home");
+        if (home) { cJSON_AddNumberToObject(home, "x", s->home_x); cJSON_AddNumberToObject(home, "y", s->home_y); }
+    }
     char *text = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     return text;
@@ -347,14 +441,29 @@ static void set_error(controls_state *c, const char *what, const char *detail)
     pthread_mutex_unlock(&c->mutex);
 }
 
-static void apply_picture(controls_state *c, const settings *s)
+/* Black on every lens; nonzero if any of them refused. */
+static int apply_cover(controls_state *c)
+{
+    char error[160];
+    int failed = 0;
+    for (unsigned lens = 0; lens < c->app->config.sensors && lens < 2; ++lens) {
+        error[0] = 0;
+        if (jipc_backend_control(c->app, "privacy_cover", (int)lens, (int)lens, error, sizeof error) < 0) {
+            set_error(c, "privacy", error);
+            failed = 1;
+        }
+    }
+    return failed;
+}
+
+static void apply_picture(controls_state *c, const settings *s, int covered)
 {
     static const char *const names[] = {"brightness", "contrast", "saturation", "sharpness", "denoise"};
     char error[160];
     for (unsigned lens = 0; lens < c->app->config.sensors && lens < 2; ++lens) {
         const int values[] = {s->pic[lens].brightness, s->pic[lens].contrast, s->pic[lens].saturation,
                               s->pic[lens].sharpness, s->pic[lens].denoise};
-        for (unsigned i = 0; i < 5; ++i) {
+        for (unsigned i = covered ? 3 : 0; i < 5; ++i) {
             error[0] = 0;
             if (jipc_backend_control(c->app, names[i], values[i], (int)lens, error, sizeof error) < 0)
                 set_error(c, names[i], error);
@@ -363,6 +472,56 @@ static void apply_picture(controls_state *c, const settings *s)
     error[0] = 0;
     if (jipc_backend_control(c->app, "anti_flicker", s->anti_flicker, 0, error, sizeof error) < 0)
         set_error(c, "anti_flicker", error);
+}
+
+/* Privacy mode: a manual change until the schedule's next edge, then the
+ * schedule (or being on all the time). */
+static int privacy_wanted(const controls_state *c, const settings *s, uint64_t now)
+{
+    if (c->privacy_override_until && now < c->privacy_override_until) return c->privacy_override;
+    if (s->privacy_schedule) return in_window(local_minutes(s), s->privacy_from, s->privacy_until);
+    return s->privacy_on;
+}
+
+/* One tick of the patrol: go to a stop, wait for the head, stay, next. Someone
+ * else moving the head pauses it; it picks up at the same stop. Called without
+ * the mutex, as it talks to the motor. */
+static void patrol_tick(controls_state *c, const settings *s, int privacy, uint64_t now)
+{
+    const char *state = "off";
+    int left = 0;
+    jipc_ptz_motion motion;
+    pthread_mutex_lock(&c->mutex);
+    int index = c->patrol_index, phase = c->patrol_phase, skipped = c->patrol_skipped;
+    uint64_t until = c->patrol_until;
+    pthread_mutex_unlock(&c->mutex);
+    if (!s->patrol_on || !s->patrol_count) { index = 0; phase = PATROL_GO; skipped = 0; }
+    else if (privacy) { state = "privacy"; phase = PATROL_GO; }
+    else if (jipc_platform_motion(c->app, &motion)) state = "unavailable";
+    else if (motion.homing) { state = "homing"; phase = PATROL_GO; }
+    else if (s->patrol_pause_s && motion.manual_age_s >= 0 && motion.manual_age_s < s->patrol_pause_s) {
+        state = "paused"; left = s->patrol_pause_s - (int)motion.manual_age_s; phase = PATROL_GO;
+    } else {
+        if (index >= s->patrol_count) index = 0;
+        if (phase == PATROL_DWELL && now >= until) { index = (index + 1) % s->patrol_count; phase = PATROL_GO; }
+        if (phase == PATROL_MOVING && !motion.moving) {
+            phase = PATROL_DWELL; until = now + (uint64_t)s->stops[index].dwell_s * 1000000u;
+        }
+        if (phase == PATROL_GO) {
+            char error[160] = {0};
+            if (jipc_platform_patrol_goto(c->app, s->stops[index].slot, error, sizeof error)) {
+                /* A deleted preset: skip it, unless that was every stop. */
+                index = (index + 1) % s->patrol_count;
+                if (++skipped >= s->patrol_count) { state = "no_stops"; skipped = s->patrol_count; }
+                else state = "moving";
+            } else { skipped = 0; phase = PATROL_MOVING; state = "moving"; }
+        } else if (phase == PATROL_MOVING) state = "moving";
+        else { state = "dwell"; left = (int)((until - now + 999999u) / 1000000u); }
+    }
+    pthread_mutex_lock(&c->mutex);
+    c->patrol_index = index; c->patrol_phase = phase; c->patrol_skipped = skipped; c->patrol_until = until;
+    c->patrol_state = state; c->patrol_left_s = left;
+    pthread_mutex_unlock(&c->mutex);
 }
 
 static void *engine(void *opaque)
@@ -439,6 +598,9 @@ static void *engine(void *opaque)
             else if (s.wl_schedule) { c->wl_override_until = 0; white = in_window(local_minutes(&s), s.wl_from, s.wl_until); }
             else white = s.white_light;
         }
+        int privacy = privacy_wanted(c, &s, now);
+        int change_privacy = privacy != c->active_privacy;
+        if (change_privacy) c->active_privacy = privacy;
         int change_night = night != c->active_night, change_white = white != c->active_white;
         int save_now = c->dirty && now - c->dirty_since >= SAVE_DELAY_US;
         if (save_now) c->dirty = 0;
@@ -448,8 +610,23 @@ static void *engine(void *opaque)
         pthread_mutex_unlock(&c->mutex);
 
         char error[160];
+        /* Privacy on: hold the frames, black out, wait for what was in the pipe,
+         * and only then let frames through. If the black-out fails the frames stay
+         * held, so a failure pauses video instead of showing it. Off: the picture
+         * comes back first, then the head. */
+        if (first || change_privacy) {
+            if (privacy) { atomic_store(&app->privacy_hold, 1); c->covered_at = 0; }
+            atomic_store(&app->privacy_on, privacy);
+            atomic_store(&app->mic_muted, s.mic_mute || privacy);
+            if (!privacy) do_picture = 1;
+            error[0] = 0;
+            if (jipc_platform_privacy(app, privacy, s.privacy_slot, error, sizeof error) < 0) set_error(c, "privacy", error);
+            jipc_log("info", "controls: privacy %s", privacy ? "on" : "off");
+        }
+        if (privacy && !c->covered_at) { if (!apply_cover(c)) c->covered_at = now; }
+        else if (privacy && atomic_load(&app->privacy_hold) && now - c->covered_at >= UINT64_C(1000000))
+            atomic_store(&app->privacy_hold, 0);
         if (first) {
-            atomic_store(&app->mic_muted, s.mic_mute);
             error[0] = 0;
             if (jipc_platform_control(app, "pilot_led", s.pilot_led, 0, error, sizeof error) < 0)
                 set_error(c, "pilot_led", error);
@@ -465,7 +642,9 @@ static void *engine(void *opaque)
             if (jipc_platform_control(app, "white_light", white, 0, error, sizeof error) < 0)
                 set_error(c, "white_light", error);
         }
-        if (do_picture) apply_picture(c, &s);
+        if (do_picture) apply_picture(c, &s, privacy);
+        if (!privacy) atomic_store(&app->privacy_hold, 0);
+        patrol_tick(c, &s, privacy, now);
 
         pthread_mutex_lock(&c->mutex);
         if (!atomic_load(&c->quit) && !c->apply_picture) {
@@ -483,12 +662,34 @@ static void *engine(void *opaque)
     return NULL;
 }
 
+/* Before video starts, so a camera in privacy mode never shows a frame at boot:
+ * the engine lets frames through once it has blacked out the lenses. */
+void jipc_controls_preload(jipc_app *app)
+{
+    controls_state *c = calloc(1, sizeof *c);
+    if (!c) return;
+    jipc_config config;
+    jipc_config_copy(app, &config);
+    snprintf(c->path, sizeof c->path, "%s/controls.json", config.state_dir);
+    load(c);
+    int minutes;
+    const char *oem = getenv("JIPC_OEM_CONFIG");
+    if (!camera_zone(oem ? oem : "/opt/conf/config.json", &minutes)) c->s.utc_offset_min = minutes;
+    if (privacy_wanted(c, &c->s, 0)) {
+        atomic_store(&app->privacy_on, 1);
+        atomic_store(&app->privacy_hold, 1);
+        jipc_log("info", "controls: privacy mode at start; holding video until it is applied");
+    }
+    free(c);
+}
+
 int jipc_controls_start(jipc_app *app)
 {
     controls_state *c = calloc(1, sizeof *c);
     if (!c) return -1;
     c->app = app;
-    c->active_night = c->active_white = -1;
+    c->active_night = c->active_white = c->active_privacy = -1;
+    c->patrol_state = "off";
     pthread_mutex_init(&c->mutex, NULL);
     pthread_cond_init(&c->wake, NULL);
     jipc_config config;
@@ -587,7 +788,18 @@ int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t cap
             c->s.day_ev != before.day_ev) c->cond_since = 0;
         if (c->s.ir_off != before.ir_off) c->active_night = -1; /* re-apply with the new IR mode */
         if (picture_changed) c->apply_picture = 1;
-        if (c->s.mic_mute != before.mic_mute) atomic_store(&app->mic_muted, c->s.mic_mute);
+        if (c->s.mic_mute != before.mic_mute) atomic_store(&app->mic_muted, c->s.mic_mute || atomic_load(&app->privacy_on));
+        /* With a schedule, on/off holds until the schedule's next edge. */
+        cJSON *privacy = cJSON_GetObjectItemCaseSensitive(root, "privacy");
+        cJSON *privacy_on = privacy ? cJSON_GetObjectItemCaseSensitive(privacy, "on") : NULL;
+        if (privacy_on && c->s.privacy_schedule) {
+            c->privacy_override = c->s.privacy_on;
+            c->privacy_override_until = jipc_now_us() +
+                (uint64_t)next_boundary_s(&c->s, c->s.privacy_from, c->s.privacy_until) * 1000000u;
+            c->s.privacy_on = before.privacy_on;
+        } else if (privacy_on || c->s.privacy_schedule != before.privacy_schedule) c->privacy_override_until = 0;
+        cJSON *patrol = cJSON_GetObjectItemCaseSensitive(root, "patrol");
+        if (patrol && cJSON_GetObjectItemCaseSensitive(patrol, "stops")) { c->patrol_index = 0; c->patrol_phase = PATROL_GO; c->patrol_skipped = 0; }
         if (memcmp(&before, &c->s, sizeof before)) { c->dirty = 1; c->dirty_since = jipc_now_us(); }
         pthread_cond_broadcast(&c->wake);
     }
@@ -615,6 +827,27 @@ int jipc_controls_trigger(jipc_app *app, int seconds, char *error, size_t capaci
     pthread_mutex_unlock(&c->mutex);
     pthread_mutex_unlock(&lifetime);
     return 0;
+}
+
+/* The saved home position, in motor steps: nonzero when there is none. */
+int jipc_controls_home(jipc_app *app, int *x, int *y)
+{
+    pthread_mutex_lock(&lifetime);
+    controls_state *c = app->controls_state;
+    if (!c) { pthread_mutex_unlock(&lifetime); return -1; }
+    pthread_mutex_lock(&c->mutex);
+    int rc = c->s.home_set ? 0 : -1;
+    *x = c->s.home_x; *y = c->s.home_y;
+    pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&lifetime);
+    return rc;
+}
+
+int jipc_controls_set_home(jipc_app *app, int x, int y, char *error, size_t capacity)
+{
+    char json[64];
+    snprintf(json, sizeof json, "{\"home\":{\"x\":%d,\"y\":%d}}", x, y);
+    return jipc_controls_patch(app, json, error, capacity);
 }
 
 /* Brightness, saturation, contrast, sharpness (0-255) of a lens, and the
@@ -660,6 +893,14 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity)
                 c->trigger_until && now < c->trigger_until ? (double)((c->trigger_until - now + 999999u) / 1000000u) : 0);
             cJSON_AddNumberToObject(live, "local_minutes", local_minutes(&c->s));
             cJSON_AddStringToObject(live, "zone", c->zone_valid ? "camera" : "browser");
+            cJSON_AddBoolToObject(live, "privacy", c->active_privacy == 1);
+            cJSON *patrol = cJSON_AddObjectToObject(live, "patrol");
+            if (patrol) {
+                cJSON_AddStringToObject(patrol, "state", c->patrol_state ? c->patrol_state : "off");
+                int moving = c->s.patrol_on && c->patrol_index < c->s.patrol_count;
+                cJSON_AddNumberToObject(patrol, "slot", moving ? c->s.stops[c->patrol_index].slot : 0);
+                cJSON_AddNumberToObject(patrol, "left_s", c->patrol_left_s);
+            }
             cJSON_AddStringToObject(live, "error", c->error);
         }
     }

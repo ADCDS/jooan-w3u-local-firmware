@@ -85,6 +85,9 @@ typedef struct jipc_app {
     void *controls_state;
     /* Microphone mute (control mic_mute): the track keeps running, silent. */
     atomic_int mic_muted;
+    /* Privacy mode, and "drop every video frame": set from before video starts
+     * until the black-out is confirmed, so nothing can leak if it fails. */
+    atomic_int privacy_on, privacy_hold;
     /* Level of the microphone audio the NVR receives, over the last full
      * second, in hundredths of a dBFS; audio_level_ms is when it was taken
      * (milliseconds, wrapping; 32 bits because MIPS32 has no 64-bit atomics). */
@@ -92,7 +95,9 @@ typedef struct jipc_app {
     atomic_uint audio_level_ms;
     struct { uint64_t start_us, sumsq; uint32_t samples; int32_t peak; } audio_meter;
 } jipc_app;
-typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
+typedef struct { int pan, tilt, moving, night, white_light; double pan_norm, tilt_norm; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
+typedef struct { int moving, homing; long manual_age_s; } jipc_ptz_motion;
+enum { JIPC_MOVE_ABSOLUTE, JIPC_MOVE_RELATIVE, JIPC_MOVE_RELATIVE_FOV, JIPC_MOVE_STEPS };
 
 uint64_t jipc_now_us(void);
 /* Failed-login throttle (src/authlimit.c), keyed by peer address. */
@@ -154,6 +159,10 @@ void jipc_backend_stop(jipc_app *app);
 int jipc_backend_night(jipc_app *app, int night, char *error, size_t capacity);
 /* Persisted camera controls and their engine (src/controls.c). */
 int jipc_controls_start(jipc_app *app);
+/* Before video starts: is privacy mode on? Then frames are held until it is applied. */
+void jipc_controls_preload(jipc_app *app);
+int jipc_controls_home(jipc_app *app, int *x, int *y);
+int jipc_controls_set_home(jipc_app *app, int x, int y, char *error, size_t capacity);
 void jipc_controls_stop(jipc_app *app);
 void jipc_controls_note(jipc_app *app, const char *operation, int value, int value2);
 int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t capacity);
@@ -219,6 +228,11 @@ int jipc_platform_preset_rename(jipc_app *app, int slot, const char *name, char 
 int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *error, size_t capacity);
 /* Boot homing when motor_home=1 (no OEM bootstrap); once per boot. */
 int jipc_platform_start(jipc_app *app);
+int jipc_platform_move(jipc_app *app, int kind, double x, double y, double speed, char *error, size_t capacity);
+int jipc_platform_steps(jipc_app *app, int *x, int *y);
+int jipc_platform_patrol_goto(jipc_app *app, int slot, char *error, size_t capacity);
+int jipc_platform_motion(jipc_app *app, jipc_ptz_motion *motion);
+int jipc_platform_privacy(jipc_app *app, int on, int slot, char *error, size_t capacity);
 void jipc_platform_stop(jipc_app *app);
 int jipc_platform_status(jipc_app *app, jipc_ptz_status *status, char *error, size_t capacity);
 int jipc_platform_status_json(jipc_app *app, char *out, size_t capacity);
