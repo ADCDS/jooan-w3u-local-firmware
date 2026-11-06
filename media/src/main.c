@@ -201,16 +201,8 @@ int main(int argc, char **argv)
                 int ready = app->backend_ready;
                 if (!ready) { jipc_log("error", "media backend stopped; shutting down services"); result = 1; break; }
                 if(watchdog_fd>=0&&jipc_now_us()-watchdog_last>=1000000){
-                    int fresh=1;uint64_t now=jipc_now_us();
-                    for(unsigned i=0;i<config.sensors*2;++i){
-                        pthread_mutex_lock(&app->streams[i].mutex);
-                        uint64_t sequence=app->streams[i].sequence;
-                        uint64_t stamp=sequence?app->streams[i].slots[(sequence-1)%app->streams[i].capacity].pts_us:0;
-                        pthread_mutex_unlock(&app->streams[i].mutex);
-                        if(!stamp||now<stamp||now-stamp>15000000)fresh=0;
-                    }
-                    /* Frames held for privacy stop the streams on purpose. */
-                    if((!fresh&&!atomic_load(&app->privacy_hold))||jipc_watchdog_feed(watchdog_fd)){
+                    uint64_t now=jipc_now_us();
+                    if(!jipc_video_healthy(app,config.sensors*2,now)||jipc_watchdog_feed(watchdog_fd)){
                         jipc_log("error","watchdog health check failed; stopping service");result=1;break;
                     }
                     watchdog_last=now;

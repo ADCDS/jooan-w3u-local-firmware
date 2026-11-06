@@ -89,6 +89,7 @@ typedef struct jipc_app {
      * until the black-out is confirmed, so nothing can leak if it fails. */
     atomic_int privacy_on, privacy_hold;
     atomic_uint privacy_wait_key; /* by source: frames resume at the next keyframe */
+    uint64_t video_grace_until; /* jipc_video_healthy */
     /* Level of the microphone audio the NVR receives, over the last full
      * second, in hundredths of a dBFS; audio_level_ms is when it was taken
      * (milliseconds, wrapping; 32 bits because MIPS32 has no 64-bit atomics). */
@@ -143,6 +144,8 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
                  uint64_t pts_us, int keyframe, enum jipc_codec codec);
 /* Publish a physical video source, optionally also to its adjacent alias.
  * main_only accepts only even source slots; each logical ring owns its copy. */
+/* The watchdog's question: is every stream getting frames? */
+int jipc_video_healthy(jipc_app *app, unsigned streams, uint64_t now);
 int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
                        const void *data, size_t bytes, uint64_t pts_us, int keyframe);
 int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
