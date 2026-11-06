@@ -528,7 +528,7 @@ static void *mic_main(void *opaque)
             }
             if (valid && !released) {
                 uint64_t pts = jipc_audio_clock_stamp(&clock, now, (unsigned)samples, NULL);
-                const unsigned char *payload = jipc_talk_active(app) ? silence : encoded;
+                const unsigned char *payload = jipc_mic_silenced(app) ? silence : encoded;
                 if (samples > sizeof silence) payload = encoded; /* oversized frames are never muted */
                 if (!jipc_publish(app, JIPC_AUDIO_STREAM, payload, samples, pts, 1, JIPC_PCMA)) {
                     atomic_fetch_add(&s->mic_frames, 1);

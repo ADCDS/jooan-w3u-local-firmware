@@ -371,7 +371,7 @@ static void dispatch(connection *c,request *r){
         if(session<0){error_response(c,503,"The camera's system service is not answering");return;}
         if(session>0){
             if(strcmp(r->method,"GET")&&(!same_origin(c,r,1)||!r->csrf[0]||!jipc_equal(r->csrf,csrf))){error_response(c,403,"Request token missing or invalid");return;}
-            authorized=1;
+            authorized=2; /* the admin UI's own session */
         }
     }
     if(!authorized){error_response(c,401,"Authentication required");return;}
@@ -386,6 +386,18 @@ static void dispatch(connection *c,request *r){
     if(!strcmp(r->method,"POST")&&!json_type(r->type)&&strcmp(r->target,"/api/v1/talk")){error_response(c,415,"Content-Type application/json is required");return;}
     char out[JIPC_MAX_JSON],error[256]={0};
     if(!strcmp(r->target,"/api/v1/status")&&!strcmp(r->method,"GET")){if(jipc_status_json(app,out,sizeof(out))<0)error_response(c,500,"Status unavailable");else response(c,200,"application/json",out,strlen(out));return;}
+    /* The stream password, for the admin UI only: its signed-in session, its
+     * own fetch (a header other sites cannot send), never over Basic. */
+    if(!strcmp(r->target,"/api/v1/config/password")&&!strcmp(r->method,"GET")){
+        if(authorized!=2||strcmp(r->requested_with,"jipc-ui")||!same_origin(c,r,0)){error_response(c,403,"Sign in to the admin UI to see the stream password");return;}
+        jipc_config cfg;jipc_config_copy(app,&cfg);char user[200],pass[400];
+        int ok=jipc_json_escape(cfg.username,user,sizeof(user))>=0&&jipc_json_escape(cfg.password,pass,sizeof(pass))>=0;
+        memset(cfg.password,0,sizeof(cfg.password));
+        if(!ok){error_response(c,500,"Password unavailable");return;}
+        int n=snprintf(out,sizeof(out),"{\"username\":%s,\"password\":%s}\n",user,pass);memset(pass,0,sizeof(pass));
+        if(n>0&&(size_t)n<sizeof(out))response(c,200,"application/json",out,(size_t)n);else error_response(c,500,"Password unavailable");
+        memset(out,0,sizeof(out));return;
+    }
     if(!strcmp(r->target,"/api/v1/config")){
         if(!strcmp(r->method,"GET")){if(jipc_config_json(app,out,sizeof(out))<0)error_response(c,500,"Configuration unavailable");else response(c,200,"application/json",out,strlen(out));}
         else if(jipc_config_patch(app,r->body,error,sizeof(error))<0)error_response(c,400,error);
@@ -400,6 +412,7 @@ static void dispatch(connection *c,request *r){
         char name[65];int named=jipc_json_string(r->body,"name",name,sizeof(name));
         if(named<0){error_response(c,400,"Invalid preset name");return;}
         int result=!strcmp(operation,"preset_set") ? jipc_platform_preset_set(app,value,named?NULL:name,error,sizeof(error)) :
+            !strcmp(operation,"preset_rename") ? jipc_platform_preset_rename(app,value,named?NULL:name,error,sizeof(error)) :
             jipc_backend_control(app,operation,value,value2,error,sizeof(error));
         if(result<0)error_response(c,409,error[0]?error:"Control is unavailable");
         else response(c,200,"application/json","{\"ok\":true}\n",12);

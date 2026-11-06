@@ -219,6 +219,7 @@ class Mock:
         self.config, self.media_password, self.recording = dict(MEDIA_CONFIG), args.password, False
         self.presets = {} if args.no_presets else {k: list(v) for k, v in PRESETS.items()}
         self.x, self.y = -14.0, 70.0
+        self.muted = False  # mic_mute
         self.media_boot(now, args.homing, first=True)
 
     # ---- time ----
@@ -558,6 +559,11 @@ class Mock:
             return merr(415, "Content-Type application/json is required")
         if t == "/api/v1/status" and m == "GET":
             return mok(self.media_status(now))
+        if t == "/api/v1/config/password" and m == "GET":
+            # The admin UI's own signed-in fetch only (it sends this header; other sites cannot).
+            if h.headers.get("X-Requested-With") != "jipc-ui" or h.cross_origin():
+                return merr(403, "Sign in to the admin UI to see the stream password")
+            return mok({"username": self.config["username"], "password": self.media_password})
         if t == "/api/v1/config":
             return mok(self.config) if m == "GET" else self.config_post(h.body, now)
         if t == "/api/v1/control" and m == "POST":
@@ -610,11 +616,21 @@ class Mock:
                        "faults": 0, "queued_ms": int(s["queued"] // 8), "error": ""}
         else:
             mic, speaker = {"state": "off"}, {"state": "off", "gate_released": True}
+        audio = {"enabled": c["audio"], "microphone": mic, "speaker": speaker}
+        if not self.args.old_audio:
+            audio["muted"], audio["level"] = self.muted, self.level(now) if c["audio"] else None
         return {"version": "0.1.0", "backend": "imp", "hardware_profile": "JA-A12-T23N-CV2005-CV2005S1",
                 "hardware_validated": False, "uptime_seconds": round(up, 6), "ready": True, "backend_error": "",
                 "recording": self.recording, "record_error": "", "restart_pending": self.restart_at is not None,
                 "streams": streams, "platform": platform, "clock": {"source": "none"},
-                "audio": {"enabled": c["audio"], "microphone": mic, "speaker": speaker}}
+                "audio": audio}
+
+    def level(self, now):
+        """audio.level: the last second of what the NVR receives; silence (talk or mute) is -96 dBFS."""
+        if self.muted or self.spk["session"]:
+            return {"peak_dbfs": -96.0, "rms_dbfs": -96.0}
+        rms = -38 + 7 * math.sin(now / 3.1) + 4 * math.sin(now / 0.7)
+        return {"peak_dbfs": round(min(0.0, rms + 14 + 3 * math.sin(now / 1.3)), 1), "rms_dbfs": round(rms, 1)}
 
     def config_post(self, body, now):
         if b"\\u0000" in body:
@@ -682,7 +698,7 @@ class Mock:
         if "name" in o and (not isinstance(name, str) or len(name.encode("utf-8", "surrogatepass")) >= 65):
             return merr(400, "Invalid preset name")
         try:
-            self.backend_control(op, value, value2, name if op == "preset_set" else None, now)
+            self.backend_control(op, value, value2, name if op in ("preset_set", "preset_rename") else None, now)
         except Fail as e:
             return merr(409, str(e))
         return mok({"ok": True})
@@ -717,6 +733,10 @@ class Mock:
                 raise Fail("gain requires 0..31 and target 0 (microphone) or 1 (speaker)")
             if not audio: raise Fail("audio is off or libimp lacks the gain control")
             self.mic["speaker_gain" if v2 else "gain"] = v
+        elif op == "mic_mute":  # the RTSP audio track keeps running and carries silence
+            if not audio: raise Fail("audio is off")
+            if v not in (0, 1): raise Fail("mic_mute requires 0 or 1")
+            self.muted = bool(v)
         elif op in ("brightness", "contrast", "saturation", "sharpness"):
             if not 0 <= v2 < sensors: raise Fail("invalid sensor index")
             if not 0 <= v <= 255: raise Fail("image control must be in 0..255")
@@ -725,7 +745,8 @@ class Mock:
 
     def platform_control(self, op, v, v2, name, now):
         """media/src/platform.c platform_control(): its validation order and messages."""
-        motion, preset = op in ("ptz", "ptz_nudge"), op in ("preset_set", "preset_goto", "preset_remove")
+        motion = op in ("ptz", "ptz_nudge")
+        preset = op in ("preset_set", "preset_goto", "preset_remove", "preset_rename")
         if not motion and not preset and op not in ("ptz_stop", "night", "ircut", "white_light", "pilot_led",
                                                     "speaker_enable"):
             raise Fail("unsupported platform operation: " + op)
@@ -739,7 +760,7 @@ class Mock:
             raise Fail("control value must be 0 or 1")
         if name is not None and not preset_name_ok(name):
             raise Fail("preset name requires 1..64 printable UTF-8 bytes")
-        if self.homing(now) and (motion or preset or op == "ptz_stop"):
+        if self.homing(now) and (motion or (preset and op != "preset_rename") or op == "ptz_stop"):
             raise Fail("pan/tilt homing in progress")
         if motion:  # the dominant axis wins; an identical repeat renews the lease
             vx, vy = (v, 0) if abs(v) >= abs(v2) else (0, v2)
@@ -764,6 +785,12 @@ class Mock:
                 self.presets[v] = [label, round(self.x), round(self.y)]
             elif op == "preset_remove":
                 self.presets.pop(v, None)
+        elif op == "preset_rename":  # the name only; the saved position stays
+            if name is None: raise Fail("preset_rename requires a name")
+            if v not in self.presets: raise Fail("preset slot is empty")
+            if any(k != v and p[0].encode().lower() == name.encode().lower() for k, p in self.presets.items()):
+                raise Fail("preset name already exists")
+            self.presets[v][0] = name
         elif op == "preset_goto":
             p = self.presets.get(v)
             if not p: raise Fail("preset slot is empty")
@@ -937,7 +964,7 @@ def main():
     p.add_argument("--fail-mode", choices=("drop", "hang"), default="drop",
                    help="not answering: close at once, or hold the request 30 s and then close")
     p.add_argument("--latency", type=int, default=0, metavar="MS", help="delay every API response")
-    p.add_argument("--old-audio", action="store_true", help="status without microphone volume/gain/speaker_gain")
+    p.add_argument("--old-audio", action="store_true", help="status without microphone volume/gain/speaker_gain, audio.muted and audio.level")
     p.add_argument("--no-presets", action="store_true", help="start with no PTZ presets")
     p.add_argument("--homing", type=float, default=0, metavar="SECONDS", help="pan/tilt homing after each boot")
     p.add_argument("--talk-busy", action="store_true", help="talk: another talker holds the speaker (409)")

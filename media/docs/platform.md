@@ -93,7 +93,10 @@ homing, so the setting may stay on.
 
 ## Presets and status
 
-`preset_set`, `preset_goto`, and `preset_remove` accept slots 1 through 16.
+`preset_set`, `preset_goto`, `preset_remove` and `preset_rename` accept slots 1 through 16.
+`preset_rename` takes a `name` and changes only the name: the saved position stays,
+the motor does not move, and a name another slot already uses (ignoring ASCII case)
+or an empty slot is refused.
 Setting a slot stops current movement and reads the driver position first.
 Updates use atomic mode-0600 files under `state_dir/presets.v2.json`; the
 state directory is mode 0700. The JSON catalog identifies version 2, backend,
@@ -131,6 +134,9 @@ With the IMP backend, `POST /api/v1/control` also accepts:
   sensors; there is no automatic mode (`night` drives this and the IR-cut GPIO
   together);
 - `idr`: request a key frame on stream channel `value`;
+- `mic_mute`: `value` 1 sends silence on the microphone track (the track and
+  its timestamps keep running), 0 restores it; needs `audio=1`; lasts until the
+  daemon restarts. `GET /api/v1/status` reports `audio.muted`;
 - `volume`: `value` -30–120 (60 is unity gain, about 0.5 dB per step) on
   `value2` 0 (microphone, default 80) or 1 (speaker, default 60); it needs
   `audio=1`. The speaker volume also applies to the next talk session.

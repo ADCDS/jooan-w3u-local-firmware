@@ -234,6 +234,7 @@ Authenticated REST endpoints:
 | `/api/joan/<path>` | Relayed to the platform's `/api/<path>` on loopback (GET, POST, PUT, DELETE) |
 | `GET /api/v1/status` | Backend readiness, streams, platform state and recording errors |
 | `GET /api/v1/config` | Configuration with password redacted |
+| `GET /api/v1/config/password` | The stream account (`username`, `password`), only for the admin UI's own signed-in fetch (`X-Requested-With: jipc-ui`, same origin); `403` for Basic and anything else |
 | `POST /api/v1/config` | Validated public settings; filesystem/listener/library settings remain local-only |
 | `POST /api/v1/control` | `{ "operation": "ptz", "value":50, "value2":0 }` and documented platform/ISP controls |
 | `POST /api/v1/recording` | `{ "enabled":true }` starts recording; false stops |
@@ -337,7 +338,9 @@ The speaker rules:
   microphone change applies within about 100 ms; a speaker gain change at
   the next talk after 10 s of quiet. Changes last until the daemon restarts.
 
-`GET /api/v1/status` reports both directions under `audio`: microphone state,
+`GET /api/v1/status` reports `audio.muted` (the `mic_mute` control),
+`audio.level` (`peak_dbfs` and `rms_dbfs` of the last full second the NVR
+received, or `null`) and both directions: microphone state,
 volume and gain (and the speaker's gain), frame, silence-fill, dropped and
 restart counts; speaker state, sessions,
 played and dropped milliseconds, refusals and faults.

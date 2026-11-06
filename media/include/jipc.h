@@ -82,6 +82,14 @@ typedef struct jipc_app {
     int record_active;
     char record_error[256];
     void *speaker_state;
+    /* Microphone mute (control mic_mute): the track keeps running, silent. */
+    atomic_int mic_muted;
+    /* Level of the microphone audio the NVR receives, over the last full
+     * second, in hundredths of a dBFS; audio_level_ms is when it was taken
+     * (milliseconds, wrapping; 32 bits because MIPS32 has no 64-bit atomics). */
+    atomic_int audio_peak_cdb, audio_rms_cdb;
+    atomic_uint audio_level_ms;
+    struct { uint64_t start_us, sumsq; uint32_t samples; int32_t peak; } audio_meter;
 } jipc_app;
 typedef struct { int pan, tilt, moving, night, white_light; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
 
@@ -155,6 +163,10 @@ int jipc_backend_audio_json(jipc_app *app, char *out, size_t capacity);
  * re-anchors, reporting a discontinuity, when it drifts more than 150 ms. */
 unsigned char jipc_alaw_encode(int sample);
 int jipc_alaw_decode(unsigned char code);
+/* Published microphone audio: talk or a mute replaces it with silence. */
+int jipc_mic_silenced(jipc_app *app);
+void jipc_audio_meter_add(jipc_app *app, const unsigned char *pcma, size_t bytes, uint64_t now_us);
+int jipc_audio_level_json(jipc_app *app, char *out, size_t capacity);
 typedef struct { uint64_t anchor_us, samples; unsigned rate; int started; } jipc_audio_clock;
 void jipc_audio_clock_init(jipc_audio_clock *clock, unsigned rate);
 int jipc_audio_clock_ahead(const jipc_audio_clock *clock, uint64_t now_us, unsigned samples);
@@ -191,6 +203,7 @@ int jipc_platform_control(jipc_app *app, const char *operation, int value,
                           int value2, char *error, size_t capacity);
 int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacity);
 int jipc_platform_preset_create(jipc_app *app, int *slot, const char *name, char *error, size_t capacity);
+int jipc_platform_preset_rename(jipc_app *app, int slot, const char *name, char *error, size_t capacity);
 int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *error, size_t capacity);
 /* Boot homing when motor_home=1 (no OEM bootstrap); once per boot. */
 int jipc_platform_start(jipc_app *app);

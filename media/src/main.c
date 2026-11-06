@@ -51,6 +51,10 @@ int jipc_status_json(jipc_app *app, char *out, size_t capacity)
     cJSON *audio = cJSON_AddObjectToObject(o, "audio");
     if (audio) {
         cJSON_AddBoolToObject(audio, "enabled", cfg.audio);
+        cJSON_AddBoolToObject(audio, "muted", atomic_load(&app->mic_muted));
+        if (!jipc_audio_level_json(app, status, sizeof(status))) {
+            cJSON *level = cJSON_Parse(status); if (level) cJSON_AddItemToObject(audio, "level", level);
+        }
         if (!jipc_backend_audio_json(app, status, sizeof(status))) {
             cJSON *mic = cJSON_Parse(status); if (mic) cJSON_AddItemToObject(audio, "microphone", mic);
         }

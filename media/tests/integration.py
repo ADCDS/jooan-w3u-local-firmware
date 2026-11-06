@@ -294,6 +294,44 @@ def fake_platform():
     return server, seen
 
 
+def wave_a_checks(request):
+    """Microphone mute and level meter (the replay tone), and renaming a
+    preset without moving it."""
+    def status():
+        return json.loads(request("GET", "/api/v1/status")[1])
+
+    # The talk checks just ran: wait out the half-duplex silence for a full
+    # one-second window of the replay tone.
+    deadline = time.monotonic() + 6
+    while time.monotonic() < deadline:
+        loud = status()["audio"].get("level")
+        if loud and loud["peak_dbfs"] > -40:
+            break
+        time.sleep(0.2)
+    assert loud["peak_dbfs"] > -40 and loud["rms_dbfs"] > -50, loud
+    assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 1, "value2": 0})[0] == 200
+    time.sleep(2.3)
+    muted = status()["audio"]
+    assert muted["muted"] is True and muted["level"]["peak_dbfs"] < -70, muted
+    assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 2, "value2": 0})[0] == 409
+    assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 0, "value2": 0})[0] == 200
+    time.sleep(2.3)
+    back = status()["audio"]
+    assert back["muted"] is False and back["level"]["peak_dbfs"] > -40, back
+    assert request("POST", "/api/v1/control", {"operation": "preset_set", "value": 3, "value2": 0, "name": "Door"})[0] == 200
+    assert request("POST", "/api/v1/control", {"operation": "preset_set", "value": 4, "value2": 0, "name": "Gate"})[0] == 200
+    before = {p["slot"]: p for p in status()["platform"]["presets"]}
+    assert request("POST", "/api/v1/control", {"operation": "preset_rename", "value": 3, "value2": 0, "name": "Front door"})[0] == 200
+    after = {p["slot"]: p for p in status()["platform"]["presets"]}
+    assert after[3]["name"] == "Front door" and (after[3]["x"], after[3]["y"]) == (before[3]["x"], before[3]["y"]), after
+    assert request("POST", "/api/v1/control", {"operation": "preset_rename", "value": 3, "value2": 0, "name": "gate"})[0] == 409
+    assert request("POST", "/api/v1/control", {"operation": "preset_rename", "value": 9, "value2": 0, "name": "Nine"})[0] == 409
+    assert request("POST", "/api/v1/control", {"operation": "preset_rename", "value": 3, "value2": 0})[0] == 409
+    for slot in (3, 4):
+        assert request("POST", "/api/v1/control", {"operation": "preset_remove", "value": slot, "value2": 0})[0] == 200
+    return {"tone": loud, "muted": muted["level"]}
+
+
 def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
     """The admin UI: public files with a strict CSP, single sign-in through
     the platform relay, the session cookie on the media API with CSRF and
@@ -395,6 +433,14 @@ def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
             assert reply.status == 200 and json.loads(reply.read())["ready"]
         finally:
             client.close()
+    # The stream password: only the UI's own signed-in fetch may read it.
+    status, _, body = call("GET", "/api/v1/config/password", headers=ui_get)
+    assert status == 200 and json.loads(body) == {"username": "admin", "password": secret}, (status, body)
+    assert call("GET", "/api/v1/config/password", headers={"Cookie": "joan_session=tok1"})[0] == 403
+    basic = {"Authorization": "Basic " + base64.b64encode(f"admin:{secret}".encode()).decode(),
+             "X-Requested-With": "jipc-ui"}
+    assert call("GET", "/api/v1/config/password", headers=basic)[0] == 403
+    assert call("GET", "/api/v1/config/password", headers=ui_get | {"Sec-Fetch-Site": "cross-site"})[0] == 403
     # Sign-out reaches the media API at once (the session cache is dropped).
     status, headers, _ = call("DELETE", "/api/joan/v1/session", None, ui_post | {"X-CSRF-Token": "c1"})
     assert status == 204 and header(headers, "Set-Cookie")[0].startswith("joan_session=;"), status
@@ -533,6 +579,8 @@ def main():
                         if args.tls else http.client.HTTPConnection("127.0.0.1", http_port, timeout=5))
             connection.secret = secret
             result["audio"] = talk_checks(rtsp_port, secret, request, capture, connection)
+            result["wave_a"] = wave_a_checks(request)
+            result["checks"].append("microphone mute and level meter; preset rename keeps its position")
             result["checks"].append("go2rtc-style backchannel talk: one talker, half-duplex mute, "
                                     "deadman unmute/mute, ordered playback; HTTP talk")
             probe = run(["ffprobe", "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a:0",

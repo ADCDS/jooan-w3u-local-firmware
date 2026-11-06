@@ -569,7 +569,7 @@ static int platform_control(jipc_app *app, const char *operation, int value,
     if (!app || !operation) return fail(error, capacity, "invalid platform request");
     motion = !strcmp(operation, "ptz") || !strcmp(operation, "ptz_nudge");
     preset_op = !strcmp(operation, "preset_set") || !strcmp(operation, "preset_goto") ||
-                !strcmp(operation, "preset_remove");
+                !strcmp(operation, "preset_remove") || !strcmp(operation, "preset_rename");
     if (!motion && !preset_op && strcmp(operation, "ptz_stop") &&
         strcmp(operation, "night") && strcmp(operation, "ircut") &&
         strcmp(operation, "white_light") && strcmp(operation, "pilot_led") &&
@@ -594,10 +594,11 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         for (int i = 0; i < PRESET_COUNT; ++i) if (!state->presets[i].valid) { value = i+1; break; }
         if (!value) { rc = fail(error, capacity, "all preset slots are occupied"); goto done; }
     }
-    if ((motion || (preset_op && strcmp(operation, "preset_remove"))) && motor_open_device(state)) {
+    if ((motion || (preset_op && strcmp(operation, "preset_remove") && strcmp(operation, "preset_rename"))) &&
+        motor_open_device(state)) {
         rc = fail(error, capacity, "motor device: %s", strerror(errno)); goto done;
     }
-    if (state->homing && (motion || preset_op || !strcmp(operation, "ptz_stop"))) {
+    if (state->homing && (motion || (preset_op && strcmp(operation, "preset_rename")) || !strcmp(operation, "ptz_stop"))) {
         rc = fail(error, capacity, "pan/tilt homing in progress"); goto done;
     }
     if (motion) {
@@ -634,6 +635,20 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         if (presets_save(state)) {
             state->presets[value - 1] = previous;
             rc = fail(error, capacity, "save preset: %s", strerror(errno));
+        }
+    } else if (!strcmp(operation, "preset_rename")) {
+        /* The name only; the saved position stays where it is. */
+        if (!name) { rc = fail(error, capacity, "preset_rename requires a name"); goto done; }
+        if (!state->presets[value - 1].valid) { rc = fail(error, capacity, "preset slot is empty"); goto done; }
+        for (int i = 0; i < PRESET_COUNT; ++i)
+            if (i != value - 1 && state->presets[i].valid && !strcasecmp(name, state->presets[i].name)) {
+                rc = fail(error, capacity, "preset name already exists"); goto done;
+            }
+        previous = state->presets[value - 1];
+        strcpy(state->presets[value - 1].name, name);
+        if (presets_save(state)) {
+            state->presets[value - 1] = previous;
+            rc = fail(error, capacity, "rename preset: %s", strerror(errno));
         }
     } else if (!strcmp(operation, "preset_remove")) {
         /* Persistence cannot hold a live manual deadline behind flash I/O. */
@@ -697,6 +712,9 @@ int jipc_platform_preset_create(jipc_app *app, int *slot, const char *name, char
 
 int jipc_platform_preset_set(jipc_app *app, int slot, const char *name, char *error, size_t capacity)
 { return platform_control(app, "preset_set", slot, 0, name, NULL, NULL, error, capacity); }
+
+int jipc_platform_preset_rename(jipc_app *app, int slot, const char *name, char *error, size_t capacity)
+{ return platform_control(app, "preset_rename", slot, 0, name, NULL, NULL, error, capacity); }
 
 int jipc_platform_nudge(jipc_app *app, int x, int y, char *error, size_t capacity)
 {

@@ -103,6 +103,7 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     jipc_stream *stream = &app->streams[channel];
     if (!stream->capacity) { free(copy); return -1; }
     pthread_mutex_lock(&stream->mutex);
+    if (channel == JIPC_AUDIO_STREAM && codec == JIPC_PCMA) jipc_audio_meter_add(app, copy, bytes, jipc_now_us());
     if (codec == JIPC_H264) {
         size_t payload, start = annexb_next(copy, bytes, 0, &payload);
         while (start < bytes && payload < bytes) {
@@ -365,7 +366,7 @@ static void *media_main(void *opaque)
             if (now > next_video + interval * 4) next_video = now + interval;
         }
         if (state->config.audio && now >= next_audio) {
-            const unsigned char *payload = jipc_talk_active(app) ? silence : replay_audio;
+            const unsigned char *payload = jipc_mic_silenced(app) ? silence : replay_audio;
             if (jipc_publish(app, JIPC_AUDIO_STREAM, payload, sizeof silence,
                              jipc_audio_clock_stamp(&clock, next_audio + 20000, sizeof silence, NULL), 1, JIPC_PCMA)) {
                 pthread_mutex_lock(&app->control_mutex);
@@ -566,6 +567,10 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
         if (value && !jipc_speaker_gate_open(app))
             rc = fail(error, capacity, "the speaker stays muted until the boot hook releases it");
         else rc = jipc_platform_control(app, operation, value, value2, error, capacity);
+    } else if (!strcmp(operation, "mic_mute")) {
+        if (!state->config.audio) rc = fail(error, capacity, "audio is off");
+        else if (value != 0 && value != 1) rc = fail(error, capacity, "mic_mute requires 0 or 1");
+        else { atomic_store(&app->mic_muted, value); rc = 0; }
     } else if (!strcmp(operation, "volume") && value2 == 1) {
         rc = jipc_speaker_set_volume(app, value, error, capacity);
     } else if (state->imp && (!strcmp(operation, "flip") || !strcmp(operation, "hflip") || !strcmp(operation, "vflip"))) {
