@@ -63,7 +63,7 @@ JA-A12 storage budget and required boot dependencies.
 | Snapshots | JPEG path in independent-substream mode; unavailable with `main_only=1` |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
 
-Motion/person detection, autotracking,
+Motion/person detection, autotracking (an NVR can do it through ONVIF),
 zoom, vendor provisioning/cloud, proprietary command compatibility, ONVIF
 encoder-setting writes and firmware flashing are not implemented. Replay has
 no sensor/JPEG encoder or speaker; unavailable operations return errors. ONVIF

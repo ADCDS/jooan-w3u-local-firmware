@@ -107,6 +107,13 @@ step and 2.45 per tilt step. Every reversal first loses about 25 steps to gear
 backlash, so a short move after changing direction falls that much short, and so
 does a return to a preset approached from the other side.
 
+For Frigate's autotracking, `onvif.autotracking` needs a zone in `required_zones`
+and a preset name in `return_preset`, and Frigate polls `GetStatus` without pausing
+while the head moves (56 requests a second measured). Replay protection copes with
+that: its table of used tokens is a ring, and a token older than the newest one
+overwritten is refused, so a forgotten token cannot be replayed and fresh ones
+always pass.
+
 `ptz_recalibrate` runs the boot's homing sequence on demand and returns to where
 the head was; `homed_ago_s` in the status says when (`null`: at boot, by an
 earlier start of the daemon). `SetHomePosition` saves a home position, kept in the

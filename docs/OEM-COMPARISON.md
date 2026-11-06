@@ -44,8 +44,8 @@ miss:
    bring your own VPN). The camera is meant to be watched and recorded by an
    NVR such as [Frigate](https://frigate.video/) on your own network.
 2. **No detection or alerts on the camera.** No motion detection, no push
-   notifications, no siren or flashing light, no auto-tracking. Your NVR has to
-   do detection and notifications.
+   notifications, no siren or flashing light. Your NVR has to do detection,
+   notifications and auto-tracking.
 3. **Night vision thresholds need tuning.** Automatic day/night, schedules
    and a timed white light work and are remembered, but the switching levels
    are provisional until set from dusk and dawn readings.
@@ -120,7 +120,7 @@ under [Sources](#sources):
 | Move to an exact position | The stock application's ONVIF server has absolute and relative moves [app]; not advertised | **Supported** (media) | ONVIF `AbsoluteMove`, `RelativeMove` (as a share of the travel or of the field of view) and a home position; `GetStatus` reports the position and whether the head is moving. |
 | Calibration | Calibrated at boot; recalibration from the app (`support_ptz_calibrate` = 1) [cfg] | **Supported** (media) | Homes once per boot (`motor_home=1`), and on demand from the admin UI or the API, about 30 seconds. Presets stay where they are. |
 | Patrol (cruise) | Cruise switch, interval and schedule settings [cfg]. The flag `cruise_setting` is `1` in the factory settings but `0` on the verified unit | **Partial** (media) | Visits presets in order, with a time at each, in the admin UI; pauses after someone steers, and is saved. No schedule of its own. |
-| Auto-tracking | Yes[^off] (`automatic_tracking` = 1) [cfg] | **Missing** | |
+| Auto-tracking | Yes[^off] (`automatic_tracking` = 1) [cfg] | **Supported** (with an NVR) | The camera has no detection of its own: Frigate tracks through ONVIF's field-of-view moves and `MoveStatus`. Checked with Frigate 0.18: its features report `pt-r-fov` and its calibration completes. |
 | Privacy mode (lens turns away, on a schedule) | "The camera will enter privacy mode and the device will not be able to watch live, record or upload to cloud storage" [phone]; schedule `PtzHideSchedTime` [cfg] | **Supported** (media) | Both lenses go black (measured in daylight: every pixel of both streams), the microphone is muted, the head points away and nothing can steer it, on demand or on a daily schedule. Video is held back from before the stream starts until the black-out is confirmed, including after a restart. Your NVR keeps receiving a black stream. On the test camera's mounting no tilt end stop hides the lens, so the black-out is what gives privacy. |
 
 ## Audio
