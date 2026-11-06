@@ -588,7 +588,12 @@ def main():
                          f"rtsp://admin:{secret}@127.0.0.1:{rtsp_port}/live/ch0"], timeout=30)  # hygiene: allow-test-vector
             times = [float(value.strip(',')) for value in probe.stdout.split() if value.strip(',')]
             assert len(times) >= 20, probe.stdout
-            steps = {round(b - a, 3) for a, b in zip(times, times[1:])}
+            # ffmpeg switches from its first-packet timeline to the RTCP sender
+            # report's when the first report arrives, so its first step can be
+            # anything; every later one must be exactly 20 ms. The RTP step
+            # itself is checked exactly by test_rtsp.py's audio timeline test.
+            assert times[1] > times[0], times[:4]
+            steps = {round(b - a, 3) for a, b in zip(times[1:], times[2:])}
             assert steps == {0.02}, (steps, times[:40])
             result["checks"].append("FFprobe reads the microphone track with exact 20 ms packet spacing")
             onvif_profile_order(connection, secret)
