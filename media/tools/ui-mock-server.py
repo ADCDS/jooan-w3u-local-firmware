@@ -25,6 +25,7 @@ the camera's relay, at most two /api/joan/ requests run at once (with
 """
 
 import argparse
+import ipaddress
 import json
 import math
 import os
@@ -49,7 +50,7 @@ GENERIC = "unknown, duplicate, invalid or local-only configuration setting"
 
 # Captured from the camera, anonymized.  The password is never returned.
 MEDIA_CONFIG = {
-    "bind": "192.168.1.38", "username": "admin", "password_set": True, "realm": "jooanipc-open",
+    "bind": "0.0.0.0", "username": "admin", "password_set": True, "realm": "jooanipc-open",
     "backend": "imp", "libimp": "/mnt/mtd/jooanipc-open/releases/b2e07752-904d60a6/libimp.so",
     "input0": "", "input1": "", "input2": "", "input3": "", "state_dir": "/opt/jooanipc-open/state",
     "record_dir": "/run/jooanipc-open/recordings", "tls_cert": "/opt/jooanipc-open/cert.pem",
@@ -74,7 +75,7 @@ NO_RESTART = {"username", "password", "recording", "record_seconds", "record_max
 # The platform's versioned routes, by implementation name (src/daemon/http.c `route`).
 V1 = {"v1/setup/password": "password", "v1/status": "status", "v1/network/mdns": "mdns",
       "v1/network/routes": "routes", "v1/network/quality": "network-quality", "v1/time": "time",
-      "v1/network/wifi/scan": "wifi/scan", "v1/system/restart": "restart", "v1/system/restart-schedule": "restart-schedule", "v1/system/reset": "reset",
+      "v1/network/wifi/scan": "wifi/scan", "v1/system/restart": "restart", "v1/system/restart-schedule": "restart-schedule", "v1/system/reset": "reset", "v1/network/ip": "network-ip",
       "v1/timezone": "timezone", "v1/ssh/authorized-keys": "ssh/keys"}
 
 
@@ -316,6 +317,7 @@ class Mock:
         self.version, self.sequence, self.release = "0.2.26", 60, None
         self.hostname = self.hostname_next = "camera1"
         self.routes, self.clock_offset, self.ssh_keys = ["10.42.0.0/24"], 0.0, ""
+        self.ip = {"mode": "dhcp", "address": "192.168.1.38", "prefix": 24, "gateway": "192.168.1.1"}
         self.ntp = {"server": "gateway", "resolved": "192.168.1.1", "attempts": 1, "offset": 760454.303,
                     "synced": now - 2637, "due": None}
         self.ssid, self.trial, self.staged = "HomeNet-IoT", None, None
@@ -702,6 +704,8 @@ class Mock:
                 return ok({"enabled": self.restart_time is not None, "time": self.restart_time})
         if name.startswith("wifi/"):
             return self.wifi(name, h, now)
+        if name == "network-ip":
+            return self.network_ip(h, now)
         if name == "mdns" and m == "GET":
             return ok({"hostname": self.hostname, "address": self.hostname + ".local", "status": "running"})
         if name == "mdns" and m in ("PUT", "POST"):
@@ -773,7 +777,7 @@ class Mock:
             if not t:
                 return ok({"pending": False, "last": self.wifi_last})
             return ok({"pending": True, "seconds_left": max(0, int(t["deadline"] - now)), "ssid": t["ssid"],
-                       "joined": t["joined"], "address": t["address"]})
+                       "joined": t["joined"], "address": t["address"], "static": t.get("static")})
         if name == "wifi/stage" and m == "POST":
             if not body: return bare(400, "configuration required")
             try:  # wifi-apply.sh: printable ASCII without " or \, a password of 8 to 63 characters (no open networks)
@@ -805,11 +809,44 @@ class Mock:
             self.trial = None
             if name == "wifi/commit":
                 self.ssid, self.wifi_last = t["ssid"], "committed"
+                if "ip" in t: self.ip = t["ip"]
             else:
                 self.wifi_last = "rolled_back"
                 self.reboot(now + 0.5, 20)
             return ok({"ok": True, "id": i})
         return perr(404, "route_not_found", "route not found")
+
+    def network_ip(self, h, now):
+        m, body = h.command, h.body
+        if m == "GET":
+            return ok({"mode": self.ip["mode"], "address": self.ip["address"], "prefix": self.ip["prefix"], "gateway": self.ip["gateway"]})
+        if m != "PUT": return perr(404, "route_not_found", "route not found")
+        mode = jfield(body, "mode", 8)
+        if mode is None: return perr(400, "invalid_json", "mode is required: dhcp or static")
+        new = {"mode": "dhcp", "address": "192.168.1.38", "prefix": 24, "gateway": "192.168.1.1"}
+        if mode == "static":  # static_ip_ok() in src/daemon/http.c
+            a, p, g = jfield(body, "address", 16), jfield(body, "prefix", 3), jfield(body, "gateway", 16)
+            try:
+                net = ipaddress.ip_network(f"{a}/{int(p)}", strict=False)
+                aa, gg = ipaddress.ip_address(a), ipaddress.ip_address(g)
+                good = 8 <= int(p) <= 30 and aa.is_private and gg in net and aa != gg and \
+                    not {aa, gg} & {net.network_address, net.broadcast_address}
+            except (ValueError, TypeError):
+                good = False
+            if not good:
+                return perr(400, "invalid_address", "a private address, a prefix from 8 to 30 and a gateway on the same subnet are required")
+            new = {"mode": "static", "address": a, "prefix": int(p), "gateway": g}
+        elif mode != "dhcp":
+            return perr(400, "invalid_address", "a private address, a prefix from 8 to 30 and a gateway on the same subnet are required")
+        why = "update" if self.release else "wifi-trial" if self.trial else self.args.restart_blocked
+        if not why and mode == "static":
+            why = {"192.168.1.60": "address-in-use"}.get(new["address"]) or {"192.168.1.254": "gateway-silent"}.get(new["gateway"])
+        if why: return ok({"ok": False, "reason": why}, 409)
+        self.wifi_last = None
+        self.pause(1)
+        self.trial = {"id": hexid(), "ssid": self.ssid, "deadline": now + 90, "joined": True, "address": new["address"],
+                      "static": new["address"] if mode == "static" else None, "ip": new}
+        return ok({"ok": True})
 
     def ssh(self, h):
         m, body = h.command, h.body
@@ -842,7 +879,8 @@ class Mock:
         dbm = round(-65 + 5 * math.sin(t / 23) + 2 * math.sin(t / 5.3))
         return {"wifi": {"associated": True, "ssid": self.trial["ssid"] if self.trial else self.ssid,
                          "signal_dbm": dbm, "rate_mbps": 72.2 if dbm > -62 else 52.0, "frequency_mhz": 5180,
-                         "band": "5 GHz", "gateway": "192.168.1.1", "rx_bytes": str(rx + int(t * 16000)), "tx_bytes": str(tx + int(t * 420000)),
+                         "band": "5 GHz", "address": self.trial["address"] if self.trial and self.trial["address"] else self.ip["address"],
+                         "gateway": self.ip["gateway"], "rx_bytes": str(rx + int(t * 16000)), "tx_bytes": str(tx + int(t * 420000)),
                          "rx_packets": str(rxp + int(t * 240)), "tx_packets": str(txp + int(t * 330))},
                 "ethernet": {"link": False, "speed_mbps": None, "rx_bytes": "0", "tx_bytes": "168",
                              "rx_packets": "0", "tx_packets": "2"}}

@@ -178,7 +178,7 @@ under [Sources](#sources):
 | List of nearby networks | Yes (`support_get_wifilist` = 1) [cfg] | **Supported** (platform) | Scan on demand in the admin UI, with signal, band and security; tap one to fill in its name. Hidden networks: type the name. |
 | Signal strength | Unverified | **Supported** (platform) | Signal, link rate, band, gateway and counters at `/api/v1/network/quality` and in the admin UI. |
 | Wired Ethernet | Ethernet port[^off] | **Missing** | A native boot configures only Wi-Fi and does not finish without a Wi-Fi gateway. The Ethernet link is only reported. |
-| Static IP address | Stored Ethernet IP settings (`Eth0NetworkParam`) [cfg]; whether the app offers them is unverified | **Missing** | DHCP on Wi-Fi only. |
+| Static IP address | Stored Ethernet IP settings (`Eth0NetworkParam`) [cfg]; whether the app offers them is unverified | **Supported** (platform) | Automatic or static on Wi-Fi, in the admin UI. A change is tried for 90 seconds and rolled back unless you keep it; an address already in use or a gateway that does not answer is refused first. |
 | Clock and time zone | Clock set from the phone (`phone_utctime_sync` = 1), time zone stored (`TimeZomeCfg`) [cfg] | **Partial** (platform) | Set by hand, or by optional network time (SNTP) from a server on your network, off by default. The board has no battery-backed clock, so without network time the clock lags after every power cut. ONVIF always reports UTC. Scheduled restarts and the day/night and white-light schedules follow the stored time zone; the stock application's overlay uses it in the fallback modes. |
 
 ## Maintenance and updates

@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.31, release sequence 65) has a supported tag until the
+current one is 0.2.32, release sequence 66) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -87,6 +87,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/status` | `GET` | Build, local-only, route, feature, network-time, and helper status |
 | `/api/v1/network/wifi/scan` | `GET` | Nearby networks, strongest first (takes 5 to 10 seconds). See [Local networking](#local-networking-and-dns-sd) |
 | `/api/v1/network/wifi` | `GET`, `POST`, `PUT`, `DELETE` | Read the state of a Wi-Fi trial; stage, commit, or roll back a Wi-Fi transaction. The SSID joins its 5 GHz BSS when a pre-connect scan finds one strong enough for sustained video, falling back to 2.4 GHz otherwise |
+| `/api/v1/network/ip` | `GET`, `PUT` | Read or change how the camera gets its address, automatic or static. See [Local networking](#local-networking-and-dns-sd) |
 | `/api/v1/network/routes` | `GET`, `PUT` | Inspect or set the allowlist of RFC1918/ULA prefixes reachable through the pruned gateway. Specific prefixes only; a default route is never restored |
 | `/api/v1/network/quality` | `GET` | Read current Wi-Fi association/quality, band and gateway, Ethernet link/speed and cumulative interface counters |
 | `/api/v1/network/mdns` | `GET`, `PUT` | Inspect or change the persistent `.local` hostname |
@@ -224,12 +225,27 @@ up to 30 networks, each once at its strongest:
 
 Hidden networks are not listed. Names follow the same sanitizing as below.
 
+`GET /api/v1/network/ip` returns
+`{"mode":"dhcp","address":"192.0.2.10","prefix":24,"gateway":"192.0.2.1"}`, where
+`mode` is `dhcp` or `static` and the rest is what the camera has now. `PUT` with
+`{"mode":"dhcp"}` or
+`{"mode":"static","address":"192.168.1.50","prefix":"24","gateway":"192.168.1.1"}`
+changes it through the same 90-second trial as a new network: commit with `PUT`
+on `/api/v1/network/wifi`, or it rolls back and the camera reboots. The address must
+be private, the prefix from 8 to 30, and the gateway on the same subnet (400
+`invalid_address`). It refuses without touching anything, with `409
+{"ok":false,"reason":"..."}`, when something else answers on that address
+(`address-in-use`), the gateway does not answer (`gateway-silent`), there is no
+committed network (`no-network`), or for a restart's reasons. During such a trial
+`GET /api/v1/network/wifi` also has `"static"`, the proposed address. Joining a new
+network goes back to an automatic address.
+
 Authenticated `GET /api/v1/network/quality` is read-only and sampled on demand
 (the Network UI refreshes on entry or on pressing Refresh; there is no polling).
 Example response:
 
 ```json
-{"wifi":{"associated":true,"ssid":"Family Room WiFi","signal_dbm":-48,"rate_mbps":72.2,"frequency_mhz":5180,"band":"5 GHz","gateway":"192.0.2.1","rx_bytes":"123456","tx_bytes":"234567","rx_packets":"1400","tx_packets":"1500"},"ethernet":{"link":false,"speed_mbps":null,"rx_bytes":"0","tx_bytes":"0","rx_packets":"0","tx_packets":"0"}}
+{"wifi":{"associated":true,"ssid":"Family Room WiFi","signal_dbm":-48,"rate_mbps":72.2,"frequency_mhz":5180,"band":"5 GHz","address":"192.0.2.10","gateway":"192.0.2.1","rx_bytes":"123456","tx_bytes":"234567","rx_packets":"1400","tx_packets":"1500"},"ethernet":{"link":false,"speed_mbps":null,"rx_bytes":"0","tx_bytes":"0","rx_packets":"0","tx_packets":"0"}}
 ```
 
 `associated` and `link` are booleans or `null` when status is unavailable.
@@ -237,12 +253,12 @@ SSID is emitted only for a completed association, capped at 64 characters and
 sanitized to a limited printable subset (`?` substitutes unsupported bytes).
 `signal_dbm`, `rate_mbps`, `frequency_mhz` and `speed_mbps` are numbers or `null`
 if absent; Wi-Fi signal/rate are null when not associated, Ethernet speed is null
-when down. `band` is `"5 GHz"`, `"2.4 GHz"` or `null`. `gateway` is the address
-the supervisor recorded when it pruned the default route, or `null`.
+when down. `band` is `"5 GHz"`, `"2.4 GHz"` or `null`. `address` is the camera's
+address on Wi-Fi, and `gateway` the one the supervisor recorded when it pruned the
+default route; either may be `null`.
 Counters are decimal strings (to avoid JavaScript integer precision loss), or
 `null` when unreadable; they are cumulative since boot and can wrap/reset.
-Only fixed `wlan0` and `eth0` are inspected. No BSSID/MAC, the camera's own IP,
-passphrase, PSK, account credentials, or unfiltered tool output is returned.
+Only fixed `wlan0` and `eth0` are inspected. No BSSID/MAC, passphrase, PSK, account credentials, or unfiltered tool output is returned.
 The endpoint requires an administrator session and responds with 502
 `integration_failed` if its integration helper fails.
 

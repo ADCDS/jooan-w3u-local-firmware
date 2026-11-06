@@ -240,7 +240,8 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | **Network** | |
 | Wi-Fi credentials | ✓ transactional stage / commit / roll back; prefers 5 GHz, falls back to 2.4 GHz when 5 GHz is weak/absent |
 | Wi-Fi scan (nearby APs) | ✓ `/api/v1/network/wifi/scan` and in the admin UI |
-| Signal / RSSI readout | ✓ `/api/v1/network/quality` (signal, rate, band, gateway, counters) |
+| Signal / RSSI readout | ✓ `/api/v1/network/quality` (signal, rate, band, address, gateway, counters) |
+| Static IP | ✓ `/api/v1/network/ip`, through the 90-second Wi-Fi trial |
 | **System** | |
 | Firmware update | ✓ signed, sequence-gated (platform); the media layer is updated by its installer |
 | Change password | ✓ (synchronized to SSH) |

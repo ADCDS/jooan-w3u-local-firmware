@@ -279,6 +279,9 @@ def fake_platform():
             if self.path == "/api/v1/session" and self.command == "DELETE":
                 state["live"] = False
                 return self.reply(204, extra=[("Set-Cookie", "joan_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")])
+            if self.path == "/api/v1/network/wifi" and self.command == "POST":  # a real join takes up to 65 s
+                time.sleep(16)
+                return self.reply(200, b'{"ok":true}')
             if self.path == "/api/v1/network/mdns" and self.command == "PUT":
                 return self.reply(200, body)
             if self.path == "/api/v1/update" and self.command == "POST":
@@ -609,6 +612,14 @@ def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
     assert call("GET", "/api/v1/config/password", headers=basic)[0] == 403
     assert call("GET", "/api/v1/config/password", headers=ui_get | {"Sec-Fetch-Site": "cross-site"})[0] == 403
     # Sign-out reaches the media API at once (the session cache is dropped).
+    # Joining a network takes the platform longer than the relay's usual 15 s.
+    slow = connection()
+    slow.timeout = 30
+    slow.request("POST", "/api/joan/v1/network/wifi", body="{}", headers=ui_post | {"X-CSRF-Token": "c1"})
+    reply = slow.getresponse()
+    assert reply.status == 200, reply.status
+    reply.read()
+    slow.close()
     status, headers, _ = call("DELETE", "/api/joan/v1/session", None, ui_post | {"X-CSRF-Token": "c1"})
     assert status == 204 and header(headers, "Set-Cookie")[0].startswith("joan_session=;"), status
     assert call("GET", "/api/v1/status", headers=ui_get)[0] == 401

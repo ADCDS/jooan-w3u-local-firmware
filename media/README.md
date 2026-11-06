@@ -263,7 +263,8 @@ There is one sign-in, with the platform's admin account:
   need this page's `Origin`, which the relay checks and does not forward.
   Failed sign-ins count toward the per-address throttle. Two relays run at a
   time, so slow platform calls never hold up ONVIF; a relay waits at most
-  15 s and returns `502` if the platform does not answer.
+  15 s (75 s for a Wi-Fi join or an address change, which start a Wi-Fi trial) and
+  returns `502` if the platform does not answer.
 - The media API also accepts that platform session, checked against the
   platform and cached for 3 s. Changes need the same `X-CSRF-Token` and the
   page's `Origin`. Basic, Digest and WS-Security for NVRs are unchanged.

@@ -19,6 +19,42 @@ export LC_ALL
 case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 1 ;; esac
 [ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 1
 
+# A static address, when the candidate has one: address, prefix and gateway
+# together or not at all. The daemon checked them before they were committed.
+field() { "$json_tool" -c r -k "/$1" "$candidate" 2>/dev/null | sed 's/^[^ ]* [^ ]* //'; }
+address=$(field address)
+prefix=$(field prefix)
+gateway=$(field gateway)
+case "$address$prefix$gateway" in *[!0-9.]*) exit 1 ;; esac
+if [ -n "$address$prefix$gateway" ]; then
+    [ -n "$address" ] && [ -n "$prefix" ] && [ -n "$gateway" ] || exit 1
+    netmask=$(awk -v p="$prefix" 'BEGIN { p += 0; for (i = 1; i <= 4; i++) {
+        b = p >= 8 ? 8 : (p > 0 ? p : 0); p -= b; printf "%s%d", (i > 1 ? "." : ""), 256 - 2 ^ (8 - b) } }')
+fi
+
+apply_address() {
+    killall udhcpc 2>/dev/null || :
+    if [ -n "$address" ]; then
+        ifconfig wlan0 "$address" netmask "$netmask" up
+        # As after DHCP: the supervisor records this gateway and removes the route.
+        route add default gw "$gateway" dev wlan0 2>/dev/null || :
+    else
+        # Leave one persistent client behind: it daemonizes once it holds a lease
+        # (or after the first 15 s without one) and keeps renewing. A one-shot -q
+        # client would exit here and the lease would never be renewed.
+        udhcpc -a -b -t 5 -T 3 -i wlan0 -x hostname:JooanW3U \
+            -p /var/run/udhcpc_wlan0_pid.txt -s /mnt/mtd/run/default.script \
+            </dev/null >/dev/null 2>&1
+    fi
+    ifconfig wlan0 2>/dev/null | grep -q 'inet addr:'
+}
+
+# Changing only the address (integration-helper.sh ip-stage): the link stays up.
+if [ "${JOAN_WIFI_KEEP_LINK:-}" = 1 ] && wpa_cli -iwlan0 status 2>/dev/null | grep -q '^wpa_state=COMPLETED$'; then
+    apply_address
+    exit 0
+fi
+
 # Every wpa_cli call fails instantly with "Failed to connect to non-global
 # ctrl_ifname" until wpa_supplicant has created its control socket, which OEM
 # boot only does about a minute in. The supervisor already waits for that
@@ -123,11 +159,4 @@ while [ "$i" -lt 18 ]; do
     i=$((i + 1))
 done
 [ "${state:-}" = COMPLETED ] || exit 1
-killall udhcpc 2>/dev/null || :
-# Leave one persistent client behind: it daemonizes once it holds a lease (or
-# after the first 15 s without one) and keeps renewing. A one-shot -q client
-# would exit here and the lease would never be renewed.
-udhcpc -a -b -t 5 -T 3 -i wlan0 -x hostname:JooanW3U \
-    -p /var/run/udhcpc_wlan0_pid.txt -s /mnt/mtd/run/default.script \
-    </dev/null >/dev/null 2>&1
-ifconfig wlan0 2>/dev/null | grep -q 'inet addr:'
+apply_address

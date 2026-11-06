@@ -272,7 +272,8 @@
 		clock = src('t', J + 'time', rTime),
 		controls = src('x', M + 'controls', rControls),
 		wifiState = src('w', J + 'network/wifi', rWifi, { quiet: 1, timeout: 8e3 }),
-		restartAt = src('y', J + 'system/restart-schedule', rRestart, { timeout: 2e4 });
+		restartAt = src('y', J + 'system/restart-schedule', rRestart, { timeout: 2e4 }),
+		ipInfo = src('i', J + 'network/ip', rIp, { timeout: 2e4 });
 	const guess = /^[\d.]+$|[:[]/.test(location.hostname) ? 'Camera' : location.hostname.split('.')[0],
 		name = () => S.n?.hostname || guess,
 		rel = () => (/\/releases\/([0-9a-f]{8})/.exec(S.c?.libimp || '') || [])[1];
@@ -451,7 +452,7 @@
 		image: [media, config, [controls, 'im-nst']],
 		audio: [media, config],
 		streams: [config, mdns, media, controls],
-		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes'], wifiState],
+		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes'], wifiState, [ipInfo, 'nw-ipm']],
 		system: [joan, media, config, controls, [clock, 'sy-nh'], [restartAt, 'sy-rsn'], [keys, 'sy-keys']],
 		settings: [joan, media, quality]
 	};
@@ -634,7 +635,7 @@
 							: ['warn', 'Starting'],
 			/* the side nav also names the boot mode; a phone header has room for the state only */
 			long = st[1] == 'Online' && (bm == 'native' || bm == 'handoff') ? `Online · ${bm} boot` : st[1],
-			a = S.c?.bind || location.hostname;
+			a = S.q?.wifi?.address || location.hostname;
 		$$('.cam-name').forEach(e => (e.textContent = name()));
 		$$('.cam-addr').forEach(e => (e.textContent = a));
 		$$('.state').forEach(e => e.replaceChildren(pill(st[0], e.classList.contains('bare') ? st[1] : long)));
@@ -1799,7 +1800,7 @@
 	function streams() {
 		const c = S.c;
 		if (!c) return;
-		const H = [...new Set([c.bind, location.hostname, S.n?.address].filter(x => x && x != '0.0.0.0'))],
+		const H = [...new Set([S.q?.wifi?.address, c.bind, location.hostname, S.n?.address].filter(x => x && x != '0.0.0.0'))],
 			el = $('st-host'),
 			rp = c.rtsp_port || 18554;
 		if (!H.includes(hs)) hs = H[0];
@@ -2029,7 +2030,7 @@
 				})
 			)
 		);
-		tx('nw-ad', S.c?.bind || location.hostname);
+		tx('nw-ad', w.address || location.hostname);
 		tx('nw-gw', w.gateway || '—');
 		const st = (k, v, s) =>
 			h('div', null, h('dt', { text: k }), h('dd', { text: v }), s && h('small', { text: s }));
@@ -2242,6 +2243,7 @@
 					id: d?.id || W?.id || '',
 					ssid: id,
 					prev,
+					was: S.q?.wifi?.address,
 					deadline: sec > 0 ? Date.now() + sec * 1e3 : W && !W.end ? W.deadline : t0 + 9e4,
 					lost: !d
 				};
@@ -2259,7 +2261,7 @@
 	function rWifi(d) {
 		if (d?.pending) {
 			const fresh = !W || W.end;
-			if (fresh) W = { id: '', ssid: d.ssid || 'the new network', prev: '' };
+			if (fresh) W = { id: '', ssid: d.static || d.ssid || 'the new network', prev: '', ip: !!d.static };
 			W.joined = d.joined;
 			W.addr = d.address;
 			W.lost = false;
@@ -2273,7 +2275,7 @@
 			place();
 			shell();
 		} else if (W && !W.end && !joining) {
-			const pv = W.prev || 'the previous network',
+			const pv = prevName(),
 				n = name();
 			d?.last == 'committed'
 				? wend(`${n} stays on ${W.ssid}`, 'If the camera’s address changed, update your NVR.')
@@ -2284,6 +2286,7 @@
 						)
 					: wend('The test is over', `${n} is no longer testing ${W.ssid}.`);
 			quality().catch(noop);
+			ipInfo().catch(noop);
 		}
 	}
 	/* The camera can't be asked: fall back to counting here, from the request or the last answer. */
@@ -2293,7 +2296,8 @@
 			wifi();
 		}
 	}
-	const trialId = () => W.id || 'current'; // the camera wants an id but acts on the one running trial
+	const trialId = () => W.id || 'current', // the camera wants an id but acts on the one running trial
+		prevName = () => W.prev || (W.ip ? 'the previous address' : 'the previous network');
 	function wifi() {
 		$('p-network').classList.toggle('wc', !!W);
 		$('nw-scan').hidden = $('nw-sb').hidden = !!W;
@@ -2302,10 +2306,10 @@
 		if (!W) return;
 		const L = Math.max(0, W.deadline - Date.now()),
 			s = Math.ceil(L / 1e3),
-			pv = W.prev || 'the previous network',
+			pv = prevName(),
 			n = name(),
 			E = W.end,
-			was = S.c?.bind && S.c.bind != '0.0.0.0' ? S.c.bind : location.hostname,
+			was = W.was || location.hostname,
 			u = W.addr && `https://${W.addr}${location.port ? ':' + location.port : ''}/`;
 		if (!E && !L) return wend('Time is up', `${n} goes back to ${pv} and restarts (about 90 s).`);
 		tx('wc-h', E ? W.eT : `Keep ${W.ssid}?`);
@@ -2318,7 +2322,9 @@
 			E
 				? W.eP
 				: W.lost
-					? `The camera can’t be reached from this device. To keep ${W.ssid}, open this page from a device on it in time; otherwise it goes back to ${pv} and restarts.`
+					? W.ip
+						? `The camera moved. To keep ${W.ssid}, open it at the new address and sign in again in time; otherwise it goes back to ${pv} and restarts.`
+						: `The camera can’t be reached from this device. To keep ${W.ssid}, open this page from a device on it in time; otherwise it goes back to ${pv} and restarts.`
 					: W.joined
 						? `${n} is answering on ${W.ssid}. If you do nothing, it goes back to ${pv} and restarts when the timer ends.`
 						: `${n} is trying ${W.ssid}. If nobody confirms, it goes back to ${pv} and restarts.`
@@ -2329,13 +2335,17 @@
 				E || W.joined == null
 					? []
 					: [
-							[
-								W.joined ? 'ok' : 'wait',
-								(W.joined ? 'Joined ' : 'Joining ') + W.ssid,
-								W.joined && q?.ssid == W.ssid
-									? [q.band, q.signal_dbm != null && mi(q.signal_dbm) + ' dBm'].filter(Boolean).join(' · ')
-									: ''
-							],
+							...(W.ip
+								? []
+								: [
+										[
+											W.joined ? 'ok' : 'wait',
+											(W.joined ? 'Joined ' : 'Joining ') + W.ssid,
+											W.joined && q?.ssid == W.ssid
+												? [q.band, q.signal_dbm != null && mi(q.signal_dbm) + ' dBm'].filter(Boolean).join(' · ')
+												: ''
+										]
+									]),
 							[W.addr ? 'ok' : 'off', W.addr ? 'Got an address' : 'Waiting for an address', W.addr || ''],
 							...(W.joined && W.addr ? [['wait', 'Waiting for you', '']] : [])
 						],
@@ -2352,9 +2362,9 @@
 				? $('wc-nt').replaceChildren(
 						'The address changes to ',
 						h('a', { href: u, class: 'mono', text: W.addr }),
-						`. Your NVR still points at ${was}, so update it after you keep this network.`
+						`. Your NVR still points at ${was}, so update it after you keep this ${W.ip ? 'address' : 'network'}.`
 					)
-				: tx('wc-nt', 'If the address changes, update your NVR after keeping the new network.');
+				: tx('wc-nt', W.ip ? 'If the address changes, update your NVR after keeping it.' : 'If the address changes, update your NVR after keeping the new network.');
 		}
 		tx('wc-keep', E ? 'Done' : 'Keep ' + W.ssid);
 		tx('wc-back', `Go back to ${pv} now`);
@@ -2380,10 +2390,11 @@
 			await api(J + 'network/wifi', { method: 'PUT', json: { id: trialId() }, timeout: 2e4 });
 			wend(`${name()} stays on ${W.ssid}`, 'If the camera’s address changed, update your NVR.');
 			quality().catch(noop);
+			ipInfo().catch(noop);
 		});
 	};
 	$('wc-back').onclick = () => {
-		const pv = W.prev || 'the previous network';
+		const pv = prevName();
 		sheet({
 			title: `Go back to ${pv} now?`,
 			text: `The camera drops ${W.ssid} and restarts (about 90 s).`,
@@ -2395,6 +2406,81 @@
 				wend('Going back to ' + pv, 'The camera is restarting; this page reconnects by itself.');
 			}
 		});
+	};
+	/* IP address: automatic or static, through the same trial as a new network. */
+	const IP_NO = {
+		'address-in-use': 'Something on the network already answers on that address. Choose another.',
+		'gateway-silent': 'That gateway does not answer, so nothing beyond this network could reach the camera. Check it and try again.',
+		'no-network': 'The camera has no saved Wi-Fi network yet. Join one first.',
+		update: 'An update is being installed. Try again when it has finished.',
+		'wifi-trial': 'A network change is already being tested. Keep it or go back first.',
+		'boot-trial': 'A new release is still being tried out after an update. Try again in a few minutes.'
+	};
+	function ipShow(mode) {
+		$$('button', $('nw-ipm')).forEach(b => b.setAttribute('aria-checked', b.value == mode));
+		$('nw-ipf').hidden = mode != 'static';
+	}
+	function rIp(d) {
+		if (!$('nw-ipf').contains(document.activeElement)) {
+			ipShow(d.mode);
+			setIn($('nw-ipa'), d.address || '');
+			setIn($('nw-ipp'), d.prefix == null ? '24' : String(d.prefix));
+			setIn($('nw-ipg'), d.gateway || '');
+		}
+	}
+	async function ipTrial(json, label) {
+		const t0 = Date.now(),
+			prev = S.q?.wifi?.address || location.hostname;
+		let d = null;
+		joining = 1;
+		try {
+			d = await api(J + 'network/ip', { method: 'PUT', json, timeout: 75e3, quiet: 1 });
+		} catch (x) {
+			if (x.st == 409) no(IP_NO[x.d?.reason] || 'The camera can’t change its address right now.');
+			if (x.kind != 'off') throw x;
+		} finally {
+			joining = 0;
+		}
+		W = { id: '', ssid: label, prev, ip: 1, was: prev, addr: json.address, deadline: t0 + 9e4, lost: !d };
+		ls.set(WIFI, W);
+		joinClose();
+		wifi();
+		shell();
+		$('wc-h').focus();
+		d ? wifiState().catch(wifiLost) : goOff();
+	}
+	seg($('nw-ipm'), v => {
+		if (v == 'static') return ipShow(v);
+		if (S.i?.mode != 'static') return ipShow(v);
+		sheet({
+			title: 'Go back to an automatic address?',
+			text: 'The router assigns the address again, which may be a different one. You then have 90 seconds to keep it.',
+			ok: 'Test automatic',
+			icon: 'network',
+			run: () => ipTrial({ mode: 'dhcp' }, 'the automatic address')
+		});
+	});
+	$('nw-ipc').onclick = () => ipShow(S.i?.mode || 'dhcp');
+	$('nw-ipf').onsubmit = e => {
+		e.preventDefault();
+		const ip = i => /^\d{1,3}(\.\d{1,3}){3}$/.test(i.value.trim()) && i.value.trim().split('.').every(n => +n < 256),
+			a = $('nw-ipa'),
+			p = $('nw-ipp'),
+			g = $('nw-ipg'),
+			bad = (el, m) => {
+				el.setAttribute('aria-invalid', 'true');
+				err(el, m);
+				el.focus();
+			};
+		if (!ip(a)) return bad(a, 'Enter an address such as 192.168.1.50.');
+		if (!/^\d{1,2}$/.test(p.value.trim()) || +p.value < 8 || +p.value > 30) return bad(p, 'Enter a number from 8 to 30.');
+		if (!ip(g)) return bad(g, 'Enter the gateway’s address, such as 192.168.1.1.');
+		run(
+			sb(e),
+			() =>
+				ipTrial({ mode: 'static', address: a.value.trim(), prefix: p.value.trim(), gateway: g.value.trim() }, a.value.trim()),
+			$('nw-ipf')
+		);
 	};
 	$('nw-name').onsubmit = e => {
 		e.preventDefault();

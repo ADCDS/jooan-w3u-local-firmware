@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
     helper.write_text('#!/bin/sh\ncase "$1" in\n'
                       '  restart) cat "$FAKE_RESTART" ;;\n'
                       '  factory-reset) : > "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART" ;;\n'
+                      '  ip-stage) cp "$2" "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART" ;;\n'
                       '  restart-schedule|restart-schedule-set) printf \'{"enabled":true,"time":"%s"}\\n\' "$3" ;;\n'
                       '  wifi-state) echo \'{"pending":false,"last":null}\' ;;\n'
                       '  wifi-scan) echo \'[{"ssid":"Home"}]\' ;;\n'
@@ -118,6 +119,25 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         assert not reset_called.exists(), 'a short press must not reset'
         button.write_text('0\n'); time.sleep(5.8)
         assert reset_called.exists(), 'holding the button for 5 s must reset'
+        # A static address: private, its gateway on the subnet, a sane prefix.
+        restart_reply.write_text('{"ok":true}\n')
+        reset_called.unlink(missing_ok=True)
+        good = {'mode': 'static', 'address': '192.168.20.50', 'prefix': '24', 'gateway': '192.168.20.1'}
+        for bad in ({'address': '8.8.8.8', 'gateway': '8.8.8.1'}, {'address': '192.168.20.0'}, {'address': '192.168.20.255'},
+                    {'gateway': '192.168.21.1'}, {'gateway': '192.168.20.50'}, {'prefix': '31'}, {'prefix': '7'}, {'prefix': 'x'},
+                    {'address': '192.168.20.5; reboot'}, {'mode': 'other'}):
+            assert call('PUT', '/api/v1/network/ip', good | bad, cookie=kept, csrf=kept_csrf)[0] == 400, bad
+        assert not reset_called.exists()
+        assert call('PUT', '/api/v1/network/ip', good, cookie=kept, csrf=kept_csrf)[0] == 200
+        assert reset_called.read_text() == 'static 192.168.20.50 24 192.168.20.1\n'
+        assert call('PUT', '/api/v1/network/ip', {'mode': 'dhcp'}, cookie=kept, csrf=kept_csrf)[0] == 200
+        assert reset_called.read_text() == 'dhcp\n'
+        reset_called.unlink()
+        restart_reply.write_text('{"ok":false,"reason":"address-in-use"}\n')
+        status, data, _ = call('PUT', '/api/v1/network/ip', good, cookie=kept, csrf=kept_csrf)
+        assert status == 409 and b'address-in-use' in data, data
+        reset_called.unlink(missing_ok=True)
+        restart_reply.write_text('{"ok":true}\n')
         # A second device has no trial id; the camera acts on the one running trial.
         assert call('PUT', '/api/v1/network/wifi', {'id': 'current'}, cookie=kept, csrf=kept_csrf)[0] == 200
         # Sign-out ends a remembered sign-in for good.
