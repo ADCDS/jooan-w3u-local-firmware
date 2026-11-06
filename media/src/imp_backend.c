@@ -64,7 +64,7 @@ typedef struct {
     int (*get_stream)(int, jipc_imp_stream *, int), (*release_stream)(int, jipc_imp_stream *);
     int (*super_frame)(int, jipc_imp_super *);
     imp_one osd_pool, isp_pool, vpubs_pool, vb_pool;
-    imp_byte brightness[2], contrast[2], saturation[2], sharpness[2], hue[2];
+    imp_byte brightness[2], contrast[2], saturation[2], sharpness[2];
     imp_one temper[2], sinter[2], antiflicker[2];
     imp_one hflip[2], vflip[2], night[2];
     int (*ai_set_attr)(int, jipc_imp_audio_attr *), (*ao_set_attr)(int, jipc_imp_audio_attr *);
@@ -231,7 +231,7 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
         TUNING(brightness, "SetBrightness"); TUNING(contrast, "SetContrast");
         TUNING(saturation, "SetSaturation"); TUNING(sharpness, "SetSharpness");
         TUNING(hflip, "SetISPHflip"); TUNING(vflip, "SetISPVflip"); TUNING(night, "SetISPRunningMode");
-        TUNING(hue, "SetBcshHue"); TUNING(temper, "SetTemperStrength"); TUNING(sinter, "SetSinterStrength");
+        TUNING(temper, "SetTemperStrength"); TUNING(sinter, "SetSinterStrength");
         TUNING(antiflicker, "SetAntiFlickerAttr");
 #undef TUNING
     }
@@ -940,7 +940,6 @@ int jipc_imp_control(void *state, const char *operation, int value, int sensor,
     else if (!strcmp(operation, "contrast")) setter = s->contrast[sensor];
     else if (!strcmp(operation, "saturation")) setter = s->saturation[sensor];
     else if (!strcmp(operation, "sharpness")) setter = s->sharpness[sensor];
-    else if (!strcmp(operation, "hue")) setter = s->hue[sensor];
     else if (!strcmp(operation, "hflip") || !strcmp(operation, "vflip")) {
         if (value != 0 && value != 1) return failure(error, capacity, "flip value must be 0 or 1");
         imp_one flip = !strcmp(operation, "hflip") ? s->hflip[sensor] : s->vflip[sensor];

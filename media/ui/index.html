@@ -78,7 +78,7 @@
 <div class="card o4" id="ov-last" hidden><h2>Last known status</h2><dl class="stats"><div><dt>Last answer</dt><dd class="mono" id="ov-la"></dd></div><div><dt>Wi-Fi then</dt><dd id="ov-lw"></dd></div></dl></div>
 </div><div class="stack">
 <div class="card o3"><h2>Quick actions</h2>
-<div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="0">Day</button><button value="1">Night</button></div><small>Automatic switching is not available in this firmware yet.</small></div>
+<div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note"></small></div>
 <div class="row"><span><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
 <div class="talk-box"></div></div>
 </div></div>
@@ -98,21 +98,43 @@
 </section>
 
 <section class="page" id="p-image" hidden>
-<header class="ph"><div><h1 tabindex="-1">Image &amp; night</h1><p>Changes apply at once; except orientation, they last until a restart.</p></div></header>
+<header class="ph"><div><h1 tabindex="-1">Image &amp; night</h1><p>Changes apply right away and are kept after a restart.</p></div></header>
 <div class="cols rv">
 <div class="stack">
 <div class="card"><div><h2 id="im-hn">Day and night</h2><small>Both lenses share the infrared filter and lights.</small></div>
-<div class="f"><div class="seg night" aria-labelledby="im-hn"><button value="0">Day</button><button value="1">Night</button></div><small>Automatic switching is not available in this firmware yet.</small></div></div>
-<div class="card"><div class="row first"><span><b id="im-hl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="im-hl"></button></div><small>A light schedule is not available in this firmware yet.</small></div>
+<div class="seg night" aria-labelledby="im-hn"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div>
+<small class="night-note" id="im-nst" role="status"></small>
+<div class="stack s" id="im-auto" hidden>
+<div class="f"><div class="bar"><span class="lbl">Darkness now</span><span class="mono" id="im-lv"></span></div>
+<div class="dark" id="im-dm" role="img"><i></i><b></b><b></b><span>day below</span><span>night above</span></div></div>
+<div class="g2"><div class="f"><label for="im-ne">Switch to night above</label><input id="im-ne" class="mono raw" inputmode="numeric"></div>
+<div class="f"><label for="im-de">Back to day below</label><input id="im-de" class="mono raw" inputmode="numeric"></div></div>
+<small>The level is the pan/tilt lens’s exposure: higher is darker. Watch it at dusk and dawn to pick the two levels.</small>
+<div class="row"><label for="im-wait">Wait before switching</label><select id="im-wait"></select></div></div>
+<div class="g2 two" id="im-sch" hidden><div class="f"><label for="im-nf">Night from</label><input id="im-nf" type="time"></div>
+<div class="f"><label for="im-nu">Until</label><input id="im-nu" type="time"></div></div>
+<div class="f"><span class="lbl" id="im-irl">Infrared LEDs</span><div class="seg" id="im-ir" aria-labelledby="im-irl"><button value="night">On at night</button><button value="off">Off (lit street)</button></div>
+<small>Off: night mode without the infrared LEDs, in black and white, for a street with its own lights. The filter still switches.</small></div></div>
+<div class="card"><h2 id="im-wlh">White light</h2>
+<div class="seg" id="im-wlm" aria-labelledby="im-wlh"><button value="off">Off</button><button value="on">On</button><button value="schedule">Schedule</button></div>
+<div class="g2 two" id="im-wls" hidden><div class="f"><label for="im-wf">From</label><input id="im-wf" type="time"></div>
+<div class="f"><label for="im-wu">Until</label><input id="im-wu" type="time"></div></div>
+<small id="im-wln"></small>
+<div class="row"><span><b>Turn on when triggered</b><small>From Home Assistant, for example on a Frigate person event, or the button below.</small></span></div>
+<div class="row first"><label for="im-wd">Stay on for</label><select id="im-wd"></select></div>
+<div class="acts"><button class="btn" id="im-wt">Turn on</button></div><small id="im-wtn" role="status"></small></div>
 </div>
 <div class="card">
 <div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
 <div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
-<div class="stack s" id="im-sl"></div><small>The camera does not report these values, so sliders start at 128.</small></div></div>
+<div class="stack s" id="im-sl"></div><small>Noise reduction: 0 leaves grain, 255 is very strong and may smear moving things.</small>
+<div class="f"><span class="lbl" id="im-afl">Anti-flicker</span><div class="seg" id="im-af" aria-labelledby="im-afl"><button value="50">50 Hz</button><button value="60">60 Hz</button><button value="off">Off</button></div>
+<small>Both lenses. Match your mains frequency (60 Hz in Brazil) to stop banding under LED street lights and indoor lights.</small></div></div></div>
 <div class="card"><div><h2>Orientation</h2><small>Kept after a restart. A change restarts video briefly.</small></div>
 <div class="orient" id="im-or"><span></span><span class="lbl sm">Pan/tilt lens</span><span class="lbl sm l1">Fixed lens</span>
 <span>Upside down</span><span><button class="sw" data-k="r" data-s="0" aria-label="Upside down, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="r" data-s="1" aria-label="Upside down, fixed lens"></button></span>
-<span>Mirror</span><span><button class="sw" data-k="m" data-s="0" aria-label="Mirror, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="m" data-s="1" aria-label="Mirror, fixed lens"></button></span></div></div>
+<span>Mirror</span><span><button class="sw" data-k="m" data-s="0" aria-label="Mirror, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="m" data-s="1" aria-label="Mirror, fixed lens"></button></span></div>
+<small>A timestamp on the picture is not available in this firmware yet.</small></div>
 </section>
 
 <section class="page" id="p-audio" hidden>
@@ -122,7 +144,7 @@
 <div class="card"><div class="bar nw"><div><h2 id="au-mh">Microphone</h2><small>Sent with both main video streams as 8 kHz G.711 (A-law).</small></div><span class="inl"><span id="au-mst"></span><button class="sw" id="au-mic" aria-labelledby="au-mh" hidden></button></span></div><div class="stack s" id="au-msl"></div>
 <div class="f" id="au-lv" hidden><small id="au-lvn"></small></div></div>
 <div class="card"><div class="bar"><div><h2>Speaker</h2><small>Used for talk and the test tone.</small></div><span id="au-sst"></span></div><div class="stack s" id="au-ssl"></div><div class="f"><button class="btn start" id="au-tone"><svg><use href="#i-audio"/></svg>Play test tone</button></div></div>
-<small>Levels and the microphone switch last until a restart. Volume 60 is unity; a step is about 0.5 dB.</small>
+<small>Volume and gain last until a restart; the microphone switch is kept. Volume 60 is unity; a step is about 0.5 dB.</small>
 <div class="card"><div><h2>Talk through the camera</h2><small>Uses this browser’s microphone. The browser asks for permission the first time.</small></div><div class="talk-box"></div>
 <label class="chk"><input type="checkbox" id="au-latch"><span>Tap to start, tap to stop</span></label></div>
 </div>
@@ -138,7 +160,7 @@
 <div class="f"><span class="lbl">User name</span><div id="st-user"></div></div>
 <div class="f"><span class="lbl">Password</span><div class="cf" id="st-pwr"><code id="st-pwv">••••••••••••</code><button type="button" id="st-pws" aria-pressed="false" aria-label="Show the stream password"><span>Show</span></button><button type="button" id="st-pwc" aria-label="Copy the stream password"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><span class="muted" id="st-pwn" hidden>Not set.</span></div>
 <a class="lnk" href="#system">Change the stream password in System</a></div>
-<div class="card w2"><div class="bar"><div><h2>Home Assistant actions</h2><small>POST with the stream account (Basic sign-in over HTTPS). Send value 0 to turn off. Copy gives a curl command that asks for the password.</small></div><button class="btn" id="st-rc"><svg><use href="#i-copy"/></svg><span>Copy as rest_command</span></button></div><ul class="list ha" id="st-acts"></ul></div>
+<div class="card w2"><div class="bar"><div><h2>Home Assistant actions</h2><small>POST with the stream account (Basic sign-in over HTTPS). Copy gives a curl command that asks for the password.</small></div><button class="btn" id="st-rc"><svg><use href="#i-copy"/></svg><span>Copy as rest_command</span></button></div><ul class="list ha" id="st-acts"></ul></div>
 </div>
 <div class="card split"><div class="stack s"><div><h2>Frigate</h2><small>Paste into Frigate’s config.yml. Both lenses become cameras; the pan/tilt lens gets ONVIF control.</small></div>
 <label class="chk"><input type="checkbox" id="st-o1"><span>Restream through go2rtc</span></label>

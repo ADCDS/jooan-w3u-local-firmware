@@ -24,7 +24,8 @@ enum { NIGHT_DAY, NIGHT_NIGHT, NIGHT_AUTO, NIGHT_SCHEDULE };
 static const char *const night_names[] = {"day", "night", "auto", "schedule"};
 static const char *const flicker_names[] = {"off", "50", "60"};
 
-typedef struct { int brightness, contrast, saturation, sharpness, hue, denoise; } picture;
+/* No hue: the camera's ISP driver rejects V4L2 hue (BCSH) controls. */
+typedef struct { int brightness, contrast, saturation, sharpness, denoise; } picture;
 typedef struct {
     int night_mode, ir_off, night_ev, day_ev, wait_s, night_from, night_until;
     int white_light, wl_schedule, wl_from, wl_until, trigger_s;
@@ -63,7 +64,7 @@ static void defaults(settings *s)
     s->night_from = 18 * 60 + 30; s->night_until = 6 * 60;
     s->wl_from = 19 * 60; s->wl_until = 23 * 60; s->trigger_s = 120;
     for (int i = 0; i < 2; ++i)
-        s->pic[i] = (picture){128, 128, 128, 128, 128, 128};
+        s->pic[i] = (picture){128, 128, 128, 128, 128};
 }
 
 static int parse_hhmm(const char *text, int *minutes)
@@ -205,7 +206,6 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
                 get_int(p, "contrast", 0, 255, &q->contrast, error, capacity) ||
                 get_int(p, "saturation", 0, 255, &q->saturation, error, capacity) ||
                 get_int(p, "sharpness", 0, 255, &q->sharpness, error, capacity) ||
-                get_int(p, "hue", 0, 255, &q->hue, error, capacity) ||
                 get_int(p, "denoise", 0, 255, &q->denoise, error, capacity)) return -1;
         }
     }
@@ -255,7 +255,6 @@ static char *settings_json(const settings *s, int with_version)
         cJSON_AddNumberToObject(p, "contrast", s->pic[i].contrast);
         cJSON_AddNumberToObject(p, "saturation", s->pic[i].saturation);
         cJSON_AddNumberToObject(p, "sharpness", s->pic[i].sharpness);
-        cJSON_AddNumberToObject(p, "hue", s->pic[i].hue);
         cJSON_AddNumberToObject(p, "denoise", s->pic[i].denoise);
         cJSON_AddItemToArray(pictures, p);
     }
@@ -322,12 +321,12 @@ static void set_error(controls_state *c, const char *what, const char *detail)
 
 static void apply_picture(controls_state *c, const settings *s)
 {
-    static const char *const names[] = {"brightness", "contrast", "saturation", "sharpness", "hue", "denoise"};
+    static const char *const names[] = {"brightness", "contrast", "saturation", "sharpness", "denoise"};
     char error[160];
     for (unsigned lens = 0; lens < c->app->config.sensors && lens < 2; ++lens) {
         const int values[] = {s->pic[lens].brightness, s->pic[lens].contrast, s->pic[lens].saturation,
-                              s->pic[lens].sharpness, s->pic[lens].hue, s->pic[lens].denoise};
-        for (unsigned i = 0; i < 6; ++i) {
+                              s->pic[lens].sharpness, s->pic[lens].denoise};
+        for (unsigned i = 0; i < 5; ++i) {
             error[0] = 0;
             if (jipc_backend_control(c->app, names[i], values[i], (int)lens, error, sizeof error) < 0)
                 set_error(c, names[i], error);
@@ -383,6 +382,8 @@ static void *engine(void *opaque)
                 int want = night ? c->ev <= s.day_ev : c->ev >= s.night_ev;
                 if (!want) c->cond_since = 0;
                 else if (!c->cond_since) c->cond_since = now;
+                if (night) snprintf(c->reason, sizeof c->reason, "auto: night; day at level %d or below", s.day_ev);
+                else snprintf(c->reason, sizeof c->reason, "auto: day; night at level %d or above", s.night_ev);
                 if (want && now - c->cond_since >= (uint64_t)s.wait_s * 1000000u) {
                     night = !night;
                     c->cond_since = 0;
@@ -515,7 +516,6 @@ void jipc_controls_note(jipc_app *app, const char *operation, int value, int val
     else if (p && !strcmp(operation, "contrast")) p->contrast = value;
     else if (p && !strcmp(operation, "saturation")) p->saturation = value;
     else if (p && !strcmp(operation, "sharpness")) p->sharpness = value;
-    else if (p && !strcmp(operation, "hue")) p->hue = value;
     else if (p && !strcmp(operation, "denoise")) p->denoise = value;
     if (memcmp(&before, &c->s, sizeof before) && !c->dirty) { c->dirty = 1; c->dirty_since = jipc_now_us(); }
     pthread_mutex_unlock(&c->mutex);

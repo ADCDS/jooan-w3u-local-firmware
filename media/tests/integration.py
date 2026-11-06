@@ -339,7 +339,7 @@ def controls_checks(request, root, connection=None, secret=None):
     wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 12, "auto to day")
     # Validation leaves everything as it was.
     for bad in ({"night": {"night_ev": 100, "day_ev": 200}}, {"night": {"from": "25:00"}},
-                {"night": {"mode": "dusk"}}, {"picture": [{"hue": 300}]}, {"anti_flicker": "40"}, [1]):
+                {"night": {"mode": "dusk"}}, {"picture": [{"denoise": 300}]}, {"anti_flicker": "40"}, [1]):
         assert request("POST", "/api/v1/controls", bad)[0] == 400, bad
     assert controls()["night"]["mode"] == "auto"
     # Schedule, in UTC minutes (utc_offset_min 0): the current minute is inside.
