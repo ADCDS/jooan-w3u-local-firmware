@@ -4,7 +4,7 @@
 remembered cookie survives a daemon restart, an ordinary one does not; sign-out
 and a password change end them; the file holds hashes, never cookies. Restart is
 refused with its reason as a 409. Never touches a camera."""
-import http.client, json, os, pathlib, stat, subprocess, tempfile, time
+import http.client, json, os, pathlib, socket, stat, subprocess, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BIN = ROOT / 'src/daemon/joan-daemon'
@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
     helper.write_text('#!/bin/sh\ncase "$1" in\n'
                       '  restart) cat "$FAKE_RESTART" ;;\n'
                       '  factory-reset) : > "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART" ;;\n'
-                      '  ip-stage) cp "$2" "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART" ;;\n'
+                      '  ip-stage) cp "$2" "$FAKE_RESET_CALLED"; cat "$FAKE_RESTART"; sleep 8 </dev/null >/dev/null 2>&1 & ;;\n'
                       '  restart-schedule|restart-schedule-set) printf \'{"enabled":true,"time":"%s"}\\n\' "$3" ;;\n'
                       '  wifi-state) echo \'{"pending":false,"last":null}\' ;;\n'
                       '  wifi-scan) echo \'[{"ssid":"Home"}]\' ;;\n'
@@ -138,6 +138,21 @@ with tempfile.TemporaryDirectory() as state, tempfile.TemporaryDirectory() as st
         assert status == 409 and b'address-in-use' in data, data
         reset_called.unlink(missing_ok=True)
         restart_reply.write_text('{"ok":true}\n')
+        # A helper may leave something running. It must not hold the client's socket:
+        # the media relay reads each reply to its end.
+        payload = json.dumps({'mode': 'dhcp'})
+        raw = socket.create_connection(('127.0.0.1', PORT), timeout=15)
+        raw.sendall((f'PUT /api/v1/network/ip HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n'
+                     f'Cookie: {kept}\r\nX-CSRF-Token: {kept_csrf}\r\nContent-Type: application/json\r\n'
+                     f'Content-Length: {len(payload)}\r\n\r\n{payload}').encode())
+        started = time.monotonic()
+        reply = b''
+        while chunk := raw.recv(4096):
+            reply += chunk
+        raw.close()
+        assert reply.startswith(b'HTTP/1.1 200'), reply[:80]
+        assert time.monotonic() - started < 4, 'the socket stayed open as long as the helper left something running'
+        reset_called.unlink(missing_ok=True)
         # A second device has no trial id; the camera acts on the one running trial.
         assert call('PUT', '/api/v1/network/wifi', {'id': 'current'}, cookie=kept, csrf=kept_csrf)[0] == 200
         # Sign-out ends a remembered sign-in for good.

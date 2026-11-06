@@ -270,6 +270,20 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
         self.assertEqual(json.loads(result.stdout)["static"], "192.168.20.50", result.stderr)
         self.assertNotIn("secret", result.stdout)
 
+    def test_bounded_hook_leaves_nothing_behind(self) -> None:
+        # capture_output reads to the end of the pipe, so a sleep left holding it shows as time.
+        started = time.monotonic()
+        result = self.common('jl_bounded_hook 30 /bin/true; echo rc=$?')
+        self.assertIn("rc=0", result.stdout, result.stderr)
+        self.assertLess(time.monotonic() - started, 5, "the timer's sleep outlived the hook")
+        result = self.common('jl_bounded_hook 30 /bin/false; echo rc=$?')
+        self.assertIn("rc=1", result.stdout, result.stderr)
+        # And the limit still holds.
+        started = time.monotonic()
+        result = self.common('jl_bounded_hook 1 /bin/sleep 30; echo rc=$?')
+        self.assertNotIn("rc=0", result.stdout, result.stderr)
+        self.assertLess(time.monotonic() - started, 6, "the limit did not stop the hook")
+
     def test_reset_to_defaults(self) -> None:
         """The helper only marks and restarts; the boot erases exactly the list."""
         media = Path(self.temporary.name) / "media"

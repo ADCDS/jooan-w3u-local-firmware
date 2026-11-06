@@ -50,6 +50,9 @@ int joan_run_helper(const JoanConfig *cfg, const char *operation,
     if (pid == 0) {
         (void)setpgid(0,0);
         dup2(fds[1], 1); dup2(fds[1], 2); close(fds[0]); close(fds[1]);
+        /* Nothing else is the helper's: whatever it leaves running would keep this
+         * daemon's sockets open, and a client reading to the end would wait for it. */
+        for (int other = 3; other < 1024; ++other) close(other);
         execl(cfg->integration_helper, cfg->integration_helper, operation,
               argument_path ? argument_path : "-", id ? id : "-", (char *)0);
         _exit(127);

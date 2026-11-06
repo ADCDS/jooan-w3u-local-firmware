@@ -358,7 +358,12 @@ jl_bounded_hook() {
     "$@" &
     jl_hook_pid=$!
     (
-        sleep "$jl_limit"
+        # The sleep ends with the hook. Left behind, it would hold whatever it
+        # inherited for the whole limit, such as the pipe a caller reads to its end.
+        trap 'kill "${jl_sleep_pid:-}" 2>/dev/null; exit 0' TERM
+        sleep "$jl_limit" &
+        jl_sleep_pid=$!
+        wait "$jl_sleep_pid"
         kill -TERM "$jl_hook_pid" 2>/dev/null || exit 0
         sleep 1
         kill -KILL "$jl_hook_pid" 2>/dev/null || :
