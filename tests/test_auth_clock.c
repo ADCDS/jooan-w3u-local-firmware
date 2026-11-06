@@ -25,7 +25,16 @@ static int fake_clock_gettime(clockid_t clock,struct timespec *ts)
 #undef time
 #undef clock_gettime
 
-/* Unused authentication storage helpers are removed by --gc-sections. */
+/* Unused authentication storage helpers are removed by --gc-sections. These
+ * are referenced by the remembered sign-in path, which needs joan_auth_init()
+ * and so never runs here. */
+int joan_read_file(const char *path, unsigned char **out, size_t *len, size_t max)
+{ (void)path;(void)out;(void)len;(void)max;abort(); }
+void joan_sha256(const void *data, size_t len, unsigned char out[32])
+{ (void)data;(void)len;(void)out;abort(); }
+void joan_hex(const unsigned char *in, size_t len, char *out)
+{ (void)in;(void)len;(void)out;abort(); }
+
 int main(void)
 {
     JoanRequest request={0}; JoanAuthz out={0};
