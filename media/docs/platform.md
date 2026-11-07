@@ -194,9 +194,12 @@ for afterwards and does not reach the lens.
 So that no frame can leak, video frames are dropped from before video starts until
 the lenses are black and 2 s have passed for what was in the pipe, at every
 turn-on and every start of the daemon. Frames that were already in the ring stay out too.
-After that the output is checked: during privacy, a frame over 16 KB is not black (a black
-keyframe is under 7 KB, a picture over 100 KB), so it is dropped, the hold comes back, and
-`live.error` says so. Only H.264 parameter sets get through while
+After that the output is checked: during privacy, a frame over 16 KB is not black, so it is
+dropped, the hold comes back, and `live.error` says so. A black keyframe is under 7 KB with the
+timestamp. A picture runs 120 to 220 KB at night in normal running, but with the quantiser floor
+raised, as it is around privacy, the first keyframes after it were only 14 to 48 KB in the dark
+(2026-11-07). So this check catches a full picture there but could miss a dim one on the fixed
+lens: forcing day mode is the defence that counts, and this check is the second. Only H.264 parameter sets get through while
 frames are held, because RTSP and the startup check need them and they show
 nothing, and each stream then resumes at a keyframe. If the black-out fails, the
 frames stay dropped and `live.error` says so: a failure pauses the video instead of
@@ -209,14 +212,15 @@ from 15 to 30 while the picture is black and back afterwards. In three runs by d
 kept 15 fps but for one dip to 7 fps for a second, largest frame 189 KB. On the way out, day or night goes straight back to what privacy
 interrupted, since what the exposure reads at the privacy pose says nothing about the view,
 and the usual rule corrects it within its wait if the light changed meanwhile. In real darkness
-on camera1 (2026-11-07, auto mode, exposure 41,000 to 68,000 against a night level of 30,000),
-privacy entered at night was back in night 0.5 s after it ended. Entered in day, with auto chosen
-meanwhile, it came back in day and turned to night 66 s later: its 60 s wait and a reading. Across
-a daemon restart during privacy every frame stayed black, and it was in night 11 s after the end.
-In all three every frame while black was black on both lenses (largest 4.5 KB), the microphone
-stayed silent and stills were refused. Video kept 15 fps except at each switch from day to night,
-where both lenses drop to 2 to 4 frames a second for 1 to 3 seconds; the run that switched 66 s
-after privacy shows that this is the switch itself.
+on camera1 (2026-11-07, auto mode, the view's exposure level between 31,000 and 68,000 against a
+night level of 30,000), privacy entered at night was back in night 0.5 s after it ended. Entered in
+day, with auto chosen meanwhile, it came back in day and turned to night 66 s later: a first reading
+and its 60 s wait. Across a daemon restart during privacy every frame stayed black, and it was in
+night 11 s after the end. Every frame while black was black on both lenses (largest 4.5 KB), and
+stills were refused and the microphone silent wherever the run checked them. A recorder over Wi-Fi
+saw 15 fps throughout except around each switch to night: the pan/tilt lens fell to 2 to 4 frames
+a second for 1 to 3 seconds, the fixed lens to 6 at worst, and not at all in one of the two. Whether
+the camera or the delivery lost those frames is not known: its own frame counters were not read.
 
 The black-out only works in the ISP's day mode: in night mode it ignores the picture
 settings that make it, as it does the Image page's sliders (brightness 40 changed nothing, measured

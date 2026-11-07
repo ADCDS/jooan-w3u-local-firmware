@@ -401,7 +401,9 @@ web console first. This has not been run on Windows either.
 [camera release bundles](../media/docs/hardware.md#camera-release-bundles)). The
 installer then also needs `MEDIA_PASSWORD`, the stream password, to verify the
 result. The admin UI's System → Media form only accepts packages
-signed with this project's release key. Since an image holds vendor files, none
+signed with this project's release key. Every media update, by the installer or from that form,
+rewrites the same partition as the first install, so the power warning above applies to it too,
+resets of the board itself included. Since an image holds vendor files, none
 is published, so that form is for the key's holder or anyone building the
 platform with their own key.
 

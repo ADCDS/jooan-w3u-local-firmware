@@ -36,9 +36,12 @@ or were built another way. Each is here with its reason.
   each power cut. Schedules then run on it after 2 minutes. Privacy and white light schedules, with
   network time configured, wait 30, in case the router is back from the same cut and has no time yet;
   privacy stays on meanwhile, and the light off. The page says so.
-- The board resets by itself a few times a day, with no message: the network goes quiet, and 25 to
-  45 s later the camera restarts, each time at the same program counter (`pc=80194240` in
-  `reset-history`) and not through the network watchdog. It has been noted since at least
-  2026-10-23, and three times on 2026-11-07 while nothing was being tested; the cause is not known.
-  The camera comes back and qualifies each time, but what was running stops, and a reset during a
-  flash is a power cut to it.
+- The board resets by itself a few times a day, with no message. Each time the program counter is
+  in the kernel's delay loop (`__delay`: `pc=80194240` or `80194244` in `reset-history`), and the
+  network watchdog has no part in it. It has been noted since at least 2026-10-23, and on 2026-11-07
+  twice while nothing ran against the camera, at 12:17 and 15:37. At 15:37 the camera stopped
+  answering pings at most 7 s before its kernel started again, and was back on the network 34 s
+  later, with no oops or panic in the kernel log mirror: it reset almost at once. A kernel panic
+  and its 3 s restart would fit, but nothing has shown one, and the cause is not known. The camera
+  comes back and qualifies each time, but what was running stops, and a reset during a flash is a
+  power cut to it.
