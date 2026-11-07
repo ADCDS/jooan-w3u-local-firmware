@@ -5,6 +5,7 @@ several SSH keys, restart and its blockers, the restart schedule, the Wi-Fi
 scan list, the Wi-Fi trial state, and band/gateway in network quality.
 Never touches the host's network or reboots it (reboot is a fake)."""
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -185,6 +186,62 @@ class SystemOpsTests(unittest.TestCase):
         self.assertFalse(fits(free=60, new_kb=90))          # a little short: nothing is touched
         self.assertFalse(fits(free=96, new_kb=130))         # a release that grew too much
         self.assertFalse(fits(free=500, new_kb=300, old_kb=90))  # room on flash, but over the logical budget
+
+    def _install_runtime(self, selection: str, old_bytes: int, new_bytes: int, free_kb: list[int]):
+        """The real install-runtime.sh and common.sh. df, sleep and sync are shell functions added
+        to a copy of common.sh, as common.sh resets PATH; the script has no reboot to fake."""
+        base = Path(self.temporary.name) / "install"
+        shutil.rmtree(base, ignore_errors=True)
+        control = base / "control"
+        (control / "boot").mkdir(parents=True)
+        (control / "admin").mkdir()
+        readings = base / "readings"
+        readings.write_text("".join(f"{value}\n" for value in free_kb))
+        (control / "boot/common.sh").write_text(
+            (REPOSITORY / "runtime/boot/common.sh").read_text() +
+            f"""
+df() {{
+    value=$(head -n 1 "{readings}")
+    [ "$(wc -l < "{readings}")" -le 1 ] || sed -i 1d "{readings}"
+    printf 'Filesystem 1K-blocks Used Available Use%% Mounted\\nflash 384 0 %s 0%% /opt\\n' "$value"
+}}
+sleep() {{ :; }}
+sync() {{ :; }}
+""")
+        persistent = base / "persistent"
+        (persistent / "state").mkdir(parents=True)
+        (persistent / "state/selection").write_text(selection + "\n")
+        (persistent / "slots").mkdir()
+        if old_bytes:
+            (persistent / "slots/A").mkdir()
+            (persistent / "slots/A/runtime.tar.gz").write_bytes(b"o" * old_bytes)
+        stage = base / "stage"
+        stage.mkdir()
+        archive = os.urandom(new_bytes)
+        (stage / "runtime.tar.gz").write_bytes(archive)
+        (stage / "runtime.md5").write_text(hashlib.md5(archive).hexdigest())
+        run = base / "run"
+        run.mkdir()
+        result = subprocess.run(["sh", str(REPOSITORY / "runtime/admin/install-runtime.sh"), str(stage)],
+                                env=os.environ | {"JL_ROOT": str(persistent), "JL_RUN": str(run), "JL_CONTROL": str(control)},
+                                text=True, capture_output=True, timeout=60)
+        return result, persistent
+
+    def test_runtime_install_waits_for_space_just_freed(self) -> None:
+        """What happened on camera1: an earlier step had just deleted the old runtime, the flash
+        had not shown the space yet, and a single reading refused an update that fit."""
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [60, 60, 90, 144])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        selection = (persistent / "state/selection").read_text().split()
+        self.assertEqual(selection[0], "-")
+        self.assertTrue((persistent / "slots" / selection[1] / "runtime.tar.gz").exists())
+
+    def test_runtime_install_refuses_with_the_old_one_untouched(self) -> None:
+        result, persistent = self._install_runtime("A - 0", 20 * 1024, 90 * 1024, [60])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("nothing was changed", result.stdout + result.stderr)
+        self.assertEqual((persistent / "state/selection").read_text().strip(), "A - 0")
+        self.assertEqual((persistent / "slots/A/runtime.tar.gz").stat().st_size, 20 * 1024)
 
     def test_clock_confirmed(self) -> None:
         self.assertFalse((self.run / "clock-set").exists())

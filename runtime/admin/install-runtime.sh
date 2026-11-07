@@ -40,12 +40,18 @@ jl_dest=$JL_ROOT/slots/$jl_target
 mkdir -p "$JL_ROOT/slots" "$JL_STATE" "$JL_CONFIG" || exit 1
 # Refuse now if the new runtime cannot fit once the old one is gone: everything
 # below deletes the only persistent runtime first, and checks only afterwards.
-jl_size_new=$(( ($(wc -c < "$jl_stage/runtime.tar.gz") + 1023) / 1024 ))
-jl_size_old=$(( ($(jl_tree_bytes "$JL_ROOT/slots") + 1023) / 1024 ))
-jl_free_first=$(df -k "$JL_ROOT" | awk 'END {print $4}')
-case "$jl_free_first" in ''|*[!0-9]*) exit 1 ;; esac
-[ $((jl_free_first + jl_size_old)) -ge $((jl_size_new + 8 + 56)) ] || {
+# Allow for JFFS2 being slow to show space that a step before this has just freed:
+# reading it once refused a good update on camera1, with the runtime already gone.
+jl_bytes_new=$(wc -c < "$jl_stage/runtime.tar.gz")
+jl_bytes_old=$(jl_tree_bytes "$JL_ROOT/slots")
+jl_size_new=$(( (jl_bytes_new + 1023) / 1024 ))
+jl_size_old=$(( jl_bytes_old / 1024 ))
+[ "$jl_size_new" -le "$jl_size_old" ] && jl_short=$((8 + 56)) || jl_short=$((jl_size_new - jl_size_old + 8 + 56))
+jl_wait_free_kb "$JL_ROOT" "$jl_short" 20 || {
     jl_log 'runtime would not fit in the 56 KiB reserve; nothing was changed'; exit 1;
+}
+[ $(( $(jl_tree_bytes "$JL_ROOT") - jl_bytes_old + jl_bytes_new + 4096)) -le 200704 ] || {
+    jl_log 'runtime maintenance would exceed 196 KiB persistent tree; nothing was changed'; exit 1;
 }
 # Enter controller-owned recovery before deleting the one persistent runtime.
 # The old processes already expanded in /run continue until reboot.
