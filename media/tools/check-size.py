@@ -7,13 +7,16 @@ The appfs is 3,211,264 bytes of xz squashfs holding the vendor files, libimp
 and this daemon. On the 2026-11-05 layout a daemon compressing to 394,380
 bytes left 4,096 bytes free, so keeping at least 48 KiB free means the daemon
 may compress to at most 394,380 + 4,096 - 49,152 = 349,324 bytes. The UI also
-has its own raw cap. The xz estimate is per file, close to squashfs's 1 MiB
-blocks; build-appfs.sh reports the exact free_bytes for a real image.
+has raw caps, because a browser downloads these bytes uncompressed: the page's
+own three files, and each language pack, of which it fetches one. The xz estimate
+is per file, close to squashfs's 1 MiB blocks; build-appfs.sh reports the exact
+free_bytes for a real image.
 """
 import argparse, lzma, os, pathlib, subprocess, sys, tempfile
 
 DAEMON_XZ_MAX = 349_324
-UI_RAW_MAX = 200_000
+UI_RAW_MAX = 220_000
+PACK_RAW_MAX = 64_000
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", default="build/mips/jooanipc-open")
@@ -29,17 +32,21 @@ with tempfile.TemporaryDirectory() as work:
     subprocess.run([str(strip), "-o", str(stripped), str(binary)], check=True)
     data = stripped.read_bytes()
 xz = len(lzma.compress(data, preset=9 | lzma.PRESET_EXTREME))
-ui = sorted(p for p in (here / args.ui).iterdir() if p.suffix in (".html", ".css", ".js", ".svg"))
+files = sorted(p for p in (here / args.ui).iterdir() if p.suffix in (".html", ".css", ".js", ".svg"))
+ui = [p for p in files if not p.name.startswith("lang-")]
+packs = {p.name: p.stat().st_size for p in files if p.name.startswith("lang-")}
 ui_raw = sum(p.stat().st_size for p in ui)
-ui_xz = len(lzma.compress(b"".join(p.read_bytes() for p in ui), preset=9 | lzma.PRESET_EXTREME))
+ui_xz = len(lzma.compress(b"".join(p.read_bytes() for p in files), preset=9 | lzma.PRESET_EXTREME))
 print(f"media-size: daemon stripped={len(data)} xz={xz} (max {DAEMON_XZ_MAX}); "
-      f"ui raw={ui_raw} (max {UI_RAW_MAX}) xz={ui_xz}; "
+      f"ui raw={ui_raw} (max {UI_RAW_MAX}), largest pack {max(packs.values(), default=0)} (max {PACK_RAW_MAX}), "
+      f"{len(packs)} packs, xz with packs={ui_xz}; "
       f"appfs headroom about {DAEMON_XZ_MAX + 49_152 - xz} bytes")
 failed = []
 if xz > DAEMON_XZ_MAX:
     failed.append(f"daemon compresses to {xz} bytes, over {DAEMON_XZ_MAX}")
 if ui_raw > UI_RAW_MAX:
     failed.append(f"admin UI is {ui_raw} bytes, over {UI_RAW_MAX}")
+failed += [f"{n} is {b} bytes, over {PACK_RAW_MAX}" for n, b in packs.items() if b > PACK_RAW_MAX]
 if failed:
     sys.exit("media-size: FAIL: " + "; ".join(failed))
 print("media-size: PASS")

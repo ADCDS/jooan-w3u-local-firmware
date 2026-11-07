@@ -10,8 +10,44 @@ toggles "camera not answering".
 
 Budget: the files are embedded in the daemon, which must fit the camera's
 appfs partition. `tools/check-size.py` (run by the full gate after `make mips`)
-caps the UI at 200,000 bytes raw and the whole stripped daemon at 349,324 bytes
-xz, which keeps at least 48 KiB of the partition free.
+caps the page's three files at 220,000 bytes raw, each language pack at 64,000,
+and the whole stripped daemon at 349,324 bytes xz, which keeps at least 48 KiB
+of the partition free. That last cap is the one that protects the camera.
+
+## Languages
+
+English is in the code: `_('Restart the camera?')`, `_('Saved {t}', { t })`, and
+`_n(n, '{n} fault', '{n} faults')` for plurals. `walk()` translates the page's own
+text and its `aria-label`, `placeholder`, `data-t` and `data-l` attributes once,
+before anything shows; it skips `svg`, `code`, `pre` and `.mono`. A sentence is
+always whole, with named placeholders, because word order changes by language.
+Config text that gets pasted elsewhere (YAML, curl) is never translated.
+
+A translator edits `i18n/<code>.json` (English to translation; a plural is an object
+of CLDR categories). `tools/ui-i18n.py` writes `lang-<code>.js`, which maps a hash of
+the English to the translation, so a reworded warning cannot keep an old translation.
+`--check`, run by CI and `tests/test_ui_i18n.py`, fails on a stale pack, a string with
+no translation, or a placeholder that differs. So a new sentence needs its
+translations in the same commit.
+
+The language comes from the saved choice (`jipc-lang`, per browser), then
+`navigator.languages`, then English; `zh-TW` and `zh-HK` get English, and no language
+falls back to another. A missing or failed pack means English. Numbers, units, times and
+plural rules come from `Intl`. Changing language reloads the page. A language name
+with "(partial)" in its own words, in `LANGS` at the top of `app.js`, means a native
+speaker has not yet read it: take the word out once one has, above all for the warnings.
+
+## Page conventions
+
+Text that could cost the camera or disturb the neighbours is never in a tooltip: it is
+in the attention bar (`attn()`, one sticky place on every page, most dangerous first)
+or in the dialog at the moment of action. A tooltip is `<i class="tip" data-l="what it
+is about" data-t="the note">` in the page, or `tip(label, note)` in code; add
+`data-d="<id>"` to describe a control with it. Status and Health fold, and open by
+themselves on a problem (`foldOn`). Restart and Reset lock while an update is stopped.
+
+`tools/ui-compare/states.mjs` checks these behaviours on the mock and
+`tools/ui-compare/pseudo.mjs` reports text that `_()` and `walk()` do not reach.
 
 ## What the UI expects
 

@@ -34,21 +34,23 @@
 <path id="i-more" d="M5 11.5v1M12 11.5v1M19 11.5v1" stroke-width="3.2"/>
 <path id="i-scan" d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>
 <path id="i-key" d="M14.5 9.5a4 4 0 1 0-3.9 3.1L4 19.2V21h3v-2h2v-2h2l1.6-1.6"/>
+<path id="i-info" d="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 11v5.5M12 7.5v.5"/>
 <path id="i-wait" d="M12 7v5l3 2"/>
 <path id="i-siren" d="M6 18h12M8 18v-6a4 4 0 0 1 8 0v6M12 3.5v2M4.5 7l1.5 1M19.5 7 18 8"/>
 </svg>
 
 <div id="signin" class="signin" hidden>
-<div class="brand big"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small>JOOAN W3-U · <span class="mono host"></span></small></span></div>
+<div class="sih"><div class="brand big"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><small class="mono host"></small></span></div><div class="silang"><select class="lang" aria-label="Language"></select></div></div>
 <form id="si-form" class="card" novalidate>
-<div><h1 tabindex="-1" id="si-h">Sign in</h1><p class="muted">Use the admin account, the same one SSH uses.</p><small id="si-first" hidden></small></div>
+<div class="ht"><h1 tabindex="-1" id="si-h">Sign in</h1><i class="tip" data-l="Sign in" data-t="Use the admin account, the same one SSH uses. The password is never stored in this browser."></i></div>
+<small id="si-first" hidden></small>
 <p id="si-note" role="status" hidden></p>
 <div class="f"><label for="si-user">User name</label><input id="si-user" class="raw" autocomplete="username" value="admin"></div>
 <div class="f"><label for="si-pass">Password</label><div class="pw"><input id="si-pass" type="password" autocomplete="current-password"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
 <label class="chk" for="si-stay"><input id="si-stay" type="checkbox" checked><span>Stay signed in on this device for 30 days</span></label>
 <button class="btn pri" id="si-go">Sign in</button>
 </form>
-<p class="ic muted"><svg><use href="#i-lock"/></svg><span>Encrypted connection. The camera makes its own certificate, so the first visit may warn; check the address is <span class="mono ink host"></span>.</span></p>
+<p class="ic muted"><svg><use href="#i-lock"/></svg><span id="si-cert"></span></p>
 </div>
 
 <div id="app" hidden>
@@ -64,60 +66,73 @@
 <a href="#streams">Streams &amp; integrations</a>
 <a href="#network">Network</a>
 <a href="#system">System</a></div>
-<div class="foot"><span class="muted">Signed in as <b class="ink user">admin</b></span>
+<div class="foot"><div class="f prefs"><div class="ht"><label class="lbl sm" for="fo-lang">Language</label><i class="tip" data-l="Language" data-t="Partial means a native speaker has not checked the translation yet."></i></div><select class="lang" id="fo-lang"></select><span class="lbl sm" id="fo-tl">Theme</span><div class="seg theme" aria-labelledby="fo-tl"><button value="auto">Auto</button><button value="light">Light</button><button value="dark">Dark</button></div></div>
+<span class="muted signed"></span>
 <button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div>
 </nav>
 
-<header id="top"><a class="back" href="#settings"><svg class="lt"><use href="#i-chev"/></svg>Settings</a><span class="brand"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b><span class="state bare"></span></span></span></header>
+<header id="top"><a class="back" href="#settings"><svg class="lt"><use href="#i-chev"/></svg>Settings</a><span class="brand"><span class="logo"><svg><use href="#i-cam"/></svg></span><span><b class="cam-name">Camera</b></span></span><span class="state bare"></span></header>
 
 <main>
-<div id="banner" class="banner crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b><span class="cam-name">Camera</span> isn’t answering</b><p><span id="bn-why"></span> Retrying in <b class="mono" id="bn-s">10 s</b>.<span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
+<div id="attn" class="attn">
+<div id="at-stop" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b id="at-stopt"></b><p id="at-stopp"></p><div id="at-ssh"></div></div></div>
+<div id="at-late" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b>Not back after 5 minutes: do not cut power yet</b><p>Look at the camera over SSH first (see Recovery in the documentation).</p><div id="at-ssh2"></div></div></div>
+<div id="at-inst" class="ab warn" role="status" hidden><svg><use href="#i-warn"/></svg><div><b>Installing an update: do not cut power</b><p id="at-instp"></p><div class="prog"><i></i></div><small class="mono" id="at-el"></small></div></div>
+<div id="at-rest" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div><b id="at-restt"></b><p id="at-restp"></p></div></div>
+<div id="banner" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b id="bn-t"></b><p><span id="bn-why"></span> <span id="bn-s"></span> <span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
+<div id="at-sir" class="ab crit" role="alert" hidden><svg><use href="#i-siren"/></svg><div class="atr"><b id="at-sirt"></b><button class="btn dzf" id="at-sirb">Stop</button></div></div>
+<div id="at-try" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div class="atr"><b id="at-tryt"></b><a class="btn" href="#network">Decide</a></div></div>
+<div id="at-priv" class="ab warn" role="status" hidden><svg><use href="#i-lock"/></svg><div class="atr"><span><b>Privacy mode is on</b><p>Video is black and the microphone is off. Your NVR is recording the black picture.</p></span><button class="btn" id="at-privb">Turn off</button></div></div>
+<div id="at-clock" class="ab warn" role="status" hidden><svg><use href="#i-warn"/></svg><div class="atr"><span><b>The camera’s clock is not confirmed</b><p>Schedules may run at the wrong time until network time answers or you set the clock.</p></span><a class="btn" href="#system">Set the clock</a></div></div>
+</div>
 
 <section class="page ov" id="p-overview" hidden>
-<header class="ph"><div><h1 tabindex="-1">Overview</h1><p>Stills refresh every 5 seconds. Live video plays in your NVR (Frigate).</p></div><span class="inl"><small>Updated <span class="mono ink" id="ov-at">–</span></small><button class="btn" id="ov-pz">Pause stills</button></span></header>
-<div class="cols"><div class="stack w2">
-<div class="card o1"><div class="still" data-ch="0" data-at="ago"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><span class="tag b mono at"></span><p class="m"></p></div>
-<div class="bar nw"><div><h2>Pan/tilt lens</h2><small class="mono" id="ov-s0"></small></div><span class="inl"><a class="btn" href="#pantilt"><svg><use href="#i-pantilt"/></svg>Steer</a><a class="btn dsk" href="/api/v1/snapshot?channel=0" target="_blank" rel="noopener">Full size</a></span></div></div>
-<div class="card o4" id="ov-st"><div class="bar"><h2>Status</h2><span id="ov-sum"></span></div><ul class="health" id="ov-stats"></ul></div>
-<div class="card o4" id="ov-last" hidden><h2>Last known status</h2><dl class="stats"><div><dt>Last answer</dt><dd class="mono" id="ov-la"></dd></div><div><dt>Wi-Fi then</dt><dd id="ov-lw"></dd></div></dl></div>
-</div><div class="stack">
-<div class="card o1 o2"><div class="still" data-ch="2"><span class="tag">Fixed lens</span><span class="tag b mono at"></span><p class="m"></p></div>
-<div class="bar nw"><div><h2>Fixed lens</h2><small class="mono" id="ov-s1"></small></div><a class="btn dsk" href="/api/v1/snapshot?channel=2" target="_blank" rel="noopener">Full size</a></div></div>
-<div class="card o3"><h2>Quick actions</h2>
-<div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note"></small></div>
-<div class="row"><span><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
-<div class="talk-box"></div>
-<button class="btn" id="ov-sir"><svg><use href="#i-siren"/></svg><span>Siren…</span></button>
-<small>Talk uses this browser’s microphone. Siren asks before it sounds.</small></div>
+<header class="ph"><div class="ht"><h1 tabindex="-1">Overview</h1><i class="tip" data-l="Overview" data-t="Stills refresh every 5 seconds. Live video plays in your NVR."></i></div><button class="btn" id="ov-pz">Pause stills</button></header>
+<div class="cols">
+<div class="card w2 o1"><div class="still" data-ch="0" data-at="ago"><span class="tag">Pan/tilt lens</span><span class="tag r mono pos"></span><span class="tag b mono at"></span><p class="m"></p></div>
+<div class="bar nw"><h2>Pan/tilt lens</h2><span class="inl"><a class="btn" href="#pantilt"><svg><use href="#i-pantilt"/></svg>Steer</a><a class="btn dsk" href="/api/v1/snapshot?channel=0" target="_blank" rel="noopener">Full size</a></span></div></div>
+<div class="card o1"><div class="still" data-ch="2"><span class="tag">Fixed lens</span><span class="tag b mono at"></span><p class="m"></p></div>
+<div class="bar nw"><h2>Fixed lens</h2><a class="btn dsk" href="/api/v1/snapshot?channel=2" target="_blank" rel="noopener">Full size</a></div></div>
+</div>
+<div class="card"><h2>Quick actions</h2><div class="qa">
+<div class="f"><span class="lbl" id="ov-nl">Night vision</span><div class="seg night" aria-labelledby="ov-nl"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div><small class="night-note" role="status"></small></div>
+<div class="qs"><div class="row first"><span class="rw"><b id="ov-wl">White light</b><small class="wl-note"></small></span><button class="sw wl" aria-labelledby="ov-wl"></button></div>
+<div class="row"><span class="rw"><span class="ht"><b id="ov-prl">Privacy mode</b><i class="tip" data-l="Privacy mode" data-d="ov-prs" data-t="Blacks out video from both lenses, mutes the microphone and points the pan/tilt lens away. Nothing can steer it meanwhile."></i></span></span><button class="sw pv" id="ov-prs" aria-labelledby="ov-prl"></button></div></div>
+<div class="qb"><div class="talkw"><div class="talk-box"></div><i class="tip" data-l="Hold to talk" data-t="Uses this browser’s microphone. It asks for permission the first time. With a keyboard, hold Space while the button has focus."></i></div>
+<button class="btn" id="ov-sir"><svg><use href="#i-siren"/></svg><span>Siren…</span></button><small id="ov-sirn" hidden>Siren needs audio. Turn it on under Audio.</small></div>
 </div></div>
+<div class="card" id="ov-st"><details class="sumd" id="ov-fold"><summary><span class="sumh">Status</span><span id="ov-sum"></span><svg class="tw"><use href="#i-chev"/></svg></summary><ul class="health" id="ov-stats"></ul></details></div>
+<div class="card" id="ov-last" hidden><h2>Last known status</h2><dl class="stats"><div><dt>Last answer</dt><dd class="mono" id="ov-la"></dd></div><div><dt>Wi-Fi then</dt><dd id="ov-lw"></dd></div></dl></div>
 </section>
 
 <section class="page" id="p-pantilt" hidden>
-<header class="ph"><div><h1 tabindex="-1">Pan/tilt</h1><p>Presets are shared with your NVR over ONVIF.</p></div><span class="mono" role="status" id="pt-pos"></span></header>
+<header class="ph"><div class="ht"><h1 tabindex="-1">Pan/tilt</h1><i class="tip" data-l="Pan/tilt" data-t="Presets are shared with your NVR over ONVIF."></i></div><span class="mono chip" role="status" id="pt-pos"></span></header>
 <div class="cols rv">
 <div class="stack">
-<div class="card pt2" id="pt-move"><h2>Move</h2>
-<div class="pad" id="pt-pad"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg>Stop</button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
-<small class="c">Hold an arrow to move, release to stop. Arrow keys work here too.</small>
+<div class="card pt2" id="pt-move"><div class="ht"><h2>Move</h2><i class="tip" data-l="Move" data-t="Hold an arrow to move, release to stop. Arrow keys work here too."></i></div>
+<div class="pad" id="pt-pad" dir="ltr"><button class="u" data-d="0,1" aria-label="Tilt up (hold)"><svg class="up"><use href="#i-chev"/></svg></button><button class="l" data-d="-1,0" aria-label="Pan left (hold)"><svg class="lt"><use href="#i-chev"/></svg></button><button class="s" id="pt-stop"><svg><use href="#i-stop"/></svg><span>Stop</span></button><button class="r" data-d="1,0" aria-label="Pan right (hold)"><svg><use href="#i-chev"/></svg></button><button class="d" data-d="0,-1" aria-label="Tilt down (hold)"><svg class="dn"><use href="#i-chev"/></svg></button></div>
 <div class="f"><span class="lbl dsk" id="pt-sl">Speed</span><div class="seg" id="pt-speed" aria-labelledby="pt-sl"><button value="30">Slow</button><button value="60">Normal</button><button value="100">Fast</button></div></div>
-<div class="f dsk"><div class="bar"><span class="lbl">Travel</span><small>Calibrated range, presets numbered</small></div><div class="map" id="pt-map" role="img"><div></div></div></div></div>
-<div class="card"><h2>Privacy and calibration</h2>
-<div class="row first"><span><b id="pt-prl">Privacy mode</b><small>Blacks out video from both lenses, mutes the microphone and points the pan/tilt lens away from the street. Nothing can steer it meanwhile.</small></span><button class="sw" id="pt-prs" aria-labelledby="pt-prl"></button></div>
-<div class="row"><span><b id="pt-pll">On a schedule</b><small id="pt-pln">Every day, in the camera’s time zone.</small></span><button class="sw" id="pt-pls" aria-labelledby="pt-pll"></button></div>
+<div class="f dsk"><div class="ht"><span class="lbl">Travel</span><i class="tip" data-l="Travel" data-t="Calibrated range. Numbers are presets; the ring is where the lens points now."></i></div><div class="map" id="pt-map" role="img" dir="ltr"><div></div></div></div>
+<div class="row"><span class="rw"><span class="ht"><small id="pt-rcn"></small><i class="tip" data-l="Recalibrate" data-t="Runs both motors to their end stops and back, about 30 seconds. Presets stay where they are."></i></span></span><button class="btn" id="pt-rc">Recalibrate…</button></div></div>
+<div class="card" id="pt-pvc"><h2>Privacy</h2>
+<div class="row first"><span class="rw"><span class="ht"><b id="pt-prl">Privacy mode</b><i class="tip" data-l="Privacy mode" data-d="pt-prs" data-t="Blacks out video from both lenses, mutes the microphone and points the pan/tilt lens away. Nothing can steer it meanwhile."></i></span></span><button class="sw pv" id="pt-prs" aria-labelledby="pt-prl"></button></div>
+<div class="row"><span class="rw"><span class="ht"><b id="pt-pll">On a schedule</b><i class="tip" data-l="On a schedule" data-t="Every day. The switch above lasts until the next change."></i></span></span><button class="sw" id="pt-pls" aria-labelledby="pt-pll"></button></div>
 <div class="g2 two" id="pt-plf" hidden><div class="f"><label for="pt-pf">From</label><input id="pt-pf" type="time"></div><div class="f"><label for="pt-pu">Until</label><input id="pt-pu" type="time"></div></div>
-<div class="row"><label for="pt-pvs">Meanwhile the head points</label><select id="pt-pvs"></select></div>
-<div class="row"><span><b>Recalibrate</b><small id="pt-rcn">Runs both motors to their end stops and back, about 30 seconds. Presets stay where they are.</small></span><button class="btn" id="pt-rc">Recalibrate…</button></div>
+<small id="pt-pln"></small>
+<div class="row"><label for="pt-pvs">Meanwhile the lens points</label><select id="pt-pvs"></select></div>
 </div>
 </div>
 <div class="stack w2">
-<div class="card o1 pt1"><div class="still" data-ch="0" data-at="mv"><span class="tag">Pan/tilt lens</span><span class="tag b mono at"></span><p class="m"></p></div></div>
-<div class="card pt4" id="pt-aim" hidden><div><h2>Aim from the fixed lens</h2><small>Click a point on it and the pan/tilt lens turns toward it. The dashed frame is what the pan/tilt lens sees now.</small></div>
-<button type="button" class="still aim" id="pt-aimb" data-ch="2" aria-label="Fixed lens still. Click a point to aim the pan/tilt lens there. With the keyboard, move the target with the arrow keys and press Enter."><span class="tag">Fixed lens</span><span class="tag b mono at"></span><span class="m"></span><i class="fr" id="pt-fr" hidden><b>NOW</b></i><i class="tg" id="pt-tg" hidden><span></span></i></button>
-<small id="pt-aimn" role="status"></small></div>
+<div class="card o1 pt1"><div class="seg" id="pt-view" aria-label="View" hidden><button value="live">Pan/tilt lens</button><button value="aim">Aim from fixed lens</button></div>
+<div id="pt-vl"><div class="still" data-ch="0" data-at="mv"><span class="tag">Pan/tilt lens</span><span class="tag b mono at"></span><p class="m"></p></div></div>
+<div id="pt-aim" class="stack s" hidden><div class="ht"><small>How to aim</small><i class="tip" data-l="Aim from fixed lens" data-t="Click a point and the pan/tilt lens turns toward it. The dashed frame is what it sees now. With a keyboard, move the target with the arrow keys and press Enter."></i></div>
+<button type="button" class="still aim" id="pt-aimb" data-ch="2" aria-label="Fixed lens still. Click a point to aim the pan/tilt lens there. With the keyboard, move the target with the arrow keys and press Enter."><span class="tag">Fixed lens</span><span class="tag b mono at"></span><span class="m"></span><i class="fr" id="pt-fr" hidden><b>Now</b></i><i class="tg" id="pt-tg" hidden><span></span></i></button>
+<small id="pt-aimn" role="status"></small></div></div>
 <div class="card pt3"><div class="bar"><div><h2>Presets</h2><small id="pt-count"></small></div><button class="btn pri" id="pt-save"><svg><use href="#i-plus"/></svg>Save current position</button></div>
-<ul class="presets" id="pt-list"></ul><small class="mob" id="pt-free"></small>
+<ul class="presets" id="pt-list"></ul>
 <div class="empty" id="pt-empty" hidden><span class="logo"><svg><use href="#i-pantilt"/></svg></span><h3>No presets yet</h3><p class="muted">Aim the lens at a spot you check often, then save it.</p><small>16 slots free</small></div></div>
-<div class="card" id="pt-pat"><div class="row first"><span><h2 id="pt-ptl">Patrol</h2><small id="pt-ptn">Visits these presets in order, then starts again.</small></span><button class="sw" id="pt-pts" aria-labelledby="pt-ptl"></button></div>
+<div class="card pt4" id="pt-pat"><div class="row first"><span class="rw"><span class="ht"><h2 id="pt-ptl">Patrol</h2><i class="tip" data-l="Patrol" data-t="Visits these presets in order, then starts again."></i></span></span><button class="sw" id="pt-pts" aria-labelledby="pt-ptl"></button></div>
+<small id="pt-ptn"></small>
 <ol class="stops" id="pt-stops"></ol>
 <small id="pt-ptst" role="status"></small>
 <div class="inl pick"><div class="f"><label for="pt-add">Preset to add</label><select id="pt-add"></select></div><button class="btn" id="pt-addb">Add stop</button></div>
@@ -126,97 +141,99 @@
 </section>
 
 <section class="page" id="p-image" hidden>
-<header class="ph"><div><h1 tabindex="-1">Image &amp; night</h1><p>Changes apply right away and are kept after a restart. Brightness, contrast and saturation only act by day: the camera’s night mode ignores them.</p></div></header>
+<header class="ph"><div class="ht"><h1 tabindex="-1">Image &amp; night</h1><i class="tip" data-l="Image &amp; night" data-t="Changes apply right away and are kept after a restart."></i></div></header>
 <div class="cols rv">
 <div class="stack">
-<div class="card"><div><h2 id="im-hn">Day and night</h2><small>Both lenses share the infrared filter and lights.</small></div>
+<div class="card"><div class="ht"><h2 id="im-hn">Day and night</h2><i class="tip" data-l="Day and night" data-t="Both lenses share the infrared filter and lights."></i></div>
 <div class="seg night" aria-labelledby="im-hn"><button value="day">Day</button><button value="night">Night</button><button value="auto">Auto</button><button value="schedule">Schedule</button></div>
 <small class="night-note" id="im-nst" role="status"></small>
 <div class="stack s" id="im-auto" hidden>
 <div class="f"><div class="bar"><span class="lbl">Darkness now</span><span class="mono" id="im-lv"></span></div>
-<div class="dark" id="im-dm" role="img"><i></i><b></b><b></b><span>day below</span><span>night above</span></div></div>
+<div class="dark" id="im-dm" role="img" dir="ltr"><i></i><b></b><b></b><span>day below</span><span>night above</span></div></div>
+<details class="fold" id="im-lvf"><summary>Levels and wait<svg class="tw"><use href="#i-chev"/></svg></summary><div class="stack s">
+<div class="ht"><span class="lbl">Levels and wait</span><i class="tip" data-l="Levels and wait" data-t="The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6."></i></div>
 <div class="g2"><div class="f"><label for="im-ne">Switch to night above</label><input id="im-ne" class="mono raw" inputmode="numeric"></div>
 <div class="f"><label for="im-de">Back to day below</label><input id="im-de" class="mono raw" inputmode="numeric"></div></div>
-<small>The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.</small>
 <p class="banner" id="im-evw" role="status" hidden><svg><use href="#i-warn"/></svg><span id="im-evt"></span></p>
-<div class="row"><label for="im-wait">Wait before switching</label><select id="im-wait"></select></div></div>
+<div class="row"><label for="im-wait">Wait before switching</label><select id="im-wait"></select></div></div></details></div>
 <div class="g2 two" id="im-sch" hidden><div class="f"><label for="im-nf">Night from</label><input id="im-nf" type="time"></div>
 <div class="f"><label for="im-nu">Until</label><input id="im-nu" type="time"></div></div>
-<div class="f"><span class="lbl" id="im-irl">Infrared LEDs</span><div class="seg" id="im-ir" aria-labelledby="im-irl"><button value="night">On at night</button><button value="off">Off (lit street)</button></div>
-<small>Off: night mode without the infrared LEDs, in black and white, for a street with its own lights. The filter still switches.</small></div></div>
+<div class="f"><div class="ht"><span class="lbl" id="im-irl">Infrared LEDs</span><i class="tip" data-l="Infrared LEDs" data-t="Off means night mode without the infrared LEDs, in black and white, for a place with its own lights. The filter still switches."></i></div><div class="seg" id="im-ir" aria-labelledby="im-irl"><button value="night">On at night</button><button value="off">Off</button></div></div></div>
 <div class="card"><h2 id="im-wlh">White light</h2>
 <div class="seg" id="im-wlm" aria-labelledby="im-wlh"><button value="off">Off</button><button value="on">On</button><button value="schedule">Schedule</button></div>
 <div class="g2 two" id="im-wls" hidden><div class="f"><label for="im-wf">From</label><input id="im-wf" type="time"></div>
 <div class="f"><label for="im-wu">Until</label><input id="im-wu" type="time"></div></div>
 <small id="im-wln"></small>
-<div class="row"><span><b>Turn on when triggered</b><small>From Home Assistant, for example on a Frigate person event, or the button below.</small></span></div>
+<div class="row"><span class="rw"><span class="ht"><b>Timed</b><i class="tip" data-l="Timed" data-t="Home Assistant can trigger this too, for example on a person event. Afterwards the light goes back to its schedule or manual state."></i></span></span></div>
 <div class="row first"><label for="im-wd">Stay on for</label><select id="im-wd"></select></div>
 <div class="acts"><button class="btn" id="im-wt">Turn on</button></div><small id="im-wtn" role="status"></small></div>
 </div>
-<div class="card">
+<div class="stack w15"><div class="card">
 <div class="f"><span class="lbl" id="im-ll">Picture settings for</span><div class="seg" id="im-lens" aria-labelledby="im-ll"><button value="0">Pan/tilt lens</button><button value="1">Fixed lens</button></div></div>
 <div class="still" data-ch="im"><span class="tag br" id="im-pvl">Pan/tilt lens</span><span class="tag b mono at"></span><p class="m"></p></div>
-<small>Preview still, refreshes after each change.</small>
-<div class="bar"><div><h2>Picture</h2><small>0 to 255, 128 is neutral</small></div><button class="btn q" id="im-reset">Reset picture</button></div>
-<div class="stack s" id="im-sl"></div><small>Noise reduction: 0 leaves grain, 255 is very strong and may smear moving things.</small>
-<div class="f"><span class="lbl" id="im-afl">Anti-flicker</span><div class="seg" id="im-af" aria-labelledby="im-afl"><button value="50">50 Hz</button><button value="60">60 Hz</button><button value="off">Off</button></div>
-<small>Both lenses. Match your mains frequency (60 Hz in Brazil) to stop banding under LED street lights and indoor lights.</small></div></div></div>
-<div class="card" id="im-ovc" hidden><div class="row first"><span><h2 id="im-ovl">Timestamp on the picture</h2><small>Burned into video, stills and recordings, in the camera’s time zone.</small><small id="im-ovw" role="status"></small></span><button class="sw" id="im-ovs" aria-labelledby="im-ovl"></button></div>
+<div class="bar"><div class="ht"><h2>Picture</h2><i class="tip" data-l="Picture" data-t="0 to 255, 128 is neutral. The preview refreshes after each change."></i></div><button class="btn q" id="im-reset">Reset picture</button></div>
+<small class="warnt" id="im-picn" role="status" hidden>Night mode ignores brightness, contrast and saturation.</small>
+<div class="stack s" id="im-sl"></div>
+</div></div>
+</div>
+<div class="card"><h2>Both lenses</h2><div class="both">
+<div class="f"><div class="ht"><span class="lbl" id="im-afl">Anti-flicker</span><i class="tip" data-l="Anti-flicker" data-t="Match your mains frequency to stop banding under LED lights."></i></div><div class="seg" id="im-af" aria-labelledby="im-afl"><button value="50" class="mono">50 Hz</button><button value="60" class="mono">60 Hz</button><button value="off">Off</button></div></div>
+<div class="f" id="im-ovc" hidden><div class="row first"><span class="rw"><span class="ht"><b id="im-ovl">Timestamp on the picture</b><i class="tip" data-l="Timestamp on the picture" data-d="im-ovs" data-t="Burned into video, stills and recordings, in the camera’s time zone."></i></span><small id="im-ovw" role="status"></small></span><button class="sw" id="im-ovs" aria-labelledby="im-ovl"></button></div>
 <div class="g2 two" id="im-ovf" hidden><div class="f"><label for="im-ovp">Position</label><select id="im-ovp"><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></div>
 <div class="f"><label for="im-ovm">Format</label><select id="im-ovm"><option value="ymd">2026-11-05 14:32:08</option><option value="dmy">05/11/2026 14:32:08</option><option value="mdy">11/05/2026 14:32:08</option></select></div></div>
 <label class="chk" for="im-ovn" id="im-ovb" hidden><input id="im-ovn" type="checkbox"><span id="im-ovt"></span></label></div>
-<div class="card"><div><h2>Orientation</h2><small>Kept after a restart. A change restarts video briefly.</small></div>
+<div class="f"><div class="ht"><span class="lbl">Orientation</span><i class="tip" data-l="Orientation" data-t="Kept after a restart. A change restarts video for a few seconds."></i></div>
 <div class="orient" id="im-or"><span></span><span class="lbl sm">Pan/tilt lens</span><span class="lbl sm l1">Fixed lens</span>
 <span>Upside down</span><span><button class="sw" data-k="r" data-s="0" aria-label="Upside down, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="r" data-s="1" aria-label="Upside down, fixed lens"></button></span>
-<span>Mirror</span><span><button class="sw" data-k="m" data-s="0" aria-label="Mirror, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="m" data-s="1" aria-label="Mirror, fixed lens"></button></span></div>
-</div>
+<span>Mirror</span><span><button class="sw" data-k="m" data-s="0" aria-label="Mirror, pan/tilt lens"></button></span><span class="l1"><button class="sw" data-k="m" data-s="1" aria-label="Mirror, fixed lens"></button></span></div></div>
+</div></div>
 </section>
 
 <section class="page" id="p-audio" hidden>
-<header class="ph"><div><h1 tabindex="-1">Audio</h1><p>The camera’s microphone and speaker.</p></div></header>
+<header class="ph"><h1 tabindex="-1">Audio</h1></header>
 <p class="banner" id="au-off" hidden><svg><use href="#i-warn"/></svg><span>Audio is off on the camera, so there is no microphone, talk or siren.</span></p>
-<div class="card" id="au-sw"><div class="row first"><span><b id="au-swl">Audio</b><small>Microphone, talk and siren. Changing this restarts video for a few seconds.</small></span><button class="sw" id="au-on" aria-labelledby="au-swl"></button></div></div>
-<div class="cols" id="au-body">
-<div class="card"><div class="bar nw"><div><h2 id="au-mh">Microphone</h2><small>Sent with both main video streams as 8 kHz G.711 (A-law).</small></div><span class="inl"><span id="au-mst"></span><button class="sw" id="au-mic" aria-labelledby="au-mh" hidden></button></span></div><div class="stack s" id="au-msl"></div>
-<div class="f" id="au-lv" hidden><small id="au-lvn"></small></div></div>
-<div class="card"><div class="bar"><div><h2>Speaker</h2><small>Used for talk and the test tone.</small></div><span id="au-sst"></span></div><div class="stack s" id="au-ssl"></div><div class="f"><button class="btn start" id="au-tone"><svg><use href="#i-audio"/></svg>Play test tone</button></div></div>
-<small>Volume and gain last until a restart; the microphone switch is kept. Volume 60 is unity; a step is about 0.5 dB.</small>
-<div class="card" id="au-talk"><div><h2>Talk through the camera</h2><small>Uses this browser’s microphone. The browser asks for permission the first time.</small></div><div class="talk-box"></div>
+<div class="card" id="au-sw"><div class="row first"><span class="rw"><span class="ht"><b id="au-swl">Audio</b><i class="tip" data-l="Audio" data-d="au-on" data-t="Microphone, talk and siren."></i></span></span><button class="sw" id="au-on" aria-labelledby="au-swl"></button></div></div>
+<div class="stack" id="au-body">
+<div class="card" id="au-talk"><div class="ht"><h2>Talk through the camera</h2><i class="tip" data-l="Talk through the camera" data-t="Uses this browser’s microphone. It asks for permission the first time. With a keyboard, hold Space while the button has focus."></i></div><div class="talk-box"></div>
 <label class="chk"><input type="checkbox" id="au-latch"><span>Tap to start, tap to stop</span></label></div>
-<div class="card" id="au-sir"><div class="bar"><div><h2 id="au-sirh">Siren</h2><small>Pick the sound used by the Overview button and Home Assistant. Tests play through the camera at the siren volume.</small></div><button class="btn dzf" id="au-sirx" hidden>Stop</button></div>
+<div class="cols">
+<div class="card"><div class="bar nw"><div class="ht"><h2 id="au-mh">Microphone</h2><i class="tip" data-l="Microphone" data-d="au-mic" data-t="Sent with both main video streams as 8 kHz G.711 (A-law). Your NVR records sound when its camera config includes audio."></i></div><span class="inl"><span id="au-mst"></span><button class="sw" id="au-mic" aria-labelledby="au-mh" hidden></button></span></div><div class="stack s" id="au-msl"></div>
+<div class="f" id="au-lv" hidden><small id="au-lvn" class="warnt"></small></div></div>
+<div class="card"><div class="bar"><div class="ht"><h2>Speaker</h2><i class="tip" data-l="Speaker" data-t="Volume 60 is unity; a step is about 0.5 dB. Volume and gain last until a restart; the microphone switch is kept."></i></div><span id="au-sst"></span></div><div class="stack s" id="au-ssl"></div><div class="f"><button class="btn start" id="au-tone"><svg><use href="#i-audio"/></svg>Play test tone</button></div></div>
+</div>
+<div class="card" id="au-sir"><div class="bar"><div class="ht"><h2 id="au-sirh">Siren</h2><i class="tip" data-l="Siren" data-t="The Overview button and Home Assistant use this sound. Tests play through the camera at the siren volume."></i></div><button class="btn dzf" id="au-sirx" hidden>Stop</button></div>
 <div class="sirens" id="au-sirs" role="radiogroup" aria-labelledby="au-sirh"></div>
-<div class="stack s" id="au-sirl"></div>
-<div class="row"><label for="au-sird">Sounds for</label><select id="au-sird"></select></div>
+<div class="g2"><div class="stack s" id="au-sirl"></div><div class="row first"><label for="au-sird">Sounds for</label><select id="au-sird"></select></div></div>
 <label class="chk" for="au-sirf"><input id="au-sirf" type="checkbox"><span>Flash the white light while it sounds</span></label>
 <small id="au-sirn" role="status"></small></div>
 </div>
 </section>
 
 <section class="page" id="p-streams" hidden>
-<header class="ph"><div><h1 tabindex="-1">Streams &amp; integrations</h1><p>Addresses for your NVR, video players and Home Assistant. Passwords are never put in a copied URL.</p></div></header>
-<div class="f"><span class="lbl" id="st-hl">Write addresses with</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div>
-<div class="card"><div><h2>Video and stills</h2><small id="st-vs"></small></div><div class="cols" id="st-lenses"></div>
-<div class="f"><span class="lbl">ONVIF device address</span><div id="st-onvif"></div><small id="st-on"></small></div></div>
+<header class="ph"><div class="ht"><h1 tabindex="-1">Streams &amp; integrations</h1><i class="tip" data-l="Streams &amp; integrations" data-t="Addresses for your NVR, video players and Home Assistant. Passwords are never put in a copied URL."></i></div></header>
+<div class="f"><span class="lbl" id="st-hl">Addresses use</span><div class="seg auto" id="st-host" aria-labelledby="st-hl"></div></div>
+<div class="card"><div class="ht"><h2>Video and stills</h2><i class="tip" id="st-vst" data-l="Video and stills" data-t="RTSP with Digest sign-in. Stills and ONVIF over HTTPS."></i></div><div class="cols" id="st-lenses"></div>
+<div class="f"><div class="ht"><span class="lbl">ONVIF device address</span><span id="st-ont"></span></div><div id="st-onvif"></div></div></div>
 <div class="cols">
-<div class="card"><div><h2>Stream account</h2><small>What your NVR and Home Assistant sign in with. Separate from the admin password you use here.</small></div>
+<div class="card"><div class="ht"><h2>Stream account</h2><i class="tip" data-l="Stream account" data-t="What your NVR and Home Assistant sign in with. Separate from the admin password you use here."></i></div>
 <div class="f"><span class="lbl">User name</span><div id="st-user"></div></div>
-<div class="f"><span class="lbl">Password</span><div class="cf" id="st-pwr"><code id="st-pwv">••••••••••••</code><button type="button" id="st-pws" aria-pressed="false" aria-label="Show the stream password"><span>Show</span></button><button type="button" id="st-pwc" aria-label="Copy the stream password"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><span class="muted" id="st-pwn" hidden>Not set.</span></div>
+<div class="f"><span class="lbl">Password</span><div class="cf" id="st-pwr" dir="ltr"><code id="st-pwv">••••••••••••</code><button type="button" id="st-pws" aria-pressed="false" aria-label="Show the stream password"><span>Show</span></button><button type="button" id="st-pwc" aria-label="Copy the stream password"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><span class="muted" id="st-pwn" hidden>Not set.</span></div>
 <a class="lnk" href="#system">Change the stream password in System</a></div>
-<div class="card w2"><div class="bar"><div><h2>Home Assistant actions</h2><small>POST with the stream account (Basic sign-in over HTTPS). Copy gives a curl command that asks for the password.</small></div><button class="btn" id="st-rc"><svg><use href="#i-copy"/></svg><span>Copy as rest_command</span></button></div><ul class="list ha" id="st-acts"></ul></div>
+<div class="card w2"><div class="bar"><div class="ht"><h2>Home Assistant actions</h2><i class="tip" data-l="Home Assistant actions" data-t="POST with the stream account (Basic sign-in over HTTPS). Copy gives a curl command that asks for the password."></i></div><button class="btn" id="st-rc"><svg><use href="#i-copy"/></svg><span>Copy as rest_command</span></button></div><div class="f"><span class="lbl">Address for all actions</span><div id="st-hau"></div></div><ul class="list ha" id="st-acts"></ul></div>
 </div>
-<div class="card split"><div class="stack s"><div><h2>Frigate</h2><small>Paste into Frigate’s config.yml. Both lenses become cameras; the pan/tilt lens gets ONVIF control.</small></div>
-<label class="chk"><input type="checkbox" id="st-o1"><span>Restream through go2rtc</span></label>
+<div class="card"><div class="bar"><div class="ht"><h2>Frigate</h2><i class="tip" data-l="Frigate" data-t="Paste into Frigate’s config.yml. Both lenses become cameras; the pan/tilt lens gets ONVIF control."></i></div><button class="btn" id="st-copy" aria-label="Copy Frigate configuration"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div>
+<div class="chks"><label class="chk"><input type="checkbox" id="st-o1"><span>Restream through go2rtc</span></label>
 <label class="chk"><input type="checkbox" id="st-o2"><span>Pan/tilt control (ONVIF)</span></label>
-<label class="chk" id="st-o3l"><input type="checkbox" id="st-o3"><span>Include the fixed lens</span></label>
-<small id="st-env"></small></div>
-<div class="code"><div class="bar"><small class="mono">config.yml</small><button class="btn q" id="st-copy" aria-label="Copy Frigate configuration"><svg><use href="#i-copy"/></svg><span>Copy</span></button></div><pre id="st-yaml" tabindex="0"></pre></div></div>
+<label class="chk" id="st-o3l"><input type="checkbox" id="st-o3"><span>Include the fixed lens</span></label></div>
+<small id="st-env"></small>
+<details class="fold"><summary>Show config.yml<svg class="tw"><use href="#i-chev"/></svg></summary><pre id="st-yaml" tabindex="0" dir="ltr"></pre></details></div>
 </section>
 
 <section class="page" id="p-network" hidden>
-<header class="ph"><div><h1 tabindex="-1">Network</h1><p>The camera uses Wi-Fi and never gets internet access.</p></div></header>
-<div class="cols">
-<div class="card w2"><div class="bar nw"><h2 id="nw-hw" tabindex="-1">Wi-Fi</h2><button class="btn" id="nw-sb" aria-label="Scan for networks"><svg><use href="#i-scan"/></svg><span class="dsk">Scan for networks</span></button></div><div class="now" id="nw-now"></div>
-<div class="f" id="nw-scan"><span class="cap" id="nw-sc" hidden></span><small id="nw-sh" role="status">Scan to list the networks nearby, or join a hidden network by name.</small><ul class="nets" id="nw-nets" hidden></ul><button type="button" class="btn q start" id="nw-hid">Join a hidden network…</button></div>
+<header class="ph"><div class="ht"><h1 tabindex="-1">Network</h1><i class="tip" data-l="Network" data-t="The camera uses Wi-Fi and never gets internet access."></i></div></header>
+<div class="card" id="nw-card"><div class="bar nw"><div class="now" id="nw-now"></div><button class="btn" id="nw-sb" aria-expanded="false"><svg><use href="#i-scan"/></svg><span>Change network</span></button></div>
+<h2 id="nw-hw" tabindex="-1" class="vh">Wi-Fi</h2>
+<div class="f" id="nw-scan" hidden><span class="cap plain" id="nw-sc" hidden></span><small id="nw-sh" role="status"></small><ul class="nets" id="nw-nets" hidden></ul><button type="button" class="btn q start" id="nw-hid">Join a hidden network…</button></div>
 <form id="nw-join" class="stack s" novalidate hidden>
 <div class="f" id="nw-sf"><label for="nw-ssid">Network name</label><input id="nw-ssid" class="raw" maxlength="32"></div>
 <div class="f"><label for="nw-psk" id="nw-pl">Password</label><div class="pw"><input id="nw-psk" type="password" autocomplete="new-password" maxlength="64"><button type="button" class="reveal"><svg><use href="#i-eye"/></svg></button></div></div>
@@ -224,70 +241,64 @@
 <div id="nw-count" class="count" hidden><h3 tabindex="-1" id="wc-h"></h3>
 <div class="ring" role="timer" id="wc-t"><svg viewBox="0 0 164 164"><circle cx="82" cy="82" r="72"/><circle cx="82" cy="82" r="72" id="wc-arc"/></svg><span><b class="mono" id="wc-n"></b><small>left to decide</small></span></div>
 <p class="muted" id="wc-p"></p><ul class="health steps" id="wc-st" hidden></ul><div class="acts col"><button class="btn pri" id="wc-keep"></button><button class="btn" id="wc-back"></button></div>
-<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span id="wc-nt"></span></p></div></div>
-<div class="stack">
-<div class="card"><h2 id="nw-iph">IP address</h2>
-<div class="seg" id="nw-ipm" aria-labelledby="nw-iph"><button value="dhcp">Automatic (DHCP)</button><button value="static">Static</button></div>
+<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span id="wc-nt"></span></p></div>
+<div id="nw-q"><dl class="stats" id="nw-st"></dl><div class="bar"><span class="ht"><small id="nw-qc"></small><i class="tip" data-l="Check again" data-t="Totals since the last restart. Sent is mostly video to your NVR."></i></span><button class="btn" id="nw-qa">Check again</button></div></div></div>
+<div class="cols" id="nw-more">
+<div class="card"><div class="ht"><h2 id="nw-iph">IP address</h2><i class="tip" data-l="IP address" data-t="Automatic uses DHCP from your router."></i></div>
+<div class="seg" id="nw-ipm" aria-labelledby="nw-iph"><button value="dhcp">Automatic</button><button value="static">Static</button></div>
 <dl class="kv"><div><dt>Address</dt><dd class="mono" id="nw-ad">—</dd></div><div><dt>Gateway</dt><dd class="mono" id="nw-gw">—</dd></div></dl>
 <form id="nw-ipf" class="stack s" novalidate hidden>
+<p class="banner" role="note"><svg><use href="#i-warn"/></svg><span>A wrong static address makes the camera unreachable. Reserving the address in your router is safer.</span></p>
 <div class="f"><label for="nw-ipa">Address</label><input id="nw-ipa" class="raw" inputmode="decimal" maxlength="15" autocomplete="off"></div>
-<div class="f"><label for="nw-ipp">Prefix</label><input id="nw-ipp" class="raw" inputmode="numeric" maxlength="2" autocomplete="off" aria-describedby="nw-iph2"><small id="nw-iph2">24 means 255.255.255.0.</small></div>
+<div class="f"><div class="ht"><label for="nw-ipp">Prefix</label><i class="tip" data-l="Prefix" data-t="24 means 255.255.255.0."></i></div><input id="nw-ipp" class="raw" inputmode="numeric" maxlength="2" autocomplete="off"></div>
 <div class="f"><label for="nw-ipg">Gateway</label><input id="nw-ipg" class="raw" inputmode="decimal" maxlength="15" autocomplete="off"></div>
 <small>The camera first checks that nothing else uses the address and that the gateway answers. You then have 90 seconds to keep it.</small>
 <div class="acts"><button class="btn pri">Test this address</button><button type="button" class="btn" id="nw-ipc">Cancel</button></div>
-</form>
-<small>To keep this address, reserving it in the router is safer than Static: a wrong static address makes the camera unreachable.</small></div>
-<div class="card"><h2>Local name</h2>
-<form id="nw-name" class="stack s" novalidate><div class="f"><label for="nw-host">Name on this network</label><div class="suffix"><input id="nw-host" class="raw" maxlength="63" aria-describedby="nw-hh"><span class="mono">.local</span></div><small id="nw-hh">Letters, digits and hyphens. Applies after the next restart.</small></div>
-<div class="acts"><button class="btn">Save name</button></div><small id="nw-res" role="status"></small></form></div>
-<div class="card"><div><h2>Networks allowed to reach the camera</h2><small>Private networks behind your router, such as the main LAN or a VPN.</small></div>
+</form></div>
+<div class="stack">
+<div class="card"><div class="ht"><h2>Local name</h2><i class="tip" data-l="Local name" data-t="Letters, digits and hyphens. Applies after the next restart."></i></div>
+<form id="nw-name" class="stack s" novalidate><div class="inl"><div class="suffix" dir="ltr"><input id="nw-host" class="raw" maxlength="63" aria-label="Local name"><span class="mono">.local</span></div><button class="btn">Save name</button></div><small id="nw-res" role="status"></small></form></div>
+<div class="card"><div class="ht"><h2>Other networks allowed</h2><i class="tip" data-l="Other networks allowed" data-t="Private networks behind your router, such as the main LAN or a VPN, can reach the camera."></i></div>
 <ul class="list" id="nw-routes"></ul>
-<form id="nw-add" class="f" novalidate><label for="nw-cidr">Add a network</label><div class="inl"><input id="nw-cidr" class="mono raw" placeholder="192.168.1.0/24"><button class="btn">Add</button></div></form></div>
-</div>
-<div class="card full" id="nw-q"><div class="bar nw"><div><h2>Connection quality</h2><small id="nw-qc"></small></div><button class="btn" id="nw-qa">Check again</button></div><dl class="stats" id="nw-st"></dl></div>
-</div>
+<form id="nw-add" class="f" novalidate><label for="nw-cidr">Add a network</label><div class="inl"><input id="nw-cidr" class="mono raw" dir="ltr" placeholder="192.168.1.0/24"><button class="btn">Add</button></div></form></div>
+</div></div>
 </section>
 
 <section class="page" id="p-system" hidden>
-<header class="ph"><div><h1 tabindex="-1">System</h1><p>Clock, restarts, updates, sign-in and health.</p></div></header>
+<header class="ph"><h1 tabindex="-1">System</h1></header>
 <div class="banner" id="sy-sync" hidden><svg><use href="#i-warn"/></svg><div><span>SSH does not accept the admin password yet; changing it once fixes that.</span><div class="acts"><button class="btn" id="sy-syncb">Change admin password</button></div></div></div>
-<div class="cols">
-<div class="card w2"><h2>Time</h2>
-<dl class="kv"><div><dt>Camera clock</dt><dd class="mono" id="sy-cam">—</dd></div><div><dt>This device</dt><dd><span class="mono" id="sy-dev"></span><span id="sy-match"></span></dd></div></dl>
-<div class="g2"><div class="f"><label for="sy-tz">Time zone</label><select id="sy-tz" aria-describedby="sy-tzh"></select><small id="sy-tzh">Schedules use this zone. It is an offset, not a region: change it by hand when clocks change.</small></div>
-<div class="f"><label for="sy-ntp">Network time server</label><input id="sy-ntp" class="mono raw" aria-describedby="sy-nh"><small id="sy-nh"></small></div></div>
-<div class="acts"><button class="btn pri" id="sy-save">Save</button><button class="btn" id="sy-now">Set clock from this device</button></div>
-<details><summary>Set a specific time</summary><div class="f"><label for="sy-man">Date and time, in this device’s time zone</label><input id="sy-man" type="datetime-local" step="1"></div><div class="acts"><button class="btn" id="sy-set">Set this time</button></div></details></div>
-<div class="card"><h2>Restart</h2><p class="muted">The camera is offline for about 90 seconds. Your NVR reconnects by itself and this page comes back on its own.</p>
-<div class="acts"><button class="btn dz" id="sy-rs">Restart now…</button></div>
-<div class="row"><span><b id="sy-rsl">Scheduled restart</b><small id="sy-rsn"></small></span><button class="sw" id="sy-rss" aria-labelledby="sy-rsl"></button></div>
-<div class="f" id="sy-rsf" hidden><label for="sy-rst">At</label><input id="sy-rst" type="time"><small id="sy-rsz"></small></div></div>
-</div>
-<div class="card"><div><h2>Updates</h2><small>The camera checks the signature and refuses older releases. Installing restarts it.</small></div>
-<div class="cols"><form id="sy-up" class="stack s" novalidate><div><h3>Platform</h3><small class="mono" id="sy-pv"></small></div>
-<div class="f"><label for="sy-file">Platform package (JOOAN_FW_PKG)</label><input id="sy-file" type="file"></div>
+<div class="card"><div class="ht"><h2>Updates</h2><i class="tip" data-l="Updates" data-t="The camera checks the signature and refuses older releases. Installing restarts it."></i></div>
+<form id="sy-up" class="uprow stack s" novalidate><div class="row first"><span class="rl2"><b>Platform</b><small class="mono" id="sy-pv"></small></span><label class="btn pick1"><input id="sy-file" type="file" class="vh"><span>Choose package…</span></label></div>
+<div class="upb stack s" id="sy-upb" hidden><code class="filer" id="sy-fn" dir="ltr"></code>
 <div class="f" id="sy-prog" hidden><div class="bar"><span id="sy-pt"></span><small class="mono" id="sy-pn"></small></div><progress id="sy-pb" max="100" value="0" aria-label="Upload progress"></progress><div class="bar"><small>Keep this page open until the check finishes.</small><button type="button" class="btn q" id="sy-cancel">Cancel</button></div></div>
-<small id="sy-ust" role="status"></small>
-<div class="acts"><button class="btn" id="sy-stage">Upload and check</button><button type="button" class="btn pri" id="sy-apply" disabled>Install (upload first)</button></div></form>
-<form id="sy-mup" class="stack s" novalidate><div><h3>Media</h3><small class="mono" id="sy-mv"></small></div>
-<div class="f"><label for="sy-mfile">Media package</label><input id="sy-mfile" type="file"><small>Built from this camera’s own app partition. Keep the backup you made when installing.</small></div>
+<small id="sy-ust" role="status"></small><small class="warnt">Do not cut power during an install.</small>
+<div class="acts"><button class="btn" id="sy-stage">Upload and check</button><button type="button" class="btn pri" id="sy-apply" disabled>Install and restart…</button></div></div></form>
+<form id="sy-mup" class="uprow stack s" novalidate><div class="row first"><span class="rl2"><b>Media</b><small class="mono" id="sy-mv"></small></span><label class="btn pick1"><input id="sy-mfile" type="file" class="vh"><span>Choose package…</span></label></div>
+<div class="upb stack s" id="sy-mupb" hidden><code class="filer" id="sy-mfn" dir="ltr"></code>
 <div class="f" id="sy-mprog" hidden><div class="bar"><span id="sy-mpt"></span><small class="mono" id="sy-mpn"></small></div><progress id="sy-mpb" max="100" value="0" aria-label="Upload progress"></progress><div class="bar"><small>Keep this page open until the check finishes.</small><button type="button" class="btn q" id="sy-mcancel">Cancel</button></div></div>
-<small id="sy-must" role="status"></small>
-<div class="acts"><button class="btn" id="sy-mstage">Upload and check</button><button type="button" class="btn pri" id="sy-mapply" disabled>Install (upload first)</button></div></form></div></div>
+<small id="sy-must" role="status"></small><small>Built from this camera’s own app partition. Keep the backup you made when installing.</small><small class="warnt">Do not cut power during an install.</small>
+<div class="acts"><button class="btn" id="sy-mstage">Upload and check</button><button type="button" class="btn pri" id="sy-mapply" disabled>Install and restart…</button></div></div></form></div>
+<div class="card"><h2>Time</h2>
+<dl class="kv"><div><dt>Camera clock</dt><dd class="mono" id="sy-cam">—</dd></div><div><dt>This device</dt><dd><span class="mono" id="sy-dev"></span><span id="sy-match"></span></dd></div></dl>
+<div class="g2"><div class="f"><div class="ht"><label for="sy-tz">Time zone</label><i class="tip" data-l="Time zone" data-t="Schedules use this zone. It is an offset, not a region: change it by hand when clocks change."></i></div><select id="sy-tz"></select></div>
+<div class="f"><div class="ht"><label for="sy-ntp">Network time server</label><i class="tip" data-l="Network time server" data-t="“gateway”, an IPv4 address, or empty for off."></i></div><input id="sy-ntp" class="mono raw" dir="ltr" aria-describedby="sy-nh"><small id="sy-nh"></small></div></div>
+<div class="acts"><button class="btn pri" id="sy-save">Save</button><button class="btn" id="sy-now">Set clock from this device</button></div>
+<details class="fold"><summary>Set a specific time<svg class="tw"><use href="#i-chev"/></svg></summary><div class="f"><label for="sy-man">Date and time, in this device’s time zone</label><input id="sy-man" type="datetime-local" step="1"></div><div class="acts"><button class="btn" id="sy-set">Set this time</button></div></details></div>
 <div class="cols">
 <div class="card"><h2>Passwords</h2>
-<div class="row"><span><b>Admin password</b><small id="sy-pws">This page and SSH.</small></span><button class="btn" id="sy-pwa">Change…</button></div>
-<div class="row"><span><b>Stream password</b><small>RTSP and ONVIF, for your NVR and Home Assistant.</small></span><button class="btn" id="sy-pwm">Change…</button></div>
-<small>Changing the stream password disconnects the NVR until you update it there too.</small></div>
-<div class="card w2"><div class="bar"><h2>SSH keys</h2><code id="sy-cmd"></code></div><ul class="list" id="sy-keys"></ul>
-<form id="sy-add" class="f" novalidate><label for="sy-key">Add a public key</label><textarea id="sy-key" class="mono raw" rows="2" placeholder="ssh-ed25519 AAAA… name@computer"></textarea>
-<div class="bar"><small>Ed25519 keys only, up to 8. Password sign-in keeps working.</small><button class="btn">Add key</button></div></form></div>
+<div class="row first"><span class="rl2"><b>Admin password</b><small id="sy-pws"></small></span><button class="btn" id="sy-pwa">Change…</button></div>
+<div class="row"><span class="rl2"><b>Stream password</b><small>RTSP and ONVIF, for your NVR and Home Assistant.</small></span><button class="btn" id="sy-pwm">Change…</button></div></div>
+<div class="card w2"><div class="bar"><div class="ht"><h2>SSH keys</h2><i class="tip" data-l="SSH keys" data-t="Ed25519 keys only, up to 8. Password sign-in keeps working."></i></div><code id="sy-cmd" dir="ltr"></code></div><ul class="list" id="sy-keys"></ul>
+<form id="sy-add" class="f" novalidate><label for="sy-key">Add a public key</label><textarea id="sy-key" class="mono raw" dir="ltr" rows="2" placeholder="ssh-ed25519 AAAA… name@computer"></textarea>
+<div class="acts end"><button class="btn">Add key</button></div></form></div>
 </div>
-<div class="cols">
-<div class="card w2"><div class="bar"><h2>Health</h2><small id="sy-hc"></small></div><ul class="health" id="sy-stats"></ul></div>
-<div class="card"><h2>Reset to defaults</h2><p class="muted">Erases passwords, SSH keys, presets and camera settings. Keeps the Wi-Fi network, the local name and the installed firmware, so the camera stays reachable the same way.</p><div class="acts"><button class="btn dz" id="sy-rd">Reset to defaults…</button></div></div>
-<div class="card"><div class="row first"><span><b id="sy-th">Theme</b><small>On this device</small></span><div class="seg theme" aria-labelledby="sy-th"><button value="auto">Auto</button><button value="light">Light</button><button value="dark">Dark</button></div></div></div>
-</div>
+<div class="card"><details class="sumd" id="sy-fold"><summary><span class="sumh">Health</span><small id="sy-hc"></small><span id="sy-sum"></span><svg class="tw"><use href="#i-chev"/></svg></summary><ul class="health" id="sy-stats"></ul></details></div>
+<div class="card"><h2>Restart and reset</h2>
+<div class="row first"><span class="rw"><span class="ht"><b>Restart</b><i class="tip" data-l="Restart" data-t="The camera is offline for about 90 seconds. Your NVR reconnects by itself and this page comes back on its own."></i></span></span><button class="btn dz" id="sy-rs">Restart now…</button></div>
+<div class="row"><span class="rl2"><b id="sy-rsl">Scheduled restart</b><small id="sy-rsn"></small></span><button class="sw" id="sy-rss" aria-labelledby="sy-rsl"></button></div>
+<div class="f" id="sy-rsf" hidden><label for="sy-rst">At</label><input id="sy-rst" type="time"><small id="sy-rsz"></small></div>
+<div class="row"><span class="rw"><span class="ht"><b>Reset</b><i class="tip" data-l="Reset" data-t="Erases passwords, SSH keys, presets and camera settings. Keeps the Wi-Fi network, the local name and the installed firmware."></i></span></span><button class="btn dz" id="sy-rd">Reset to defaults…</button></div>
+<small class="warnt" id="sy-lock" hidden>Locked: an update stopped. Look at the camera over SSH first.</small></div>
 </section>
 
 <section class="page" id="p-settings" hidden>
@@ -295,8 +306,9 @@
 <nav class="card menu" aria-label="Settings sections">
 <a href="#streams"><span><b>Streams &amp; integrations</b><small>RTSP, ONVIF, Frigate, Home Assistant</small></span></a>
 <a href="#network"><span><b>Network</b><small id="se-net">Wi-Fi, local name, allowed networks</small></span></a>
-<a href="#system"><span><b>System</b><small>Time, updates, passwords, health</small></span></a></nav>
-<div class="card"><div class="bar"><span>Signed in as <b class="user">admin</b></span><button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div></div>
+<a href="#system"><span><b>System</b><small>Updates, time, passwords, health</small></span></a></nav>
+<div class="card"><h2>Preferences</h2><div class="f"><div class="ht"><label class="lbl" for="se-lang">Language</label><i class="tip" data-l="Language" data-t="Partial means a native speaker has not checked the translation yet."></i></div><select class="lang" id="se-lang"></select></div><div class="f"><span class="lbl" id="se-tl">Theme</span><div class="seg theme" aria-labelledby="se-tl"><button value="auto">Auto</button><button value="light">Light</button><button value="dark">Dark</button></div></div></div>
+<div class="card"><div class="bar"><span class="signed"></span><button class="btn q signout"><svg><use href="#i-out"/></svg>Sign out</button></div></div>
 <small class="mono" id="se-ver"></small>
 </section>
 </main>

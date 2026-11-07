@@ -14,7 +14,9 @@ if (!url || !out) { console.error('usage: shoot.mjs URL OUT_DIR [PASSWORD]'); pr
 mkdirSync(out, { recursive: true });
 const b = await launch(9400, mkdtempSync(join(tmpdir(), 'ui-compare-')));
 await b.send('Security.setIgnoreCertificateErrors', { ignore: true });
-await b.send('Page.addScriptToEvaluateOnNewDocument', { source:
+// UI_LANG=ru shoots the page in that language.
+const uiLang = process.env.UI_LANG ? `try{localStorage.setItem('jipc-lang',${JSON.stringify(JSON.stringify(process.env.UI_LANG))})}catch{};` : '';
+await b.send('Page.addScriptToEvaluateOnNewDocument', { source: uiLang +
   "window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));" +
   "addEventListener('unhandledrejection',e=>__errs.push('rejected: '+e.reason));" +
   "document.addEventListener('securitypolicyviolation',e=>__errs.push('CSP '+e.violatedDirective))" });
@@ -44,7 +46,7 @@ for (const [scheme, suffix] of [['light', ''], ['dark', '-dark']]) {
   await b.scheme(scheme);
   for (const [name, width, height] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
     await b.viewport(width, height);
-    for (const page of pages) {
+    for (const page of name === 'phone' ? [...pages, 'settings'] : pages) {
       await b.eval(`location.hash='#${page}';1`);
       await sleep(1800);
       await b.eval(unfix);

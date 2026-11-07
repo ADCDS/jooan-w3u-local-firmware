@@ -13,3 +13,6 @@ python3 media/tools/ui-compare/compose.py DESIGN_PICTURES /tmp/build /tmp/compar
 
 It needs Node 22, Chromium (`CHROMIUM` names another one) and, for `compose.py`, Pillow. `shoot.mjs`
 also takes a camera's URL and admin password, and changes nothing on it.
+
+`states.mjs` checks the UI's behaviours on the mock (tooltips, attention bar, the lock while an
+update is stopped, folds, choice of language), and `pseudo.mjs` lists text no translation reaches.
