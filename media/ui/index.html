@@ -267,7 +267,11 @@
 <div class="f" id="sy-prog" hidden><div class="bar"><span id="sy-pt"></span><small class="mono" id="sy-pn"></small></div><progress id="sy-pb" max="100" value="0" aria-label="Upload progress"></progress><div class="bar"><small>Keep this page open until the check finishes.</small><button type="button" class="btn q" id="sy-cancel">Cancel</button></div></div>
 <small id="sy-ust" role="status"></small>
 <div class="acts"><button class="btn" id="sy-stage">Upload and check</button><button type="button" class="btn pri" id="sy-apply" disabled>Install (upload first)</button></div></form>
-<div class="f"><h3>Media</h3><small class="mono" id="sy-mv"></small><small>Media updates from the browser are not available in this firmware yet.</small></div></div></div>
+<form id="sy-mup" class="stack s" novalidate><div><h3>Media</h3><small class="mono" id="sy-mv"></small></div>
+<div class="f"><label for="sy-mfile">Media package</label><input id="sy-mfile" type="file"><small>Built from this camera’s own app partition. Keep the backup you made when installing.</small></div>
+<div class="f" id="sy-mprog" hidden><div class="bar"><span id="sy-mpt"></span><small class="mono" id="sy-mpn"></small></div><progress id="sy-mpb" max="100" value="0" aria-label="Upload progress"></progress><div class="bar"><small>Keep this page open until the check finishes.</small><button type="button" class="btn q" id="sy-mcancel">Cancel</button></div></div>
+<small id="sy-must" role="status"></small>
+<div class="acts"><button class="btn" id="sy-mstage">Upload and check</button><button type="button" class="btn pri" id="sy-mapply" disabled>Install (upload first)</button></div></form></div></div>
 <div class="cols">
 <div class="card"><h2>Passwords</h2>
 <div class="row"><span><b>Admin password</b><small id="sy-pws">This page and SSH.</small></span><button class="btn" id="sy-pwa">Change…</button></div>

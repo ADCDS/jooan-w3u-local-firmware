@@ -414,6 +414,7 @@ class Mock:
         self.config, self.media_password, self.recording = dict(MEDIA_CONFIG), args.password, False
         self.presets = {} if args.no_presets else {k: list(v) for k, v in PRESETS.items()}
         self.aim_ok = not args.no_aim
+        self.staged = None
         self.x, self.y = -14.0, 70.0
         self.controls = control_defaults()  # the daemon's state_dir/controls.json
         self.media_boot(now, args.homing, first=True)
@@ -1008,7 +1009,7 @@ class Mock:
         self.authorize(h, now, False)
         if h.cross_origin(): return merr(403, "Cross-origin requests are not accepted")
         if m not in ("GET", "POST"): return merr(405, "Use GET or POST")
-        if m == "POST" and not json_type(h.headers.get("Content-Type", "")) and t != "/api/v1/talk":
+        if m == "POST" and not json_type(h.headers.get("Content-Type", "")) and t not in ("/api/v1/talk", "/api/v1/update/media"):
             return merr(415, "Content-Type application/json is required")
         if t == "/api/v1/status" and m == "GET":
             return mok(self.media_status(now))
@@ -1040,6 +1041,17 @@ class Mock:
             return mok({"ok": True})
         if t == "/api/v1/recordings" and m == "GET":
             return mok({"recordings": [], "truncated": False})
+        if t == "/api/v1/update/media" and m == "GET":
+            return mok({"state": "staged" if self.staged else "idle", "release": self.staged, "error": ""})
+        if t == "/api/v1/update/media" and m == "POST":
+            data = h.body or b""
+            if not data.startswith(b"JIPCMEDIA1 "): return merr(400, "This is not a media package")
+            self.staged = "cafe0123-8b374e7a"
+            return mok({"release": self.staged})
+        if t == "/api/v1/update/media/apply" and m == "POST":
+            if not self.staged: return merr(409, "That package is no longer here: upload it again")
+            self.staged = None
+            return mok({"ok": True})
         if t == "/api/v1/aim":
             sx, sy = 2040 - self.x * 20.4, 615 - self.y * 6.15
             if m == "GET":

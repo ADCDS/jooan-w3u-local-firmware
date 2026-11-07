@@ -176,7 +176,8 @@ static int send_all(connection *c,const void *data,size_t n){
     }
     return 0;
 }
-static const char *reason(int code){switch(code){case 200:return "OK";case 204:return "No Content";case 502:return "Bad Gateway";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 429:return "Too Many Requests";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
+static ssize_t upload_pull(void *context,void *data,size_t capacity){return receive(context,data,capacity);}
+static const char *reason(int code){switch(code){case 507:return "Insufficient Storage";case 200:return "OK";case 204:return "No Content";case 502:return "Bad Gateway";case 400:return "Bad Request";case 401:return "Unauthorized";case 403:return "Forbidden";case 404:return "Not Found";case 405:return "Method Not Allowed";case 409:return "Conflict";case 411:return "Length Required";case 413:return "Content Too Large";case 415:return "Unsupported Media Type";case 417:return "Expectation Failed";case 429:return "Too Many Requests";case 431:return "Request Header Fields Too Large";case 500:return "Internal Server Error";case 501:return "Not Implemented";case 503:return "Service Unavailable";default:return "Error";}}
 /* The UI is same-origin only: no inline code, no framing, no referrers. */
 #define HTTP_CSP "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 static int header_with(connection *c,int status,const char *type,uint64_t length,const char *extra){
@@ -213,9 +214,11 @@ static int parse_request(connection *c,char *buffer,size_t capacity,request *r){
     if(strlen(buffer)>=sizeof(r->method)||strlen(space)>=sizeof(r->target)||*space!='/')return 400;
     for(const char *p=space;*p;++p)if((unsigned char)*p<=32||*p=='\\'||*p=='#'||*p=='%')return 400;
     strcpy(r->method,buffer);strcpy(r->target,space);
-    /* A platform package is relayed in pieces, never buffered here. */
-    int upload=!strcmp(r->method,"POST")&&!strcmp(r->target,"/api/joan/v1/update");
-    size_t limit=upload?JIPC_JOAN_UPLOAD_LIMIT:JIPC_MAX_JSON;
+    /* A platform package is relayed in pieces, and a media package goes to RAM as it
+     * arrives: neither is buffered here. */
+    int media_upload=!strcmp(r->method,"POST")&&!strcmp(r->target,"/api/v1/update/media");
+    int upload=media_upload||(!strcmp(r->method,"POST")&&!strcmp(r->target,"/api/joan/v1/update"));
+    size_t limit=media_upload?JIPC_MEDIA_UPDATE_LIMIT:upload?JIPC_JOAN_UPLOAD_LIMIT:JIPC_MAX_JSON;
     int length_seen=0,transfer_seen=0;unsigned seen=0;size_t length=0;char *p=line+2;
     while(p<buffer+head-2){
         char *next=strstr(p,"\r\n");if(!next)return 400;*next=0;
@@ -318,7 +321,6 @@ static void ui_asset_response(connection *c,const char *name){
  * Secure to its cookie. Two relays at most, so slow platform calls never
  * starve ONVIF. */
 static atomic_int relays;
-static ssize_t upload_pull(void *context,void *data,size_t capacity){return receive(context,data,capacity);}
 static void joan_relay(connection *c,request *r){
     const char *rest=r->target+10;int get=!strcmp(r->method,"GET");
     if(!get&&strcmp(r->method,"POST")&&strcmp(r->method,"PUT")&&strcmp(r->method,"DELETE")){error_response(c,405,"Use GET, POST, PUT or DELETE");return;}
@@ -385,7 +387,7 @@ static void dispatch(connection *c,request *r){
         int code=jipc_onvif(app,r->target,r->body,r->host,out,HTTP_REPLY_LIMIT);
         if(out[0])response(c,code,"application/soap+xml; charset=utf-8",out,strlen(out));else error_response(c,500,"SOAP response exceeded its limit");free(out);return;
     }
-    if(!strcmp(r->method,"POST")&&!json_type(r->type)&&strcmp(r->target,"/api/v1/talk")){error_response(c,415,"Content-Type application/json is required");return;}
+    if(!strcmp(r->method,"POST")&&!json_type(r->type)&&strcmp(r->target,"/api/v1/talk")&&!r->upload){error_response(c,415,"Content-Type application/json is required");return;}
     char out[JIPC_MAX_JSON],error[256]={0};
     if(!strcmp(r->target,"/api/v1/status")&&!strcmp(r->method,"GET")){if(jipc_status_json(app,out,sizeof(out))<0)error_response(c,500,"Status unavailable");else response(c,200,"application/json",out,strlen(out));return;}
     /* The stream password, for the admin UI only: its signed-in session, its
@@ -399,6 +401,26 @@ static void dispatch(connection *c,request *r){
         int n=snprintf(out,sizeof(out),"{\"username\":%s,\"password\":%s}\n",user,pass);memset(pass,0,sizeof(pass));
         if(n>0&&(size_t)n<sizeof(out))response(c,200,"application/json",out,(size_t)n);else error_response(c,500,"Password unavailable");
         memset(out,0,sizeof(out));return;
+    }
+    /* Firmware is for the signed-in admin only, never the stream account. */
+    if(!strncmp(r->target,"/api/v1/update/media",20)){
+        const char *rest=r->target+20;
+        if(authorized!=2||strcmp(r->requested_with,"jipc-ui")||!same_origin(c,r,0)){c->keepalive=0;error_response(c,403,"Sign in to the admin UI to update the firmware");return;}
+        if(!*rest&&!strcmp(r->method,"GET")){if(jipc_update_json(out,sizeof(out))<0)error_response(c,500,"Update status unavailable");else response(c,200,"application/json",out,strlen(out));}
+        else if(!*rest&&r->upload){
+            if(strcasecmp(r->type,"application/octet-stream")){c->keepalive=0;error_response(c,415,"Upload the package as application/octet-stream");return;}
+            c->deadline=jipc_now_us()+180000000;
+            int status=jipc_update_receive(r->body,r->length,r->upload,upload_pull,c,out,sizeof(out),error,sizeof(error));
+            c->keepalive=0;
+            if(status!=200)error_response(c,status,error[0]?error:"The package was refused");else response(c,200,"application/json",out,strlen(out));
+        }else if(!strcmp(rest,"/apply")&&!strcmp(r->method,"POST")){
+            char release[32]={0};
+            if(jipc_json_string(r->body,"release",release,sizeof(release))!=0){error_response(c,400,"Name the release to install");return;}
+            int status=jipc_update_apply(release,error,sizeof(error));
+            if(status!=200)error_response(c,status,error[0]?error:"The update did not start");else response(c,200,"application/json","{\"ok\":true}\n",12);
+        }else if(!strcmp(rest,"/discard")&&!strcmp(r->method,"POST")){jipc_update_discard();response(c,200,"application/json","{\"ok\":true}\n",12);}
+        else error_response(c,404,"Endpoint not found");
+        return;
     }
     if(!strcmp(r->target,"/api/v1/controls")){
         if(!strcmp(r->method,"GET")){if(jipc_controls_json(app,out,sizeof(out))<0)error_response(c,503,"Controls are not running");else response(c,200,"application/json",out,strlen(out));}

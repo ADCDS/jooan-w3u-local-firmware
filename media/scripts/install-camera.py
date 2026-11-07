@@ -16,9 +16,15 @@ touched file is copied into BUNDLE/backups/<UTC time>/ before any change
 (those copies contain the camera password: keep bundles private). A failure
 before the first reboot restores them. Nothing runs without --yes.
 
+A bundle from build-appfs.sh --first instead installs the first media release on
+a camera that has only the platform, and is flashed by first-appfs.sh. That path has
+not yet been run on a real camera, so it also needs --yes-untested and
+STREAM_PASSWORD, the password its streams will use.
+
 Credentials come from the environment: CAMERA_PASSWORD (SSH and the platform
 API) and MEDIA_PASSWORD (jooanipc-open's API; defaults to CAMERA_PASSWORD).
-SSH uses sshpass when it is installed and CAMERA_PASSWORD is set.
+With CAMERA_PASSWORD set, SSH uses sshpass when it is installed, or otherwise the
+ssh program's own SSH_ASKPASS, which is what the OpenSSH in Windows offers.
 """
 import argparse
 import base64
@@ -33,6 +39,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 
 INI = "/opt/jooanipc-open/camera.ini"
@@ -64,14 +71,41 @@ def md5(path):
     return h.hexdigest()
 
 
+def askpass_helper(directory):
+    """A program for ssh's SSH_ASKPASS that prints the password from the environment. This
+    is what works with the OpenSSH that Windows ships, where there is no sshpass. It needs
+    OpenSSH 8.4 or later for SSH_ASKPASS_REQUIRE. The password is never written to disk."""
+    code = "import os; print(os.environ['CAMERA_ASKPASS'])"
+    if os.name == "nt":
+        path = pathlib.Path(directory) / "askpass.cmd"
+        path.write_text(f'@"{sys.executable}" -c "{code}"\n')  # text mode adds the \r
+    else:
+        path = pathlib.Path(directory) / "askpass.sh"
+        path.write_text(f'#!/bin/sh\nexec "{sys.executable}" -c "{code}"\n')
+        path.chmod(0o700)
+    return path
+
+
 class Camera:
     def __init__(self, host, password, media_password):
         self.host, self.password, self.media_password = host, password, media_password
         self.prefix = (["sshpass", "-e"] if password and shutil.which("sshpass") else [])
         self._media_cert = None
+        self._askpass = None
+
+    def ssh_environment(self):
+        if self.prefix:
+            return os.environ | {"SSHPASS": self.password}
+        if not self.password:
+            return dict(os.environ)  # an agent or a key, or ssh asks
+        if self._askpass is None:
+            self._askpass_dir = tempfile.TemporaryDirectory(prefix="camera-ssh-")
+            self._askpass = askpass_helper(self._askpass_dir.name)
+        return os.environ | {"SSH_ASKPASS": str(self._askpass), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "none",
+                             "CAMERA_ASKPASS": self.password}
 
     def ssh_bytes(self, script, data=None, timeout=120, check=True):
-        env = os.environ | ({"SSHPASS": self.password} if self.prefix else {})
+        env = self.ssh_environment()
         command = self.prefix + ["ssh", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=5",
                                  "-o", "ServerAliveCountMax=3", f"admin@{self.host}", script]
         result = subprocess.run(command, input=data, capture_output=True, timeout=timeout, env=env)
@@ -193,6 +227,111 @@ def preflight_problems(facts, platform, local, appfs, config):
     return problems
 
 
+def first_problems(facts, platform, appfs):
+    """Why a camera cannot take its first media release."""
+    problems = []
+    if facts.get("appfs_size") != "3211264" or facts.get("appfs_name") != "appfs":
+        problems.append("this is not a JA-A12 app partition")
+    if facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:
+        problems.append(f"appfs is {facts.get('appfs_md5')}: the bundle was built from another copy "
+                        f"({appfs['expected_current_appfs_md5']}); build it from this camera's own")
+    if platform.get("state") != "ready":
+        problems.append("install the platform first, and set its password")
+    if facts.get("native") == "yes" or facts.get("enabled") == "yes" or facts.get("daemon") != "0":
+        problems.append("this camera already has a media layer: use an ordinary update")
+    if facts.get("oem") != "1":
+        problems.append("the stock application is not running as expected")
+    if facts.get("wifi_json") != "yes":
+        problems.append(f"native boot needs a committed Wi-Fi network ({WIFI_JSON}); without it the boot "
+                        "fails after 300 s. Commit one through the platform first")
+    if int(facts.get("opt_free") or 0) < 96:
+        problems.append("/opt has under 96 KiB free; the media layer's files need room and the stock boot needs 50 KiB left")
+    return problems
+
+
+def first_install(args, cam, bundle, spec):
+    """The first media release on a camera with only the platform. Not yet run on a camera:
+    first-appfs.sh and this have only been tested offline, so it needs --yes-untested."""
+    appfs = spec["jooanipc_open"]
+    for name, field in ((appfs["image"], "image_md5"), (appfs["installer"], "installer_md5")):
+        if md5(bundle / name) != appfs[field]:
+            raise SystemExit(f"{name} checksum mismatch")
+    facts = dict(line.split("=", 1) for line in cam.ssh(
+        "echo appfs_size=$(cat /sys/class/mtd/mtd4/size);"
+        "echo appfs_name=$(cat /sys/class/mtd/mtd4/name);"
+        "echo appfs_md5=$(md5sum /dev/mtdblock4 | cut -c1-32);"
+        "echo opt_free=$(df -k /opt | awk 'END {print $4}');"
+        f"echo native=$([ -e {NATIVE} ] && echo yes || echo no);"
+        "echo enabled=$([ -e /opt/jooanipc-open/enabled ] && echo yes || echo no);"
+        f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
+        "n=0; d=0; for f in /proc/[0-9]*/comm; do c=$(cat $f 2>/dev/null); "
+        "[ \"$c\" = jooanipc ] && n=$((n+1)); [ \"$c\" = jooanipc-open ] && d=$((d+1)); done; "
+        "echo oem=$n; echo daemon=$d").splitlines() if "=" in line)
+    status, _, data = cam.platform("GET", "/api/v1/setup/status")
+    platform = json.loads(data) if status == 200 else {}
+    problems = first_problems(facts, platform, appfs)
+    log(f"first release {appfs['release']} over appfs {facts.get('appfs_md5')}")
+    if problems:
+        raise SystemExit("not installing:\n  " + "\n  ".join(problems))
+    stream_password = os.environ.get("STREAM_PASSWORD", "")
+    if not stream_password or args.yes_untested is not True:
+        raise SystemExit("preflight passed. A first install has not yet been run on a real camera: its flash script is "
+                         "only tested offline. To go ahead, set STREAM_PASSWORD and pass --yes-untested.")
+    if not shutil.which("openssl"):
+        raise SystemExit("a first install needs the openssl program, to make the camera's certificate")
+    root = "/opt/jooanipc-open"
+    release = f"{RELEASES}/{appfs['release']}"
+    example = (pathlib.Path(__file__).resolve().parent.parent / "config/ja-a12.example.ini").read_text()
+    camera_ini = ini_edit(example, {"libimp": f"{release}/libimp.so", "username": "admin", "password": stream_password,
+                                    "bind": "0.0.0.0", "audio": "1"}, [])
+    deployment = (f"JIPC_RELEASE={release}\nJIPC_LIBIMP_SHA256={appfs['imp_sha256']}\nJIPC_APP_MD5={appfs['app_md5']}\n"
+                  f"JIPC_IMP_MD5={appfs['imp_md5']}\nJIPC_ATOMIC_MD5={appfs['atomic_md5']}\nJIPC_WIFI_BSSID=\nJIPC_WIFI_FREQ=\n")
+    with tempfile.TemporaryDirectory(prefix="camera-tls-") as temporary:
+        key, cert = pathlib.Path(temporary) / "key.pem", pathlib.Path(temporary) / "cert.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "7300", "-subj", "/CN=camera",
+                        "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+        cam.ssh(f"mkdir -p {root} && chmod 700 {root}")
+        write_remote(cam, f"{root}/key.pem", key.read_bytes())
+        write_remote(cam, f"{root}/cert.pem", cert.read_bytes(), "644")
+    write_remote(cam, f"{root}/native-boot.sh", (bundle / "native-boot.sh").read_bytes(), "700")
+    write_remote(cam, f"{root}/boot-handoff.sh.next", (bundle / "boot-handoff.sh").read_bytes(), "700")
+    write_remote(cam, f"{root}/camera.ini.next", camera_ini)
+    write_remote(cam, f"{root}/deployment.env.next", deployment)
+    cam.ssh("cat > /tmp/jipc-flash-candidate.squashfs", data=(bundle / appfs["image"]).read_bytes(), timeout=300)
+    cam.ssh("cat > /tmp/first-appfs.sh && chmod 700 /tmp/first-appfs.sh", data=(bundle / appfs["installer"]).read_bytes())
+    log("flashing the first release (it verifies, keeps a RAM copy of the stock partition and reboots)")
+    cam.ssh(f"( trap '' HUP; exec sh /tmp/first-appfs.sh {appfs['image_md5']} {facts['appfs_md5']} ) "
+            "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")
+
+    tidy = f"rm -f {root}/camera.ini.next {root}/deployment.env.next {root}/boot-handoff.sh.next; sync"
+
+    def aborted():
+        try:
+            why = cam.ssh("grep ' ABORT: ' /tmp/jipc-upgrade.log || :", timeout=10).strip()
+            if why:
+                cam.ssh(tidy, timeout=20)
+            return why
+        except Exception:
+            return ""
+
+    def flashed():
+        # A camera it backed out of is back on stock, and no media daemon will ever qualify.
+        now = cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip()
+        if now != appfs["image_md5"]:
+            cam.ssh(tidy, timeout=20)
+            raise SystemExit(f"appfs is {now} after the reboot: the first release was not installed, "
+                             "and the camera is on its stock application")
+
+    try:
+        mode = wait_reboot(cam, aborted, after_boot=flashed)
+    except InstallerStopped as stopped:
+        raise SystemExit(str(stopped)) from None
+    if mode != "native":
+        raise SystemExit(f"installed, but this boot took the {mode} path: see docs/RECOVERY.md")
+    log(f"first media release {appfs['release']} running")
+    return 0
+
+
 def native_expected(facts, config):
     """Whether the camera should boot native once this bundle is in."""
     files = (config or {}).get("files", {})
@@ -203,7 +342,7 @@ class InstallerStopped(Exception):
     """The camera's installer gave up before changing anything; not worth retrying."""
 
 
-def wait_reboot(cam, aborted=None, seconds=600):
+def wait_reboot(cam, aborted=None, seconds=600, after_boot=None):
     # A platform apply runs its whole maintenance transaction before rebooting.
     def down():
         if not cam.up():
@@ -215,6 +354,8 @@ def wait_reboot(cam, aborted=None, seconds=600):
     wait(down, 600, "the camera to go down", step=2)
     log("camera rebooting")
     wait(cam.up, seconds, "SSH after reboot")
+    if after_boot:
+        after_boot()
     log("SSH is back; waiting for the media daemon to qualify")
     deadline = time.monotonic() + seconds
     while (mode := boot_mode(cam)) is None:
@@ -254,6 +395,8 @@ def main():
     p.add_argument("--yes", action="store_true", help="apply; without it only preflight runs")
     p.add_argument("--nvr-stop", help="host shell command run before a layer update (e.g. stop Frigate)")
     p.add_argument("--nvr-start", help="host shell command run after verification")
+    p.add_argument("--yes-untested", action="store_true",
+                   help="with a bundle from build-appfs.sh --first: go ahead, knowing it has not yet been run on a camera")
     args = p.parse_args()
     bundle = args.bundle.resolve()
     spec = json.loads((bundle / "bundle.json").read_text())
@@ -262,6 +405,8 @@ def main():
     password = os.environ.get("CAMERA_PASSWORD", "")
     cam = Camera(args.camera, password, os.environ.get("MEDIA_PASSWORD", password))
     local, appfs, config = spec.get("jooan_local"), spec.get("jooanipc_open"), spec.get("config", {})
+    if appfs and appfs.get("first"):
+        return first_install(args, cam, bundle, spec)
 
     # ---- artifacts on this host
     if local:

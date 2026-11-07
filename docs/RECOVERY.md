@@ -127,7 +127,10 @@ OEM `startapp`, `jooanipc`, kernel modules, sensor IQ and the media release.
 Before it stops the media daemon it takes the platform maintenance lock
 (`/run/jooan-local/state.lock`), which pauses the supervisor's runtime restarts
 and network-watchdog reboot, and a rootfs `watchdog` feeder takes over the
-armed hardware watchdog.
+armed hardware watchdog. System → Media in the admin UI runs this same script.
+`media/scripts/first-appfs.sh`, for a camera's first media release, follows the
+same steps from the stock application. Its rollback also removes the media
+configuration, so the camera returns to stock with only the platform.
 
 - **Before the commit point** (the configuration switch just before
   `flashcp`) every failure reboots into the untouched appfs.

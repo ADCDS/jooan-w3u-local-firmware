@@ -244,6 +244,10 @@ Authenticated REST endpoints:
 | `POST /api/v1/control` `{"operation":"siren","value":1}` | Sounds the siren with its saved settings; `value2` gives another length, 1 to 300 seconds; `value` 0 stops it. `siren_test` with `value` 0 to 3 plays that sound for 3 s. `strobe` with `value` in seconds flashes the white light, 0 stops it. `privacy` with `value` 1 or 0 |
 | `GET /api/v1/aim` | Whether aiming is calibrated, the motors' steps, and where the pan/tilt lens's view falls in the fixed lens's picture |
 | `POST /api/v1/aim` | `{"u":0.25,"v":0.75}` turns the pan/tilt lens to that point of the fixed lens's picture (0 to 1 across it); `{"steps":[x,y]}` to those motor steps; `{"x":[…6],"y":[…6]}` stores a calibration |
+| `GET /api/v1/update/media` | Admin UI session: `{"state":"idle","release":"","error":""}`, where `state` is also `receiving`, `staged` or `installing` |
+| `POST /api/v1/update/media` | Admin UI session: a signed package (`application/octet-stream`). Verified and kept in RAM for 15 minutes; `200` gives its `release`; any other status says why not, with nothing kept |
+| `POST /api/v1/update/media/apply` | Admin UI session: `{"release":"..."}` flashes that package and restarts the camera |
+| `POST /api/v1/update/media/discard` | Admin UI session: forgets the package |
 | `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono, at most 8000 bytes (1 s) per request: `200` queued, `409` another talker or the 2 s queue is full, `503` speaker unavailable |
 
 `/health` and `/healthz` report readiness without credentials and are never

@@ -15,7 +15,6 @@ import http.client
 import json
 import os
 from pathlib import Path
-import socket
 import sys
 import time
 import uuid
@@ -92,6 +91,59 @@ def verify_release_index(
     return release_version, release_sequence
 
 
+def running_release(host: str, port: int) -> dict | None:
+    """What jooan-local reports, or None when stock firmware, or nothing, answers."""
+    try:
+        connection = http.client.HTTPConnection(host, port, timeout=5)
+        connection.request("GET", "/api/v1/setup/status")
+        response = connection.getresponse()
+        body = response.read()
+        connection.close()
+        status = json.loads(body)
+    except (OSError, http.client.HTTPException, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if response.status == 200 and isinstance(status, dict) and status.get("release_version"):
+        return status
+    return None
+
+
+def send_package(
+    host: str, port: int, timeout: float, body: bytes, boundary: str
+) -> str:
+    """POST the package to the stock firmware. "done" means it said so; "ended" means the
+    connection ended once the whole package was out, as it commonly does when this camera
+    reboots before GoAhead answers, so only the post-boot identity can tell; "failed"
+    means the camera has not taken the package."""
+    connection = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        try:
+            connection.request(
+                "POST",
+                CGI_PATH,
+                body=body,
+                headers={
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "Content-Length": str(len(body)),
+                    "Connection": "close",
+                },
+            )
+        except OSError as error:
+            print(f"[-] the package was not fully sent, so nothing was installed: {error}")
+            return "failed"
+        try:
+            response = connection.getresponse()
+            payload = response.read().decode("utf-8", "replace")
+        except (OSError, http.client.HTTPException) as error:
+            print(f"[*] OEM connection ended after upload: {type(error).__name__}: {error}")
+            return "ended"
+    finally:
+        connection.close()
+    if "Done...rebooting" in payload:
+        return "done"
+    print(f"[-] unexpected OEM response HTTP {response.status}: {payload}")
+    return "failed"
+
+
 def wait_for_release(
     host: str,
     port: int,
@@ -157,46 +209,27 @@ def main() -> int:
         manifest_signature,
         args.target.resolve(),
     )
+    running = running_release(args.host, args.port)
+    if running:
+        if (
+            running.get("release_version") == expected_version
+            and running.get("release_sequence") == expected_sequence
+        ):
+            print("[+] the camera already runs this release; nothing was uploaded")
+            return 0
+        print(
+            f"[-] the camera already runs jooan-local {running['release_version']}, and this "
+            "tool only talks to the stock firmware: nothing was uploaded. Update from System "
+            "in the web UI, or through /api/v1/update (docs/API.md)"
+        )
+        return 2
     boundary = f"----jooan{uuid.uuid4().hex}"
     body = multipart(package, boundary)
-    connection = http.client.HTTPConnection(
-        args.host, args.port, timeout=args.timeout
-    )
     print(
         f"[*] POST http://{args.host}:{args.port}{CGI_PATH} "
         f"({len(body)} bytes)"
     )
-    accepted = False
-    try:
-        connection.request(
-            "POST",
-            CGI_PATH,
-            body=body,
-            headers={
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "Content-Length": str(len(body)),
-                "Connection": "close",
-            },
-        )
-        response = connection.getresponse()
-        payload = response.read().decode("utf-8", "replace")
-        accepted = "Done...rebooting" in payload
-        if not accepted:
-            print(f"[-] unexpected OEM response HTTP {response.status}: {payload}")
-            return 2
-    except (socket.timeout, TimeoutError, ConnectionResetError, OSError) as error:
-        # This camera commonly reboots after consuming the request but before
-        # GoAhead emits a valid response.  The post-boot release identity is
-        # the final proof.
-        print(f"[*] OEM connection ended after upload: {type(error).__name__}: {error}")
-        if args.no_wait:
-            print("[-] cannot prove that the camera accepted the upload without post-boot verification")
-            return 2
-        accepted = True
-    finally:
-        connection.close()
-
-    if not accepted:
+    if send_package(args.host, args.port, args.timeout, body, boundary) == "failed":
         return 2
     if args.no_wait:
         print("[-] upload was sent, but no post-boot release identity was verified")
