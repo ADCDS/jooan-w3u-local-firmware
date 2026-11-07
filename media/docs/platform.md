@@ -115,8 +115,8 @@ reach the NVR's recording. `siren` in `/api/v1/controls` keeps `sound` (`alarm`,
 `two_tone`, `pulse`, `chime`), `volume` (1 to 100), `seconds` and `strobe`. Volume is the
 DAC's gain: 100% is its unity, where the sounds play just below clipping, and 50% is
 15 dB less. The speaker's own volume comes back afterwards. On camera1 it was checked at
-5% and 15% only, for state, timing, the amplifier and video, which it did not disturb;
-how loud 100% is has not been measured.
+5% and 15% for state, timing, the amplifier and video, which it did not disturb, and the
+owner found 100% right by ear; its level has not been measured.
 
 `strobe` flashes the white light on a 500 ms cycle (measured on its pin), which stays
 well below the flash rates that are a concern for photosensitivity. It stops after its
@@ -275,7 +275,10 @@ daemon reads lens 0's `ISP EV value` from the kernel's
 read before the daemon has opened the ISP, that file oopses the driver, so nothing
 else should read it during a boot either. It switches to night
 when the level stays at or above `night_ev` for `wait_s`, and back to day
-when it stays at or below `day_ev` (lower, for hysteresis) for `wait_s`.
+when it stays at or below `day_ev` (lower, for hysteresis) for `wait_s`. A start begins
+in day and waits 10 s for the exposure, because the first readings can be wrong either
+way, then goes to night straight away if the level is at `night_ev`. If it stays in day,
+no hold applies, so dusk can still switch it after `wait_s`.
 At least 5 minutes pass between automatic switches, because a switch changes
 the reading itself. With the IR-cut filter open the level reads lower for the
 same light: about 3.6x at twilight, when the sky has plenty of infrared

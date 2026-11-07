@@ -56,6 +56,8 @@ typedef struct {
     int active_night, active_white; /* -1 = not applied yet */
     int ev, ev_valid;
     uint64_t ev_at, cond_since, trigger_until, strobe_until, switched_at, wl_override_until, auto_hold_us;
+    uint64_t auto_settle_us, auto_settle_at;
+    int auto_settling, reapply_night;
     int wl_override;
     int zone_valid, zone_min;
     uint64_t zone_at;
@@ -77,6 +79,7 @@ static pthread_mutex_t lifetime = PTHREAD_MUTEX_INITIALIZER;
 #define EV_READ_US UINT64_C(5000000)
 #define SAVE_DELAY_US UINT64_C(3000000)
 #define AUTO_HOLD_S 300 /* at least this long between automatic switches */
+#define AUTO_SETTLE_S 10 /* the exposure right after video starts is not yet the scene's */
 
 static void defaults(settings *s)
 {
@@ -637,7 +640,7 @@ static void *engine(void *opaque)
             if (ok) c->ev = ev;
             s = c->s;
         }
-        int night = c->active_night;
+        int night = c->active_night, started_day = 0;
         switch (s.night_mode) {
         case NIGHT_DAY: night = 0; snprintf(c->reason, sizeof c->reason, "day (chosen)"); break;
         case NIGHT_NIGHT: night = 1; snprintf(c->reason, sizeof c->reason, "night (chosen)"); break;
@@ -649,9 +652,19 @@ static void *engine(void *opaque)
             if (!c->ev_valid) {
                 if (night < 0) night = 0;
                 snprintf(c->reason, sizeof c->reason, "no exposure reading; holding");
-            } else if (night < 0) {
-                night = c->ev >= (s.night_ev + s.day_ev) / 2;
-                snprintf(c->reason, sizeof c->reason, "auto: started %s", night ? "dark" : "light");
+            } else if (night < 0 || c->auto_settling) {
+                /* A start: day, until the exposure has settled, which reads for the filter
+                 * in that position, so the usual rule applies. A first reading was wrong in
+                 * both directions. Staying in day starts no hold: dusk can still come. */
+                if (!c->auto_settling) { c->auto_settling = 1; c->auto_settle_at = now + c->auto_settle_us; }
+                night = 0;
+                if (now < c->auto_settle_at) snprintf(c->reason, sizeof c->reason, "auto: waiting for the exposure to settle");
+                else {
+                    c->auto_settling = 0;
+                    night = c->ev >= s.night_ev;
+                    started_day = !night;
+                    snprintf(c->reason, sizeof c->reason, "auto: started %s, level %d", night ? "dark" : "light", c->ev);
+                }
             } else {
                 int want = night ? c->ev <= s.day_ev : c->ev >= s.night_ev;
                 if (!want) c->cond_since = 0;
@@ -682,10 +695,12 @@ static void *engine(void *opaque)
         int privacy = privacy_wanted(c, &s, now);
         int change_privacy = privacy != c->active_privacy;
         if (change_privacy) c->active_privacy = privacy;
-        int change_night = night != c->active_night, change_white = white != c->active_white;
+        int switched = night != c->active_night, change_night = switched || c->reapply_night, change_white = white != c->active_white;
+        c->reapply_night = 0;
         int save_now = c->dirty && now - c->dirty_since >= SAVE_DELAY_US;
         if (save_now) c->dirty = 0;
-        if (change_night) { c->active_night = night; c->switched_at = now; }
+        if (switched) { c->active_night = night; c->switched_at = now; }
+        if (started_day) c->switched_at = 0;
         if (change_white) c->active_white = white;
         if (save_now) save(c);
         pthread_mutex_unlock(&c->mutex);
@@ -787,6 +802,9 @@ int jipc_controls_start(jipc_app *app)
     /* JIPC_AUTO_HOLD_S: test hook for the hold between automatic switches. */
     const char *hold = getenv("JIPC_AUTO_HOLD_S");
     c->auto_hold_us = (uint64_t)(hold && *hold ? atoi(hold) : AUTO_HOLD_S) * 1000000u;
+    /* JIPC_AUTO_SETTLE_S: test hook for how long a start waits for the exposure. */
+    const char *settle = getenv("JIPC_AUTO_SETTLE_S");
+    c->auto_settle_us = (uint64_t)(settle && *settle ? atoi(settle) : AUTO_SETTLE_S) * 1000000u;
     /* JIPC_OEM_CONFIG: test hook for the vendor config holding the zone. */
     const char *oem = getenv("JIPC_OEM_CONFIG");
     snprintf(c->oem_config, sizeof c->oem_config, "%s", oem ? oem : "/opt/conf/config.json");
@@ -931,7 +949,7 @@ int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t cap
         if (light && cJSON_GetObjectItemCaseSensitive(light, "on")) c->wl_override_until = 0;
         if (c->s.night_mode != before.night_mode || c->s.night_ev != before.night_ev ||
             c->s.day_ev != before.day_ev) c->cond_since = 0;
-        if (c->s.ir_off != before.ir_off) c->active_night = -1; /* re-apply with the new IR mode */
+        if (c->s.ir_off != before.ir_off) c->reapply_night = 1; /* the same mode, with the new IR setting */
         if (picture_changed) c->apply_picture = 1;
         if (c->s.mic_mute != before.mic_mute) atomic_store(&app->mic_muted, c->s.mic_mute || atomic_load(&app->privacy_on));
         /* With a schedule, on/off holds until the schedule's next edge. */
