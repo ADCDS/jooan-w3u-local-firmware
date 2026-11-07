@@ -467,7 +467,7 @@
 		image: [media, config, [controls, 'im-nst']],
 		streams: [config, mdns, media, controls],
 		network: [[quality, 'nw-now'], mdns, [routes, 'nw-routes'], wifiState, [ipInfo, 'nw-ipm']],
-		system: [joan, media, config, controls, [clock, 'sy-nh'], [restartAt, 'sy-rsn'], [keys, 'sy-keys']],
+		system: [joan, media, config, controls, fwLast, [clock, 'sy-nh'], [restartAt, 'sy-rsn'], [keys, 'sy-keys']],
 		settings: [joan, media, quality]
 	};
 	function load(r) {
@@ -3659,6 +3659,18 @@
 	};
 	$('sy-cancel').onclick = () => upx?.abort();
 	/* A platform install runs on behind its answer. If it stops, nothing else would say so. */
+	const FW_NOT_RESTARTED = 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.',
+		FW_STOPPED = 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).';
+	/* When this page opens too: the tab may have closed, or reloaded, while an install ran. */
+	async function fwLast() {
+		if (installing) return;
+		const d = await api(J + 'update', { quiet: 1 });
+		if (d.state == 'failed') {
+			fwStopped = 1;
+			$('sy-mapply').disabled = true;
+			fwUI(0, FW_STOPPED);
+		} else if (d.restart == 'needed') fwUI(0, FW_NOT_RESTARTED);
+	}
 	async function fwWatch() {
 		let lost = 0;
 		for (let i = 0; i < 240; i++) {
@@ -3667,32 +3679,28 @@
 			try {
 				d = await api(J + 'update', { quiet: 1 });
 			} catch (x) {
-				if (x.kind == 'auth') return; /* the restart ended this session: the sign-in page is up */
+				if (x.kind == 'auth') return location.reload(); /* the restart ended this session: sign in on the new page */
 			}
 			/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
 			if (!d) {
 				lost++;
 				continue;
 			}
-			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart */
+			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart: the buttons and the versions are a new page's */
 			lost = 0;
 			if (d.state == 'failed' || d.restart == 'needed') {
 				installing = 0;
-				reloadOn = 0;
 				fwStopped = d.state == 'failed';
 				$('sy-mapply').disabled = !mfw || fwStopped;
 				$('sy-mstage').disabled = false;
 				return fwUI(
 					0,
-					d.restart == 'needed'
-						? 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.'
-						: 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).'
+					d.restart == 'needed' ? FW_NOT_RESTARTED : FW_STOPPED
 				);
 			}
 		}
 		if (lost) return; /* the offline banner has it from here */
 		installing = 0;
-		reloadOn = 0;
 		fwStopped = 1;
 		$('sy-mapply').disabled = true;
 		$('sy-mstage').disabled = false;
@@ -3725,7 +3733,6 @@
 				$('sy-file').value = '';
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
-				reloadOn = 1; /* when it comes back, the buttons and the versions are a new page's */
 				/* Not awaited: the dialog closes, and it does not look as if Cancel could stop this. */
 				fwWatch();
 			}
