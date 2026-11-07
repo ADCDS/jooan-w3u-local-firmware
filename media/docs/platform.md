@@ -205,8 +205,8 @@ showing it. The hardware watchdog's stream check allows for this.
 Leaving privacy should not cost video either. A black picture costs no bits, so rate
 control would sit at its lowest quantiser and the first real frames would be huge: up to
 640 KB and 1 to 4 frames a second for 15 to 25 s on camera1. So the encoders' floor goes
-from 15 to 30 while the picture is black and back afterwards, and 15 fps held through it,
-largest frame 189 KB. In auto mode, privacy's time in day mode counts as a start's
+from 15 to 30 while the picture is black and back afterwards. In three runs that kept
+15 fps but for one dip to 7 fps for a second, largest frame 189 KB. In auto mode, privacy's time in day mode counts as a start's
 settling, so a dark scene goes back to night at once instead of spending 10 s in day mode.
 
 The black-out only works in the ISP's day mode: in night mode it ignores the picture
