@@ -552,6 +552,7 @@ def controls_checks(request, root, connection=None, secret=None):
     assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
     wait_for(lambda: controls()["live"]["night"] == "night" and platform()["night"] == 1, 1.5, "night at once after privacy")
     assert controls()["live"]["hold_left_s"] == 0, controls()["live"]
+    assert controls()["live"]["level"] is None, "the reading at the pose does not count"
     set_ev(9000)
     wait_for(lambda: controls()["live"]["night"] == "day", 12, "the usual rule corrects it, with no hold")
     assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200

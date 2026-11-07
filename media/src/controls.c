@@ -1353,6 +1353,7 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity)
             cJSON_AddNumberToObject(live, "strobe_left_s",
                 c->strobe_until && now < c->strobe_until ? (double)((c->strobe_until - now + 999999u) / 1000000u) : 0);
             cJSON_AddBoolToObject(live, "clock_ok", c->clock_ok);
+            cJSON_AddBoolToObject(live, "clock_waiting", !c->privacy_ready);
             cJSON_AddBoolToObject(live, "network_time", c->network_time);
             cJSON_AddNumberToObject(live, "local_minutes", local_minutes(&c->s));
             cJSON_AddStringToObject(live, "zone", c->zone_valid ? "camera" : "browser");

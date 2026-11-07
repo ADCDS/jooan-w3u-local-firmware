@@ -745,6 +745,7 @@ class Mock:
             name = {"POST": "wifi/stage", "PUT": "wifi/commit", "GET": "wifi/state"}.get(m, "wifi/rollback")
         elif rest == "v1/update":
             if m == "GET":  # --update-status 500,failed answers those in turn, then the last one
+                self.authorize(h, now, True)  # as the real route does: after a restart this answers 401
                 sequence = self.args.update_status.split(",") if self.args.update_status else ["idle"]
                 self.update_polls = getattr(self, "update_polls", -1) + 1
                 said = sequence[min(self.update_polls, len(sequence) - 1)]

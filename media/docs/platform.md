@@ -149,7 +149,7 @@ shows.
 `tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
 which motor steps centre each point of that picture and stores six numbers per axis
 in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
-lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.37 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
+lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.38 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
 Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
 with 20 stops matched, points of the street land a median of 1.2% of the frame's
 width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside

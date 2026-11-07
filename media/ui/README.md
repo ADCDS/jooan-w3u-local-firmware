@@ -50,6 +50,7 @@ xz, which keeps at least 48 KiB of the partition free.
 - Status `audio.muted` and `audio.level` (`{"peak_dbfs","rms_dbfs"}` or `null`)
   drive the microphone switch and the "Sound level now" meter (polled every
   2 s on Audio); without them, both stay hidden.
+- `live.clock_waiting`: a privacy or white light schedule is still waiting for the clock to be confirmed.
 - The stream password: `POST /api/v1/config {"password"}` changes it, and RTSP sessions using
   the old one are dropped at once, so an NVR has to reconnect with the new one;
   `GET /api/v1/config/password` is fetched only to show or copy it (the daemon

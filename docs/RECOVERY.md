@@ -101,8 +101,11 @@ ls /opt/custom/jooan-local/slots/
 
 If the selection names a slot (`A - 0`), that slot is there and `df -k /opt` reads at least 51 KiB
 free, nothing is lost. Below 50 KiB at boot the vendor's `startapp` wipes `/opt/etc` and
-`/opt/jooanipc-open`, which is worse than having no runtime, so free space first. If the selection reads
-`- - 0`, put a runtime back. Stop any installer still waiting on this camera first: it would carry
+`/opt/jooanipc-open`, which is worse than having no runtime, so free space first. What can go: anything
+named `*.new`, `*.next` or `*.previous` under `/opt/custom/jooan-local` and `/opt/jooanipc-open`, and
+`state/net-loss.log`. What cannot: `config/`, `state/selection`, `controller.tar.gz`, `recovery/`, a selected
+slot, and in `/opt/jooanipc-open` `camera.ini`, `deployment.env`, the two boot scripts and the keys. If the
+selection reads `- - 0`, put a runtime back. Stop any installer still waiting on this camera first: it would carry
 on when it saw a restart.
 
 1. Find the package that failed, which stays in RAM until a restart:

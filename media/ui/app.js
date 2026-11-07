@@ -80,7 +80,7 @@
 		lastOk = 0, // when the camera last answered anything
 		upx = null, // the platform upload in flight
 		spw = null, // the stream password, fetched only when shown or copied
-		reloadOn = 0, // a media update: when the camera returns, the page may be a new one
+		reloadOn = 0, // an update: when the camera returns, the page may be a new one
 		installing = 0, // one install at a time: the other's restart must not land in this one's flash
 		fwStopped = 0, // a platform install stopped: a media install ends in the restart that must not happen yet
 		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
@@ -1084,7 +1084,11 @@
 			(a == b
 				? 'From and until are the same, so the light never turns on.'
 				: `Every day, camera time (${utc(x.utc_offset_min)}${camZone() ? ', set under System' : ''}). ` +
-					(inside ? `On now, off ${day} at ${s.until}.` : `Next: ${day} ${s.from}.`)) +
+					(inside
+						? x.live.clock_waiting
+							? 'Off until the clock is confirmed, up to 30 minutes after a start.'
+							: `On now, off ${day} at ${s.until}.`
+						: `Next: ${day} ${s.from}.`)) +
 			(dz != null && x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '') +
 			camNow() + clockNote()
 		);
@@ -1584,7 +1588,7 @@
 			(c.enabled ? `Every day from ${c.from} to ${c.until}` : 'Every day') +
 				(x.live.zone == 'camera' ? ', in the camera’s time zone.' : ', in this device’s time zone.') +
 				(c.enabled ? ' The switch above lasts until the next change.' + camNow() + clockNote() : '') +
-				(c.enabled && x.live.clock_ok === false && x.live.privacy ? ' Privacy stays on until the clock is confirmed, for up to 30 minutes after a start.' : '')
+				(c.enabled && x.live.clock_waiting && x.live.privacy ? ' Privacy stays on until the clock is confirmed, for up to 30 minutes after a start.' : '')
 		);
 	}
 	$('pt-pvs').onchange = e => {
@@ -3654,6 +3658,46 @@
 		);
 	};
 	$('sy-cancel').onclick = () => upx?.abort();
+	/* A platform install runs on behind its answer. If it stops, nothing else would say so. */
+	async function fwWatch() {
+		let lost = 0;
+		for (let i = 0; i < 240; i++) {
+			await new Promise(z => setTimeout(z, 2e3));
+			let d = null;
+			try {
+				d = await api(J + 'update', { quiet: 1 });
+			} catch (x) {
+				if (x.kind == 'auth') return; /* the restart ended this session: the sign-in page is up */
+			}
+			/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
+			if (!d) {
+				lost++;
+				continue;
+			}
+			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart */
+			lost = 0;
+			if (d.state == 'failed' || d.restart == 'needed') {
+				installing = 0;
+				reloadOn = 0;
+				fwStopped = d.state == 'failed';
+				$('sy-mapply').disabled = !mfw || fwStopped;
+				$('sy-mstage').disabled = false;
+				return fwUI(
+					0,
+					d.restart == 'needed'
+						? 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.'
+						: 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).'
+				);
+			}
+		}
+		if (lost) return; /* the offline banner has it from here */
+		installing = 0;
+		reloadOn = 0;
+		fwStopped = 1;
+		$('sy-mapply').disabled = true;
+		$('sy-mstage').disabled = false;
+		fwUI(0, 'Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see Recovery in the docs).');
+	}
 	$('sy-apply').onclick = () =>
 		fw &&
 		sheet({
@@ -3665,6 +3709,7 @@
 			run: async () => {
 				try {
 					installing = 1;
+					fwStopped = 0;
 					$('sy-mapply').disabled = $('sy-mstage').disabled = true;
 					await api(J + 'update', { method: 'PUT', json: { id: fw }, timeout: 6e4, quiet: 1 });
 				} catch (x) {
@@ -3680,37 +3725,9 @@
 				$('sy-file').value = '';
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
-				/* It runs on behind the answer. If it stops, nothing else would say so. */
-				let lost = 0;
-				for (let i = 0; i < 240; i++) {
-					await new Promise(z => setTimeout(z, 2e3));
-					const d = await api(J + 'update', { quiet: 1 }).catch(() => null);
-					/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
-					if (!d) {
-						lost++;
-						continue;
-					}
-					if (lost && d.state == 'idle') return; /* the status went with the restart */
-					lost = 0;
-					if (d.state == 'failed' || d.restart == 'needed') {
-						installing = 0;
-						fwStopped = d.state == 'failed';
-						$('sy-mapply').disabled = !mfw || fwStopped;
-						$('sy-mstage').disabled = false;
-						return fwUI(
-							0,
-							d.restart == 'needed'
-								? 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.'
-								: 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).'
-						);
-					}
-				}
-				if (lost) return; /* the offline banner has it from here */
-				installing = 0;
-				fwStopped = 1;
-				$('sy-mapply').disabled = true;
-				$('sy-mstage').disabled = false;
-				fwUI(0, 'Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see Recovery in the docs).');
+				reloadOn = 1; /* when it comes back, the buttons and the versions are a new page's */
+				/* Not awaited: the dialog closes, and it does not look as if Cancel could stop this. */
+				fwWatch();
 			}
 		});
 	/* A media package: the same three steps. A failure before the flash leaves the camera up

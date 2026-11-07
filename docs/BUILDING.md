@@ -16,7 +16,7 @@ checklist. Owners installing a published release want
 | Python 3 with `cryptography` | signing and host-side verification | Yes |
 | `squashfs-tools` (`unsquashfs`, `mksquashfs`) | rebuilding the appfs image | Yes |
 | The camera's own appfs (`/dev/mtdblock4`, 3211264 bytes) | media release bundles | No: vendor files |
-| `libimp.so` and `libatomic.so.1` from the [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi) | media runtime | Published since v0.2.37, with the source of `libimp.so` beside it |
+| `libimp.so` and `libatomic.so.1` from the [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi) | media runtime | Published since v0.2.38, with the source of `libimp.so` beside it |
 
 ## Platform package
 
@@ -177,7 +177,7 @@ up for manual recovery: see [Recovery](RECOVERY.md#appfs-reflash-recovery).
 Stop the NVR during a platform update (`--nvr-stop`/`--nvr-start`).
 
 **The first media release** goes on with a bundle from `build-appfs.sh --first`,
-using the same installer. Its preflight wants a camera with platform sequence 71
+using the same installer. Its preflight wants a camera with platform sequence 72
 or later and the stock application running, the CV2005 sensors, the appfs its
 bundle was built from, a committed Wi-Fi network and 96 KiB free in `/opt`, and no
 media layer. The installer then
