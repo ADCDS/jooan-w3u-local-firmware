@@ -50,7 +50,7 @@ RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
-FIRST_PLATFORM_SEQUENCE = 72
+FIRST_PLATFORM_SEQUENCE = 73
 
 
 def log(message):
