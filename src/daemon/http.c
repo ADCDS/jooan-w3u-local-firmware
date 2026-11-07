@@ -152,7 +152,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"DELETE")){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"ssh-delete",NULL,id);}
     if(!strcmp(r->path,"/api/firmware/stage")&&!strcmp(r->method,"POST")){if(!r->body||!r->content_length)return json(c,400,"{\"error\":\"image required\"}");if(joan_stage_blob(&G,"firmware",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"firmware-verify",path,id);}
     if(!strcmp(r->path,"/api/firmware/apply")&&!strcmp(r->method,"GET"))return helper_result(c,"firmware-status",NULL,NULL,15);
-    if(!strcmp(r->path,"/api/firmware/apply")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"firmware-apply",NULL,id);}
+    if(!strcmp(r->path,"/api/firmware/apply")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");{unsigned char*why=NULL;size_t why_n=0;int busy=!joan_run_helper(&G,"apply-check",NULL,NULL,&why,&why_n,15)&&why_n&&strstr((const char*)why,"\"ok\":false");if(busy){response(c,409,"application/json; charset=utf-8",why,why_n,NULL);free(why);return 0;}free(why);}return helper_json(c,"firmware-apply",NULL,id);}
     return error_json(c,404,"route_not_found","route not found");
 }
 

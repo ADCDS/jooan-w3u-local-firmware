@@ -21,6 +21,7 @@ root=/opt/jooanipc-open
 state=/tmp/jipc-install
 platform_lock=/run/jooan-local/state.lock
 platform_apply=/run/jooan-local/firmware-apply.lock
+selection=/opt/custom/jooan-local/state/selection
 wifi_trial=/opt/custom/jooan-local/state/wifi-trial
 mkdir -p "$state"
 log() { printf '%s %s\n' "$(cat /proc/uptime)" "$*"; }
@@ -116,6 +117,10 @@ os=$(awk '{print $22}' "/proc/$oem/stat")
 ws=$(awk '{print $22}' "/proc/$watch/stat")
 ss=$(awk '{print $22}' "/proc/$syslog/stat")
 [ ! -d "$platform_apply" ] || die 'a platform update is being installed'
+if [ -r "$selection" ] && read -r sel_stable sel_pending sel_rest < "$selection" &&
+   [ "${sel_stable:--}" = - ] && [ "${sel_pending:--}" = - ]; then
+    die 'no platform runtime on flash: this ends in a reboot, and the next boot would have no network'
+fi
 [ ! -e "$wifi_trial" ] || die 'a Wi-Fi change is being tested: keep it or go back first'
 [ ! -d "$platform_lock" ] || die 'platform maintenance is in progress'
 mkdir -p /run/jooan-local && mkdir "$platform_lock" || die 'cannot take the platform maintenance lock'

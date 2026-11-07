@@ -527,8 +527,15 @@ case "$op" in
         mv -f "$run/firmware.$id.verified.new" "$run/firmware.$id.verified"
         trap - EXIT HUP INT TERM
         ;;
+    apply-check)
+        # On a camera short of room an update deletes the runtime, and only then would refuse on
+        # this: and a rollback needs that runtime, so the trial would never end. A stopped
+        # update's `no-runtime` is no reason here: the retry is what puts one back.
+        if [ -e "$root/state/wifi-trial" ]; then printf '{"ok":false,"reason":"wifi-trial"}\n'; else printf '{"ok":true}\n'; fi
+        ;;
     firmware-apply)
         [ "$id" != - ] || exit 2
+        [ ! -e "$root/state/wifi-trial" ] || exit 1
         case "$id" in *[!0-9a-f]*|'') exit 2 ;; esac
         [ "${#id}" = 64 ] || exit 2
         image=$run/staging/firmware/$id.bin

@@ -99,7 +99,9 @@ cat /opt/custom/jooan-local/state/selection
 ls /opt/custom/jooan-local/slots/
 ```
 
-If the selection names a slot (`A - 0`) and that slot is there, nothing is lost. If it reads
+If the selection names a slot (`A - 0`), that slot is there and `df -k /opt` reads at least 51 KiB
+free, nothing is lost. Below 50 KiB at boot the vendor's `startapp` wipes `/opt/etc` and
+`/opt/jooanipc-open`, which is worse than having no runtime, so free space first. If the selection reads
 `- - 0`, put a runtime back. Stop any installer still waiting on this camera first: it would carry
 on when it saw a restart.
 
@@ -109,11 +111,13 @@ on when it saw a restart.
    mkdir /tmp/fw && mount -t squashfs -o ro,loop /run/jooan-local/firmware.<id>.sqfs /tmp/fw
    ```
    If it is gone, the same two files are in the release's `JOOAN_FW_PKG`. On your computer,
-   `dd if=JOOAN_FW_PKG bs=96 skip=1 of=p.sqfs && unsquashfs p.sqfs runtime.tar.gz runtime.md5`, then copy
-   them to `/tmp/fw` on the camera with `ssh admin@CAMERA 'cat > /tmp/fw/runtime.tar.gz' < squashfs-root/runtime.tar.gz`.
-2. Copy it into a slot, and let the checksum decide:
+   `dd if=JOOAN_FW_PKG bs=96 skip=1 of=p.sqfs && unsquashfs p.sqfs runtime.tar.gz runtime.md5`, then `mkdir -p /tmp/fw`
+   on the camera and copy them there, with `ssh admin@CAMERA 'cat > /tmp/fw/runtime.tar.gz' < squashfs-root/runtime.tar.gz`.
+2. Copy it into a slot, and let the checksum decide. First see that `df -k /opt` reads at least the
+   size of `runtime.tar.gz` plus 60 KiB, or free space, for the reason above.
    ```sh
    cd /opt/custom/jooan-local/slots
+   rm -rf A.new
    mkdir A.new && cp /tmp/fw/runtime.tar.gz /tmp/fw/runtime.md5 A.new/
    [ "$(md5sum A.new/runtime.tar.gz | cut -c1-32)" = "$(cat A.new/runtime.md5)" ] && sync && mv A.new A && sync
    ```
@@ -122,8 +126,8 @@ on when it saw a restart.
    . /run/jooan-local/controller/boot/common.sh; jl_lock; jl_write_selection A - 0; jl_unlock
    ```
 
-The supervisor reads the selection only at boot, so this disturbs nothing. The camera can now restart
-safely, and the update can be tried again. This was done for real on camera1 on 2026-11-07, from RAM.
+The supervisor reads the selection only at boot, so this disturbs nothing. With `df -k /opt` at 51 KiB or
+more the camera can now restart safely, and the update can be tried again. This was done for real on camera1 on 2026-11-07, from RAM.
 
 ## A media change that stops native boot
 
@@ -199,9 +203,10 @@ Recover that state over SSH, without rebooting:
 flashcp -v /tmp/jipc-appfs-rollback.bin /dev/mtd4
 md5sum /dev/mtd4      # must equal the original appfs MD5
 cp /tmp/jipc-install/boot-handoff.sh.before /opt/jooanipc-open/boot-handoff.sh
+cp /tmp/jipc-install/native-boot.sh.before /opt/jooanipc-open/native-boot.sh
 cp /tmp/jipc-install/camera.ini.before /opt/jooanipc-open/camera.ini
 cp /tmp/jipc-install/deployment.env.before /opt/jooanipc-open/deployment.env
-chmod 700 /opt/jooanipc-open/boot-handoff.sh
+chmod 700 /opt/jooanipc-open/boot-handoff.sh /opt/jooanipc-open/native-boot.sh
 chmod 600 /opt/jooanipc-open/camera.ini /opt/jooanipc-open/deployment.env
 sync
 reboot

@@ -418,7 +418,8 @@ as it takes, with a reset after 15 minutes that doubles each boot to 4 hours, an
 if the radio firmware crashed; nothing latches), stops the feeder, launches the daemon (which
 requires `motor_home=1`, homes pan/tilt and arms its own watchdog) and
 qualifies once the daemon has stayed healthy for 185 s, one watchdog period,
-with homing complete and the network still up. Its stages are kept in
+with homing complete, and a gateway silent at the end of that counts only on the third
+such boot in a row, as it may be the router. Its stages are kept in
 `/opt/jooanipc-open/native-trial` until qualification. A boot that finds that
 file renames it `native-failed` (keeping the stage) and boots the guarded
 handoff instead, as does any boot without `native`. Nothing clears

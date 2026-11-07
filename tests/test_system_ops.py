@@ -119,6 +119,16 @@ class SystemOpsTests(unittest.TestCase):
         refused("update")
         (self.run / "firmware-apply.lock").rmdir()
         self.assertFalse(self.rebooted.exists())
+        # An update is refused during a Wi-Fi trial, before it can delete the runtime, and a stopped
+        # update's missing runtime does not refuse the retry that puts one back.
+        self.assertEqual(json.loads(self.helper("apply-check").stdout), {"ok": True})
+        (self.root / "state/wifi-trial").mkdir()
+        self.assertEqual(json.loads(self.helper("apply-check").stdout), {"ok": False, "reason": "wifi-trial"})
+        self.assertNotEqual(self.helper("firmware-apply", ident="a" * 64).returncode, 0)
+        (self.root / "state/wifi-trial").rmdir()
+        (self.root / "state/selection").write_text("- - 0\n")
+        self.assertEqual(json.loads(self.helper("apply-check").stdout), {"ok": True})
+        (self.root / "state/selection").write_text("A - 0\n")
         # While this boot is proving itself, a restart would latch the fallback.
         media = Path(self.temporary.name) / "media"
         media.mkdir(exist_ok=True)
@@ -254,17 +264,21 @@ sync() {{ :; }}
 
     def test_runtime_install_goes_on_once_the_old_one_is_gone(self) -> None:
         """With no runtime on flash a refusal is the worst outcome: the reserve gives way first."""
-        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [60])
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [111])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("inside the 56 KiB reserve", result.stderr)
         selection = (persistent / "state/selection").read_text().split()
         self.assertTrue((persistent / "slots" / selection[1] / "runtime.tar.gz").exists())
-        # And when it truly cannot fit, it says so and does not claim otherwise.
-        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [10])
+        # Not below what the vendor's startapp wipes /opt at, and it says so and claims nothing else.
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [107])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("NO RUNTIME ON FLASH", result.stderr)
         self.assertNotIn("nothing was changed", result.stderr)
         self.assertEqual((persistent / "state/selection").read_text().strip(), "- - 0")
+        # In place but short once written: a failure, so the apply does not go on to reboot.
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [111] * 121 + [40])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("would wipe it at boot", result.stderr)
 
     def test_clock_confirmed(self) -> None:
         self.assertFalse((self.run / "clock-set").exists())
@@ -539,7 +553,11 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
         hook.chmod(0o755)
         result = self.common(ensure)
         self.assertFalse(attempts.exists(), result.stderr)
-        self.assertEqual(applied.read_text().strip(), "77", "and it is not retried until wpa_supplicant changes")
+        self.assertFalse(applied.exists(), "one could be a failed fork")
+        self.common(ensure)
+        self.common(ensure)
+        self.assertFalse(attempts.exists())
+        self.assertEqual(applied.read_text().strip(), "77", "three, and it stops until wpa_supplicant changes")
         # A real attempt that failed counts, and is retried: the router may just be away.
         applied.unlink()
         hook.write_text("#!/bin/sh\nexit 1\n")

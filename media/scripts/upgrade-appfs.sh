@@ -20,6 +20,7 @@ state=/tmp/jipc-install
 # neither restarts its runtime nor lets the network watchdog reboot; holding it
 # from here on keeps a reboot from landing on a half-written or failed appfs.
 platform_lock=/run/jooan-local/state.lock
+selection=/opt/custom/jooan-local/state/selection
 mkdir -p "$state"
 log() { printf '%s %s\n' "$(cat /proc/uptime)" "$*"; }
 die() { log "ABORT: $*"; exit 1; }
@@ -90,6 +91,10 @@ flags=$(cat /sys/class/mtd/mtd4/flags)
 [ "$(hash /dev/mtdblock4)" = "$2" ] || die 'original appfs changed'
 grep -q '^/dev/mtdblock4 /mnt/mtd squashfs ro[, ]' /proc/mounts || die 'unexpected appfs mount'
 [ ! -e "$root/boot-trial" ] || die 'existing failed native boot trial'
+if [ -r "$selection" ] && read -r sel_stable sel_pending sel_rest < "$selection" &&
+   [ "${sel_stable:--}" = - ] && [ "${sel_pending:--}" = - ]; then
+    die 'no platform runtime on flash: this ends in a reboot, and the next boot would have no network'
+fi
 # JFFS2 reclaims written-over blocks lazily, so a busy day can read low for a moment.
 tries=0
 until [ "$(df -k /opt | awk 'END {print $4}')" -ge 64 ]; do

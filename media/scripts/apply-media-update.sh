@@ -52,6 +52,11 @@ old=$(sed -n 's/^JIPC_RELEASE=//p' "$env")
 [ -s "$run/qualified" ] || stop 'The camera is still checking its last start. Try again in about 4 minutes'
 [ ! -e "$platform/state/wifi-trial" ] || stop 'A new Wi-Fi network or address is being tested. Keep it or go back first'
 [ ! -d "$platform_run/firmware-apply.lock" ] || stop 'A platform update is being installed. Try again when it has finished'
+# A flash ends in a restart, and with no runtime on flash the next boot would have no network.
+if [ -r "$platform/state/selection" ] && read -r sel_stable sel_pending sel_rest < "$platform/state/selection" &&
+   [ "${sel_stable:--}" = - ] && [ "${sel_pending:--}" = - ]; then
+    stop 'A platform update stopped half way, and the camera would not come back from a restart. Look at it over SSH first (see Recovery in the documentation)'
+fi
 [ ! -e "$root/boot-trial" ] || stop 'The camera is recovering from a failed start: fix that first'
 [ ! -e "$root/native-failed" ] || stop 'The camera is recovering from a failed start: fix that first'
 [ "$(md5 "$here/appfs.img")" = "$image" ] || stop 'The image does not match its checksum'

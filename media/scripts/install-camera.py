@@ -50,7 +50,7 @@ RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
-FIRST_PLATFORM_SEQUENCE = 70
+FIRST_PLATFORM_SEQUENCE = 71
 
 
 def log(message):
@@ -201,9 +201,19 @@ def boot_mode(cam):
     return None
 
 
+NO_RUNTIME = ("no platform runtime is on flash: a platform update stopped half way, and any restart would take the "
+              "camera off the network. Put one back first: docs/RECOVERY.md, 'An update stopped'")
+
+
+def no_runtime(facts):
+    return facts.get("selection", "").split()[:2] == ["-", "-"]
+
+
 def preflight_problems(facts, platform, local, appfs, config):
     """Reasons the bundle must not be applied to the camera as it is now."""
     problems = []
+    if no_runtime(facts):
+        problems.append(NO_RUNTIME)
     if facts.get("appfs_size") != "3211264" or facts.get("appfs_name") != "appfs":
         problems.append("not the qualified JA-A12 flash layout")
     if int(facts.get("opt_free", 0) or 0) < 64:
@@ -239,6 +249,8 @@ def preflight_problems(facts, platform, local, appfs, config):
 def first_problems(facts, platform, appfs):
     """Why a camera cannot take its first media release."""
     problems = []
+    if no_runtime(facts):
+        problems.append(NO_RUNTIME)
     if int(platform.get("release_sequence") or 0) < FIRST_PLATFORM_SEQUENCE:
         problems.append(f"the platform is sequence {platform.get('release_sequence')}: a first install needs "
                         f"{FIRST_PLATFORM_SEQUENCE} or later, because older ones cannot boot the media layer as this expects")
@@ -324,6 +336,7 @@ def first_install(args, cam, bundle, spec):
         "echo enabled=$([ -e /opt/jooanipc-open/enabled ] && echo yes || echo no);"
         "echo sensors=$(cat /tmp/sensor1_name /tmp/sensor2_name 2>/dev/null);"
         f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
+        "echo selection=$(cat /opt/custom/jooan-local/state/selection 2>/dev/null);"
         "n=0; d=0; for f in /proc/[0-9]*/comm; do c=$(cat $f 2>/dev/null); "
         "[ \"$c\" = jooanipc ] && n=$((n+1)); [ \"$c\" = jooanipc-open ] && d=$((d+1)); done; "
         "echo oem=$n; echo daemon=$d").splitlines() if "=" in line)
@@ -509,6 +522,7 @@ def main():
         f"echo native=$([ -e {NATIVE} ] && echo yes || echo no);"
         f"echo native_failed=$(tr '\\n' ' ' < {NATIVE}-failed 2>/dev/null);"
         f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
+        "echo selection=$(cat /opt/custom/jooan-local/state/selection 2>/dev/null);"
         "echo qualified=$(cat /tmp/jipc-handoff.log /tmp/jipc-native.log 2>/dev/null | "
         "grep -c -E 'boot handoff qualified|native boot qualified');"
         "echo libimp_sha256=$(sed -n 's/^JIPC_LIBIMP_SHA256=//p' " + ENV + ");"

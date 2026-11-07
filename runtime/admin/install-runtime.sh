@@ -48,7 +48,7 @@ jl_size_new=$(( (jl_bytes_new + 1023) / 1024 ))
 jl_size_old=$(( jl_bytes_old / 1024 ))
 [ "$jl_size_new" -le "$jl_size_old" ] && jl_short=$((8 + 56)) || jl_short=$((jl_size_new - jl_size_old + 8 + 56))
 # With nothing left to protect there is nothing to refuse for: the steps after the delete decide.
-[ "$JL_STABLE" = - ] && [ "$jl_bytes_old" = 0 ] || {
+[ "$JL_STABLE" = - ] || {
 jl_wait_free_kb "$JL_ROOT" "$jl_short" 20 || {
     jl_log 'runtime would not fit in the 56 KiB reserve; nothing was changed'; exit 1;
 }
@@ -70,12 +70,13 @@ jl_archive_bytes=$(wc -c < "$jl_stage/runtime.tar.gz")
 jl_size=$(( (jl_archive_bytes + 1023) / 1024 ))
 case "$jl_archive_bytes:$jl_size" in *[!0-9:]*|:*|*:) exit 1 ;; esac
 jl_need=$((jl_size + 8))
-# The only runtime is gone now, and from here a refusal is the worst outcome: the next boot would
-# have no network. So wait for the freed space as long as it takes, and if the 56 KiB reserve will
-# not hold (health promotion restores the 64 KiB gate), use it: no runtime is worse.
+# The only runtime is gone now, and a refusal costs the next boot its network. So wait for the freed
+# space as long as it takes, and if the 56 KiB reserve will not hold, use most of it. Not all of it:
+# below 50 KiB at boot the vendor's startapp deletes /opt/etc and /opt/jooanipc-open, which is worse
+# than no runtime, as a camera with no runtime falls back and can be repaired.
 if ! jl_wait_free_kb "$JL_ROOT" $((jl_need + 56)) 120; then
     jl_log 'going on inside the 56 KiB reserve: no runtime on flash would be worse'
-    jl_wait_free_kb "$JL_ROOT" "$jl_need" 60 || {
+    jl_wait_free_kb "$JL_ROOT" $((jl_need + 51)) 60 || {
         jl_log 'NO RUNTIME ON FLASH, and the new one does not fit. Do not restart this camera: see docs/RECOVERY.md'
         exit 1
     }
@@ -90,6 +91,10 @@ sync
 jl_write_selection - "$jl_target" 0 || exit 1
 sync
 [ "${JOOAN_FAIL_AT:-}" != after-pending-selection-rename ] || exit 99
+jl_wait_free_kb "$JL_ROOT" 51 20 || {
+    jl_log 'the runtime is in place, but /opt is so full the vendor startapp would wipe it at boot. Free space before any restart: see docs/RECOVERY.md'
+    exit 1
+}
 jl_check_maintenance_storage || jl_log 'the runtime is in place, with less room than the reserve'
 jl_unlock
 trap - EXIT

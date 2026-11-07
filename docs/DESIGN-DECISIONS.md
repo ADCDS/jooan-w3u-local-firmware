@@ -33,6 +33,6 @@ or were built another way. Each is here with its reason.
 - The reset button also works in the handoff once the vendor's program has stopped, not only in a
   native boot. It is useful there, and its reboot counts for nothing against that boot.
 - The system clock, with no battery and with network time off, lags by the time without power after
-  each power cut. Schedules then run on it after 2 minutes. A privacy schedule fails closed, and with
-  network time configured waits 30, in case the router is back from the same cut and has no time yet.
-  The page says so.
+  each power cut. Schedules then run on it after 2 minutes. Privacy and white light schedules, with
+  network time configured, wait 30, in case the router is back from the same cut and has no time yet;
+  privacy stays on meanwhile, and the light off. The page says so.

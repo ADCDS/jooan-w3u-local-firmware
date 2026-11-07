@@ -255,10 +255,15 @@ jl_ensure_wifi() {
         0) printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || : ;;
         3)
             # Nothing was tried. So nothing is trying to join, which is what a native boot
-            # asks before it waits: the fallback gets its turn. Not retried either.
+            # asks before it waits: the fallback gets its turn. A fork that failed looks the
+            # same, so it takes three in a row to stop trying.
             rm -f "$JL_RUN/wifi-attempts"
-            printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
+            jl_wifi_broken=$(cat "$JL_RUN/wifi-broken" 2>/dev/null) || jl_wifi_broken=0
+            case "$jl_wifi_broken" in ''|*[!0-9]*) jl_wifi_broken=0 ;; esac
+            jl_wifi_broken=$((jl_wifi_broken + 1))
+            printf '%s\n' "$jl_wifi_broken" > "$JL_RUN/wifi-broken" || :
             jl_log 'committed Wi-Fi network cannot be tried: its file or tools are broken'
+            [ "$jl_wifi_broken" -lt 3 ] || printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
             ;;
         *) jl_log 'committed Wi-Fi network could not be applied' ;;
     esac

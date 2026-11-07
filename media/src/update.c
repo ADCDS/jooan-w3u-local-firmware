@@ -242,7 +242,10 @@ static int receive_package(const char *first, size_t first_size, size_t total, j
         snprintf(error, capacity, "%s", why[0] ? why : "The package cannot be installed on this camera");
         return 409;
     }
-    snprintf(release, sizeof release, "%s", value);
+    if (snprintf(release, sizeof release, "%s", value) >= (int)sizeof release) {
+        snprintf(error, capacity, "The package names no valid release");
+        return 409;
+    }
     staged_at = jipc_now_us();
     return 200;
 }

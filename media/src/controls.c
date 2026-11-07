@@ -714,8 +714,8 @@ static void *engine(void *opaque)
         if (c->retry_picture_at && now >= c->retry_picture_at) { c->retry_picture_at = 0; do_picture = 1; }
         c->clock_ok = !access(c->clock_marker, F_OK) || (atomic_load(&app->clock_confirmed) && !getenv("JIPC_CLOCK_IGNORE_SNTP"));
         c->network_time = has_content(c->ntp_config);
-        /* Privacy fails closed, so it can wait for a router back from the same power cut. A slightly
-         * wrong clock is much better than no night vision, so the other schedules do not wait as long. */
+        /* Privacy and the white light can wait for a router back from the same power cut: waiting costs
+         * them nothing. A slightly wrong clock is much better than no night vision, so that one does not. */
         c->schedules_ready = c->clock_ok || now - c->started_at >= (c->clock_wait_us ? c->clock_wait_us : CLOCK_WAIT_US);
         c->privacy_ready = c->clock_ok || now - c->started_at >=
             (c->clock_wait_us ? c->clock_wait_us : c->network_time ? CLOCK_WAIT_NTP_US : CLOCK_WAIT_US);
@@ -761,6 +761,9 @@ static void *engine(void *opaque)
                 night = c->night_before_privacy;
                 back_from_privacy = 1;
                 c->auto_start = 0;
+                /* Nor does the last reading count: the next one is taken with the head nearly back. */
+                c->ev_valid = 0;
+                c->ev_at = now;
             } else c->auto_start = 1;
             c->night_before_privacy = -1;
         }
@@ -847,7 +850,7 @@ static void *engine(void *opaque)
         else {
             c->trigger_until = 0;
             if (s.wl_schedule && c->wl_override_until && now < c->wl_override_until) white = c->wl_override;
-            else if (s.wl_schedule) { c->wl_override_until = 0; white = c->schedules_ready && in_window(local_minutes(&s), s.wl_from, s.wl_until); }
+            else if (s.wl_schedule) { c->wl_override_until = 0; white = c->privacy_ready && in_window(local_minutes(&s), s.wl_from, s.wl_until); }
             else white = s.white_light;
         }
         int switched = night != c->active_night, change_night = switched || c->reapply_night;

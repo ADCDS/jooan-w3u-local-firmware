@@ -108,7 +108,8 @@ A native boot works like this:
    300 s if nothing can come of waiting, see [Recovery](RECOVERY.md)), stops the feeder and launches jooanipc-open, which homes pan/tilt
    (`motor_home=1`) and takes over `/dev/watchdog` (`watchdog=1`).
 4. After the daemon reports ready, the boot qualifies once it has stayed
-   healthy for 185 s with homing complete and the network still up.
+   healthy for 185 s with homing complete. A gateway silent at the end of that counts
+   only on the third such boot in a row: it may be the router.
 
 Until it qualifies, `native-trial` on `/opt` records the stage reached. A boot
 that finds `native-trial` renames it `native-failed` (keeping the recorded
@@ -171,7 +172,8 @@ runtime must total no more than 200704 bytes (196 KiB), with at least 65536 byte
 (64 KiB) free. Updates are maintenance transactions, not A/B coexistence: after
 the controller and recovery path are durable, selection becomes `- - 0`, the old
 persistent runtime is removed, and one signed candidate is staged while at least
-57344 bytes (56 KiB) remain free. This exceeds the OEM 50 KiB cleanup threshold.
+57344 bytes (56 KiB) remain free, or 51 KiB if the room it counted on does not appear.
+Both exceed the OEM 50 KiB cleanup threshold.
 The trial applies the committed Wi-Fi network while it runs and restarts a
 candidate whose first start failed; one that still fails
 stays as the only runtime (nothing older exists to restore) and the supervisor

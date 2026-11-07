@@ -149,7 +149,7 @@ shows.
 `tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
 which motor steps centre each point of that picture and stores six numbers per axis
 in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
-lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.36 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
+lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.37 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
 Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
 with 20 stops matched, points of the street land a median of 1.2% of the frame's
 width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside
@@ -217,7 +217,7 @@ settings that make it, as it does the Image page's sliders (brightness 40 change
 on camera1), and at night the whole street showed. So privacy runs in day
 mode with the infrared off, whatever the chosen mode says, sent at every turn-on, and nothing can
 flip it to night meanwhile. Frames stay held until day mode and the black-out are confirmed, plus 2 s. Afterwards the
-chosen mode comes back, automatic mode as at a start. Measured on camera1 at night with every frame of
+mode privacy interrupted comes back (a start with privacy already on starts as usual). Measured on camera1 at night with every frame of
 both lenses recorded across the switch: pictures, then only black (Y=16, U=V=128 at the
 source), then pictures, through a day/night request and a daemon restart too.
 
@@ -231,8 +231,9 @@ privacy was already on when the daemon started.
 With a schedule, the clock may be hours behind after a power cut, so privacy stays on after
 a start until network time or a person has confirmed the clock, or for 2 minutes if nothing
 can (30 with network time configured: a router back from the same power cut may need that long
-for its own time). The night and white light schedules wait the 2 minutes only, as a slightly wrong
-clock is much better than no night vision, and the page warns while the clock is unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
+for its own time). A white light schedule waits as long, as a light at 02:00 helps nobody. A night
+schedule waits the 2 minutes only, as a slightly wrong clock is much better than no night vision. The
+page warns while the clock is unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
 `privacy.held_until`. Turning a schedule on during manual privacy works the same way, and
 turning it off while that holds leaves privacy on, by hand. A new pose applies at the next turn-on. On
 camera1's mounting no end stop hides the lens: down shows the wall and the ledge

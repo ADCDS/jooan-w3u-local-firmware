@@ -82,6 +82,7 @@
 		spw = null, // the stream password, fetched only when shown or copied
 		reloadOn = 0, // a media update: when the camera returns, the page may be a new one
 		installing = 0, // one install at a time: the other's restart must not land in this one's flash
+		fwStopped = 0, // a platform install stopped: a media install ends in the restart that must not happen yet
 		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
 		tzAt = 0; // after saving the time zone: the camera takes up to a minute to follow
 	const S = {},
@@ -1582,7 +1583,8 @@
 			'pt-pln',
 			(c.enabled ? `Every day from ${c.from} to ${c.until}` : 'Every day') +
 				(x.live.zone == 'camera' ? ', in the camera’s time zone.' : ', in this device’s time zone.') +
-				(c.enabled ? ' The switch above lasts until the next change.' + camNow() + clockNote() : '')
+				(c.enabled ? ' The switch above lasts until the next change.' + camNow() + clockNote() : '') +
+				(c.enabled && x.live.clock_ok === false && x.live.privacy ? ' Privacy stays on until the clock is confirmed, for up to 30 minutes after a start.' : '')
 		);
 	}
 	$('pt-pvs').onchange = e => {
@@ -3670,6 +3672,7 @@
 						installing = 0;
 						$('sy-mapply').disabled = !mfw;
 						$('sy-mstage').disabled = false;
+						if (x.st == 409 && x.d?.reason == 'wifi-trial') throw new Fail(RESTART_NO['wifi-trial']);
 						throw x;
 					}
 				}
@@ -3678,18 +3681,21 @@
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
 				/* It runs on behind the answer. If it stops, nothing else would say so. */
-				for (let i = 0, silent = 0; i < 240; i++) {
+				let lost = 0;
+				for (let i = 0; i < 240; i++) {
 					await new Promise(z => setTimeout(z, 2e3));
 					const d = await api(J + 'update', { quiet: 1 }).catch(() => null);
-					/* One lost answer on Wi-Fi says nothing. Several mean it is restarting. */
+					/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
 					if (!d) {
-						if (++silent >= 5) return;
+						lost++;
 						continue;
 					}
-					silent = 0;
+					if (lost && d.state == 'idle') return; /* the status went with the restart */
+					lost = 0;
 					if (d.state == 'failed' || d.restart == 'needed') {
 						installing = 0;
-						$('sy-mapply').disabled = !mfw;
+						fwStopped = d.state == 'failed';
+						$('sy-mapply').disabled = !mfw || fwStopped;
 						$('sy-mstage').disabled = false;
 						return fwUI(
 							0,
@@ -3699,8 +3705,10 @@
 						);
 					}
 				}
+				if (lost) return; /* the offline banner has it from here */
 				installing = 0;
-				$('sy-mapply').disabled = !mfw;
+				fwStopped = 1;
+				$('sy-mapply').disabled = true;
 				$('sy-mstage').disabled = false;
 				fwUI(0, 'Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see Recovery in the docs).');
 			}
@@ -3711,7 +3719,7 @@
 	function mfUI(st, m) {
 		$('sy-mprog').hidden = st != 1;
 		tx('sy-must', m || '');
-		$('sy-mapply').disabled = !mfw || installing;
+		$('sy-mapply').disabled = !mfw || installing || fwStopped;
 		tx('sy-mapply', mfw ? 'Install and restart…' : 'Install (upload first)');
 	}
 	$('sy-mup').onsubmit = e => {

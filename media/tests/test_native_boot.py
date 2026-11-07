@@ -37,6 +37,12 @@ limit = text.index('[ "$i" -lt "$wait_limit" ] || give_up_waiting')
 assert text.index("until network_ready") < limit < text.index("log 'network ready'") < text.index('rm -f "$root/net-wait-boots"')
 assert "DUMPDONE" in text[limit:text.index("log 'network ready'")]
 assert "$((900 << waits))" in text and '[ "$waits" -le 4 ] || waits=4' in text
+# A gateway back after the feeder limit ran out: no marker, or that reset would latch the fallback.
+coming = text[text.index("reset_coming() {"):text.index('f=$(cat "$feeder_pid"', text.index("reset_coming() {"))]
+assert '[ -n "$gave_up" ] || return 0' in coming and 'rm -f "$root/native-trial"' in coming and "exit 0" in coming
+check = text.index('reset_coming\n    fail \'rootfs watchdog feeder missing\'')
+assert check < text.index("stage launch"), "before the marker is written"
+assert "{ reset_coming; fail 'cannot stop the rootfs watchdog feeder'; }" in text
 # Only a qualified boot earns the wait; a lost network counts on three boots, not one.
 assert text.rindex('"$root/ever-qualified"') > text.index("[ -n \"$homed\" ]")
 assert '"$lost" -ge 3' in text and "three boots in a row" in text

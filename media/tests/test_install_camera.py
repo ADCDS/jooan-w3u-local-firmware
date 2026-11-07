@@ -20,6 +20,8 @@ def problems(facts=None, platform=None, local=None, appfs=None, config=None):
 
 
 assert problems(local=LOCAL, appfs=APPFS) == []
+assert any("no platform runtime" in p for p in problems({"selection": "- - 0"}, appfs=APPFS))
+assert problems({"selection": "A - 0"}, appfs=APPFS) == [] and problems({"selection": "- A 0"}, appfs=APPFS) == []
 # A latched native failure is reported, never silently installed over.
 found = problems({"native_failed": "boot=x stage=failed: network "})
 assert len(found) == 1 and "native-failed is latched (boot=x stage=failed: network)" in found[0], found

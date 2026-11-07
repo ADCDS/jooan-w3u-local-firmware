@@ -34,7 +34,7 @@ boundary.
   install and uninstall, migration, Wi-Fi, network time, SSH, routing,
   power-loss and cold-recovery checks pass on that camera
   ([hardware promotion gates](tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Published: v0.2.36** (2026-11-07): the platform package and, for the first
+- **Published: v0.2.37** (2026-11-07): the platform package and, for the first
   time, the media layer's binaries and scripts. Each owner still builds the
   image for the camera from that camera's own app partition, because it holds
   vendor files, so no image is published.
@@ -69,7 +69,7 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.36 and its media layer:
+With 0.2.37 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 1024×576 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,

@@ -103,9 +103,15 @@ waits=$(cat "$root/net-wait-boots" 2>/dev/null) || waits=0
 case "$waits" in ''|*[!0-9]*) waits=0 ;; esac
 [ "$waits" -le 4 ] || waits=4
 wait_limit=${JIPC_NETWORK_WAIT_LIMIT:-$((900 << waits))}
+gave_up=
+time_file=/opt/custom/jooan-local/state/last-time
 give_up_waiting() {
     [ -e "$network_wait" ] || return 0
+    gave_up=1
     rm -f "$network_wait"
+    # A reset saves no clock, and with network time off it would go back by the whole of this wait.
+    t=$(date -u +%s) && [ "$t" -gt "$(cat "$time_file" 2>/dev/null || echo 1700000000)" ] &&
+        printf '%s\n' "$t" > "$time_file.new" && mv -f "$time_file.new" "$time_file" || :
     printf '%s\n' "$((waits + 1))" > "$root/net-wait-boots" || :
     log "$1: the watchdog resets the camera in 10 minutes unless a gateway answers"
 }
@@ -124,11 +130,22 @@ done
 rm -f "$network_wait"
 log 'network ready'
 
-# Hand the armed watchdog from the rootfs feeder to the media daemon.
-stage launch
+# Hand the armed watchdog from the rootfs feeder to the media daemon. If the wait gave up and the
+# feeder limit has run out meanwhile, the reset is seconds away and this release is not at fault:
+# leave no marker, and the next boot is native again. A gateway back in those seconds latched this.
+reset_coming() {
+    [ -n "$gave_up" ] || return 0
+    log 'a gateway answered, too late: the reset that is on its way starts this boot again'
+    rm -f "$root/native-trial" "$root/native-trial.new"
+    exit 0
+}
 f=$(cat "$feeder_pid" 2>/dev/null)
-[ -n "$f" ] && [ "$(cat "/proc/$f/comm" 2>/dev/null)" = watchdog ] || fail 'rootfs watchdog feeder missing'
-kill -TERM "$f" || fail 'cannot stop the rootfs watchdog feeder'
+if [ -z "$f" ] || [ "$(cat "/proc/$f/comm" 2>/dev/null)" != watchdog ]; then
+    reset_coming
+    fail 'rootfs watchdog feeder missing'
+fi
+stage launch
+kill -TERM "$f" || { reset_coming; fail 'cannot stop the rootfs watchdog feeder'; }
 i=0
 while [ "$(cat "/proc/$f/comm" 2>/dev/null)" = watchdog ] && [ "$i" -lt 10 ]; do sleep 0.5; i=$((i + 1)); done
 [ "$(cat "/proc/$f/comm" 2>/dev/null)" = watchdog ] && fail 'rootfs watchdog feeder did not exit'

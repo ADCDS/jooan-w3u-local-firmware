@@ -113,6 +113,15 @@ assert sorted(p.name for p in root.iterdir()) == ["boot-handoff.sh", "camera.ini
 assert (package / "appfs.img").read_bytes() == IMAGE and not (base / "candidate").exists()
 shutil.rmtree(base)
 
+# With no runtime on flash a flash's restart would take the camera off the network.
+for selection, stops in (("- - 0\n", True), ("A - 0\n", False), ("- A 0\n", False)):
+    base, (root, package) = case()
+    (base / "platform/state").mkdir(parents=True, exist_ok=True)
+    (base / "platform/state/selection").write_text(selection)
+    result = run(base, "check")
+    assert (result.returncode != 0) == stops and (("stopped half way" in result.stdout) == stops), (selection, result.stdout)
+    shutil.rmtree(base)
+
 # What it refuses, for check and apply alike.
 for action in ("check", "apply"):
     refused("different copy", action, previous_appfs_md5="9" * 32)

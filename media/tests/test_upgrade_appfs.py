@@ -24,6 +24,7 @@ assert after.index("restore_config") < after.index("/bin/busybox reboot -f")
 assert "OEM->native installer" not in text
 # The boot script goes with its release, staged, checked, committed and restored like the rest:
 # an update that left it behind kept every fix to it from reaching the camera.
+assert 'die \'no platform runtime on flash' in text[:text.index('stop_owner "$native"')]
 names = "for name in boot-handoff.sh native-boot.sh camera.ini deployment.env; do"
 assert text.count(names) == 3 and "for name in boot-handoff.sh camera.ini" not in text
 assert 'sh -n "$root/native-boot.sh.next"' in text[:commit]
