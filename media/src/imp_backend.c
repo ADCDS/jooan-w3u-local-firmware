@@ -62,6 +62,7 @@ typedef struct {
     imp_two enc_register;
     int (*bind)(jipc_imp_cell *, jipc_imp_cell *), (*unbind)(jipc_imp_cell *, jipc_imp_cell *);
     int (*get_stream)(int, jipc_imp_stream *, int), (*release_stream)(int, jipc_imp_stream *);
+    int (*qp_bounds)(int, int, int);
     int (*super_frame)(int, jipc_imp_super *);
     imp_one osd_pool, isp_pool, vpubs_pool, vb_pool;
     imp_one osd_group_create, osd_group_destroy, osd_group_start, osd_group_stop;
@@ -206,6 +207,10 @@ static int validate_elf(const char *path, char *error, size_t capacity)
     return 0;
 }
 
+/* The encoder's quantiser range, and its floor while the picture is black: the value it starts at. */
+#define ENCODER_QP_MIN 15
+#define ENCODER_QP_MAX 45
+#define ENCODER_QP_RAISED 30
 #define REQUIRE(field, name) do { if (load_symbol(s->library, name, &s->field, 1, error, capacity)) return -1; } while (0)
 #define OPTIONAL(field, name) do { load_symbol(s->library, name, &s->field, 0, error, capacity); } while (0)
 static int load_sdk(imp_state *s, char *error, size_t capacity)
@@ -227,6 +232,7 @@ static int load_sdk(imp_state *s, char *error, size_t capacity)
     REQUIRE(get_fd, "IMP_Encoder_GetFd"); REQUIRE(get_stream, "IMP_Encoder_GetStream");
     REQUIRE(release_stream, "IMP_Encoder_ReleaseStream"); REQUIRE(idr, "IMP_Encoder_RequestIDR");
     REQUIRE(super_frame, "IMP_Encoder_SetSuperFrameCfg");
+    OPTIONAL(qp_bounds, "IMP_Encoder_SetChnQpBounds");
     OPTIONAL(stream_out, "IMP_ISP_SetStreamOut"); OPTIONAL(set_fps, "IMP_ISP_Tuning_SetSensorFPS");
     OPTIONAL(set_fps_sec, "IMP_ISP_Tuning_SetSensorFPS_Sec");
     OPTIONAL(osd_pool, "IMP_OSD_SetPoolSize"); OPTIONAL(isp_pool, "IMP_OSD_SetPoolSize_ISP");
@@ -397,7 +403,7 @@ static int video_graph_open(imp_state *s, char *error, size_t capacity)
         w[4] = i % 2 ? s->sub_height : s->height[i/2];
         w[12] = s->fps; w[13] = 1; w[14] = s->gop;
         /* OEM rate-control mode 1 branch, offsets +0x3c..+0x54. */
-        w[15] = 1; w[16] = 45; w[17] = 15;
+        w[15] = 1; w[16] = ENCODER_QP_MAX; w[17] = ENCODER_QP_MIN;
         w[18] = s->bitrate[i];
         w[20] = 3; w[21] = 15;
         w[40] = !s->openimp_fullframe && !(i % 2) && s->sensors == 2; /* bEnableIvdc, byte +0xa0. */
@@ -940,6 +946,18 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
         if (exclusive_owner(error, capacity)) return -1;
     }
     return 0;
+}
+
+/* A black picture costs no bits, so rate control takes the quantiser down to its floor, and
+ * the first real frames after it are huge: on camera1, 15 to 25 s at 1 to 4 frames a second
+ * after privacy ended. The floor stays up while the picture is black. */
+void jipc_imp_qp_floor(void *state, int raised)
+{
+    imp_state *s = state;
+    if (!s->qp_bounds) return;
+    for (unsigned i = 0; i < s->sensors * 2; i += s->main_only ? 2 : 1)
+        if (s->qp_bounds(enc_channels[i], raised ? ENCODER_QP_RAISED : ENCODER_QP_MIN, ENCODER_QP_MAX))
+            jipc_log("error", "encoder %u: cannot change the quantiser floor", i);
 }
 
 int jipc_imp_control(void *state, const char *operation, int value, int sensor,

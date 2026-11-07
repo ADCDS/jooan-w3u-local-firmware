@@ -197,6 +197,7 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity);
 int jipc_controls_picture(jipc_app *app, unsigned lens, int values[4], int *night_mode);
 int jipc_backend_control(jipc_app *app, const char *operation, int value,
                          int value2, char *error, size_t capacity);
+void jipc_backend_qp_floor(jipc_app *app, int raised);
 int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
                           char *error, size_t capacity);
 /* Speaker input from HTTP; owner identifies the talker (see jipc_talk_submit). */

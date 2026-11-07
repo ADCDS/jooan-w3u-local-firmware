@@ -763,6 +763,14 @@ int jipc_backend_overlay(jipc_app *app, unsigned lens, const char *text, int cor
     return rc;
 }
 
+void jipc_backend_qp_floor(jipc_app *app, int raised)
+{
+    control_lock(app);
+    media_state *state = app->backend_state;
+    if (state && app->backend_ready && state->imp) jipc_imp_qp_floor(state->imp, raised);
+    pthread_mutex_unlock(&app->control_mutex);
+}
+
 int jipc_backend_snapshot(jipc_app *app, unsigned channel, jipc_frame *frame,
                           char *error, size_t capacity)
 {

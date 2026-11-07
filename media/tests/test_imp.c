@@ -483,6 +483,8 @@ static int pair_get_stream(int ch,jipc_imp_stream *stream,int block)
 }
 static int pair_release_stream(int ch,jipc_imp_stream *stream)
 { CHECK(ch==0||ch==1);CHECK(stream->packs==(uint32_t)(uintptr_t)&pair_packs[ch]);++pair_release[ch];return 0; }
+static int qp_calls,qp_channel,qp_min,qp_max;
+static int count_qp_bounds(int channel,int minimum,int maximum){++qp_calls;qp_channel=channel;qp_min=minimum;qp_max=maximum;return 0;}
 static int pair_request_idr(int ch){pair_idr=ch;return 0;}
 /* A still in main_only: encoder 2 or 3 on that lens's only group, at its main size,
  * alongside H.264, and every resource given back. */
@@ -567,6 +569,13 @@ static void test_main_only_delivery(void)
     jipc_app app={0};jipc_config_defaults(&app.config);app.config.main_only=1;app.config.width=1920;app.config.height=1080;
     app.config.width1=640;app.config.height1=360;CHECK(!jipc_streams_init(&app));
     imp_state s={.sensors=2,.main_only=1,.get_stream=pair_get_stream,.release_stream=pair_release_stream,.idr=pair_request_idr};
+    /* The quantiser floor: each encoder once, up and back, and a library without it is fine. */
+    jipc_imp_qp_floor(&s,1);
+    s.qp_bounds=count_qp_bounds;
+    jipc_imp_qp_floor(&s,1);
+    CHECK(qp_calls==2&&qp_channel==enc_channels[2]&&qp_min==ENCODER_QP_RAISED&&qp_max==ENCODER_QP_MAX);
+    jipc_imp_qp_floor(&s,0);
+    CHECK(qp_calls==4&&qp_min==ENCODER_QP_MIN&&qp_max==ENCODER_QP_MAX);
     s.frame=malloc(JIPC_MAX_FRAME);CHECK(s.frame);s.fds[0]=pair_pipe[0][0];s.fds[2]=pair_pipe[1][0];
     s.last_video[0]=s.last_video[2]=s.next_owner_check=jipc_now_us();char error[256];
     struct pollfd fds[4];unsigned slots[4];CHECK(video_pollfds(&s,fds,slots)==2);

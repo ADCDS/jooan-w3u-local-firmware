@@ -70,6 +70,7 @@ int jipc_imp_control(void *state, const char *operation, int value, int value2,
                      char *error, size_t capacity);
 /* control, if given, is a lock the caller holds and H.264 draining needs: it is
  * let go while waiting for the picture. */
+void jipc_imp_qp_floor(void *state, int raised);
 int jipc_imp_snapshot(void *state, unsigned channel, pthread_mutex_t *control,
                       jipc_frame *frame, char *error, size_t capacity);
 /* Draw text on a lens, or take it away with NULL. */

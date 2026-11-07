@@ -874,7 +874,8 @@ static void *engine(void *opaque)
                 atomic_store(&app->privacy_hold, 1);
                 c->covered_at = 0;
                 jipc_streams_forget_video(app);
-            }
+                jipc_backend_qp_floor(app, 1);
+            } else if (!first) jipc_backend_qp_floor(app, 0);
             atomic_store(&app->privacy_on, privacy);
             atomic_store(&app->mic_muted, s.mic_mute || privacy);
             if (!privacy) do_picture = 1;
