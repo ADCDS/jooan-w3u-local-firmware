@@ -12,7 +12,7 @@
 # The first release, from a camera's stock partition (cat /dev/mtdblock4 over SSH):
 #   build-appfs.sh --first STOCK_IMAGE STRIPPED_BINARY LIBIMP LIBATOMIC OUT_DIR
 # keeps what config/ja-a12-appfs-keep.txt lists, checks the two files the platform pins,
-# and writes a whole bundle for install-camera.py --first.
+# and writes a whole bundle, which install-camera.py recognises as a first install.
 set -eu
 if [ "${1:-}" = --first ]; then
     [ "$#" = 6 ] || { echo "usage: build-appfs.sh --first STOCK_IMAGE STRIPPED_BINARY LIBIMP LIBATOMIC OUT_DIR" >&2; exit 2; }

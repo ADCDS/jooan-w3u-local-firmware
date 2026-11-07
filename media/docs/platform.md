@@ -149,7 +149,7 @@ shows.
 `tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
 which motor steps centre each point of that picture and stores six numbers per axis
 in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
-lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.34 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
+lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.35 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
 Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
 with 20 stops matched, points of the street land a median of 1.2% of the frame's
 width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside
@@ -186,24 +186,27 @@ camera's time zone. With a schedule, `on` holds until the window's next edge.
 
 A timestamp burned into the picture, when it is on, stays on the black picture.
 
-The cover is the ISP: brightness, contrast and saturation at 0 on both lenses.
-Measured on camera1 at midday, every pixel of both streams then reads Y=16,
-U=V=128. An IMP OSD cover would need a change to the video graph. The picture
+The cover is the ISP in day mode: brightness, contrast and saturation at 0 on both lenses.
+Measured on camera1 at midday and at night, every pixel of both streams then reads black. An IMP OSD cover would need a change to the video graph. The picture
 settings are not touched in the file: a manual change during privacy mode is kept
 for afterwards and does not reach the lens.
 
 So that no frame can leak, video frames are dropped from before video starts until
-the lenses are black and a second has passed for what was in the pipe, at every
-turn-on and every start of the daemon. Only H.264 parameter sets get through while
+the lenses are black and 2 s have passed for what was in the pipe, at every
+turn-on and every start of the daemon. Frames that were already in the ring stay out too.
+After that the output is checked: during privacy, a frame over 32 KB is not black (a black
+keyframe is under 7 KB, a picture over 100 KB), so it is dropped, the hold comes back, and
+`live.error` says so. Only H.264 parameter sets get through while
 frames are held, because RTSP and the startup check need them and they show
 nothing, and each stream then resumes at a keyframe. If the black-out fails, the
 frames stay dropped and `live.error` says so: a failure pauses the video instead of
 showing it. The hardware watchdog's stream check allows for this.
 
 The black-out only works in the ISP's day mode: in night mode it ignores the picture
-settings that make it, and on camera1 at night the whole street showed. So privacy runs in day
-mode with the infrared off, whatever the chosen mode says, and nothing can flip it to night
-meanwhile. Frames stay held until day mode and the black-out are confirmed, plus 2 s. Afterwards the
+settings that make it, as it does the Image page's sliders (brightness 40 changed nothing, measured
+on camera1), and at night the whole street showed. So privacy runs in day
+mode with the infrared off, whatever the chosen mode says, sent at every turn-on, and nothing can
+flip it to night meanwhile. Frames stay held until day mode and the black-out are confirmed, plus 2 s. Afterwards the
 chosen mode comes back, automatic mode as at a start. Measured on camera1 at night with every frame of
 both lenses recorded across the switch: pictures, then only black (Y=16, U=V=128 at the
 source), then pictures, through a day/night request and a daemon restart too.
@@ -217,9 +220,11 @@ daemon restart found it already at the pose.
 
 With a schedule, the clock may be hours behind after a power cut, so privacy stays on after
 a start until network time or a person has confirmed the clock, or for 2 minutes if nothing
-does; the other schedules wait that long too, and the page warns while the clock is
+can (30 with network time configured: a router back from the same power cut may need that long
+for its own time); the other schedules wait that long too, and the page warns while the clock is
 unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
-`privacy.held_until`. Turning a schedule on during manual privacy works the same way. On
+`privacy.held_until`. Turning a schedule on during manual privacy works the same way, and
+turning it off while that holds leaves privacy on, by hand. A new pose applies at the next turn-on. On
 camera1's mounting no end stop hides the lens: down shows the wall and the ledge
 below it, up the street.
 
@@ -312,10 +317,12 @@ same light: about 3.6x at twilight, when the sky has plenty of infrared
 (measured at dawn on camera1, under a street light; deep night reads about
 41,000 in day mode and 37,000 with the infrared on). So `day_ev` must stay
 under `night_ev` / 3.6, or the switch to day reads dark again and flaps. A switch that
-reverses within four holds doubles the hold, up to an hour, until a switch lasts: aimed at
+to day reverses within four holds doubles the hold in night, up to an hour, until a switch lasts,
+while the hold in day stays 5 minutes, because that is the near-black one: aimed at
 something close, the camera's own infrared can read as daylight, and no level is right
 for that. A trigger or a strobe does not count as daylight either: decisions wait for
-them, and for `wait_s` after. The defaults are 30000 and 5000, with a 60 s wait, from
+them, and for `wait_s` after, and the white light going off clears any hold. Changing the
+levels, the infrared setting or the mode starts the back-off over. The defaults are 30000 and 5000, with a 60 s wait, from
 measurements at dawn; dusk has not been recorded. Schedules use the camera's time
 zone (`GmtTz` in the vendor config, set by `PUT /api/v1/timezone`) when it has
 one, otherwise `utc_offset_min`.

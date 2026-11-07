@@ -104,8 +104,8 @@ A native boot works like this:
    `udhcpc` on `wlan0`. The supervisor then applies the committed network from
    `/opt/custom/jooan-local/config/wifi.json`. The OEM's stored Wi-Fi
    configuration is not used, so native boot requires a committed network.
-3. `native-boot.sh` verifies the release, waits up to 300 s for a gateway on
-   `wlan0`, stops the feeder and launches jooanipc-open, which homes pan/tilt
+3. `native-boot.sh` verifies the release, waits for a gateway on `wlan0` (up to
+   300 s if nothing can come of waiting, see [Recovery](RECOVERY.md)), stops the feeder and launches jooanipc-open, which homes pan/tilt
    (`motor_home=1`) and takes over `/dev/watchdog` (`watchdog=1`).
 4. After the daemon reports ready, the boot qualifies once it has stayed
    healthy for 185 s with homing complete and the network still up.
@@ -122,9 +122,9 @@ The handoff writes `boot-trial` before it stops the OEM application and
 clears it once jooanipc-open has run healthy for 185 s. A latched `boot-trial`
 makes later handoff boots leave the OEM application running (rescue). The
 handoff also waits until the platform has applied the committed Wi-Fi network
-and a gateway on `wlan0` answers. Without a committed network and working
-Wi-Fi, a native boot fails, the handoff gives up, and the camera ends in
-rescue mode.
+and a gateway on `wlan0` answers. Without a committed network and a runtime to
+apply it, a native boot fails, the handoff gives up, and the camera ends in rescue
+mode. A committed network that is only away makes a qualified camera wait for it.
 
 ## Current implementation boundary
 

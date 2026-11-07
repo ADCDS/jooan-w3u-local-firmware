@@ -238,7 +238,16 @@ jl_ensure_wifi() {
         IFS=: read -r jl_wifi_owner jl_wifi_tries < "$JL_RUN/wifi-attempts" || :
     [ "$jl_wifi_owner" = "$jl_wpa" ] || jl_wifi_tries=0
     case "$jl_wifi_tries" in ''|*[!0-9]*) jl_wifi_tries=0 ;; esac
-    [ "$jl_wifi_tries" -lt 5 ] || return 0
+    if [ "$jl_wifi_tries" -ge 5 ]; then
+        # Enough for a network that is simply not going to work, but not while a native
+        # boot is waiting for this very network: a router can come back after any time.
+        [ -e /tmp/jipc-network-wait ] || return 0
+        jl_wifi_next=0
+        [ ! -f "$JL_RUN/wifi-next" ] || IFS= read -r jl_wifi_next < "$JL_RUN/wifi-next" || :
+        case "$jl_wifi_next" in ''|*[!0-9]*) jl_wifi_next=0 ;; esac
+        [ "$(jl_uptime)" -ge "$jl_wifi_next" ] || return 0
+        printf '%s\n' "$(( $(jl_uptime) + 300 ))" > "$JL_RUN/wifi-next" || :
+    fi
     printf '%s:%s\n' "$jl_wpa" "$((jl_wifi_tries + 1))" > "$JL_RUN/wifi-attempts" || :
     if jl_bounded_hook 60 "$jl_wifi_hook" "$JL_CONFIG/wifi.json"; then
         printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
@@ -509,8 +518,9 @@ jl_rs_busy() {
 jl_reboot_asked() {
     jl_save_time || :
     jl_ra_media=${JL_MEDIA_ROOT:-/opt/jooanipc-open}
+    jl_ra_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || jl_ra_boot=
     # printf, not ":": a failed redirection on a special builtin would end the shell before the reboot.
-    [ ! -d "$jl_ra_media" ] || printf '' 2>/dev/null > "$jl_ra_media/reboot-requested" || :
+    [ ! -d "$jl_ra_media" ] || printf '%s\n' "$jl_ra_boot" 2>/dev/null > "$jl_ra_media/reboot-requested" || :
     sync
     reboot
 }

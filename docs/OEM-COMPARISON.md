@@ -49,7 +49,7 @@ miss:
 3. **Night vision thresholds need tuning.** Automatic day/night, schedules
    and a timed white light work and are remembered, but the switching levels
    are provisional until set from dusk and dawn readings.
-4. **Audio is off by default.** With `audio=1` the microphone and two-way
+4. **Audio is on unless `audio=0`.** The microphone and two-way
    talk (from Frigate's live view or the admin UI) work; they were checked on
    the test camera.
 5. **Lower resolution.** The pan/tilt lens streams 1920×1080 (official:
@@ -92,7 +92,7 @@ under [Sources](#sources):
 | Fixed lens resolution | Marketed as two 3MP lenses[^amz-us]; the verified unit's settings give it the same 2304×1296 plus 640×360 [cfg] | **Partial** (media) | 1024×576 at 15 fps, 1536 kbit/s. 1280×720 needs about 3 MB more reserved video memory than the 640×360 it used to be, and that does not fit beside 1920×1080. |
 | Separate low-resolution substreams | One 640×360 substream per lens[^off] [cfg] | **Partial** (media) | In the shipped profile `ch1` and `ch3` carry the same feed as `ch0` and `ch2`: a real substream on the pan/tilt lens would leave under 200 KiB of reserved video memory, and an NVR can scale the main stream itself. A four-encoder mode has real substreams, but limits both main streams to 1280×720. |
 | Video codec | H.264[^off] | **Supported** (media) | H.264. |
-| Frame rate | 15 fps on the verified unit [cfg]; not stated publicly | **Supported** (media) | 15 fps, or lower with `fps` in the configuration (10 and 5 checked on the camera). |
+| Frame rate | 15 fps on the verified unit [cfg]; not stated publicly | **Supported** (media) | 15 fps, or from 5 to 15 with `fps` in the configuration (10 and 5 checked on the camera). |
 | Digital zoom | 5× in the app[^off] | **Missing** | Zoom in the NVR or player. ONVIF zoom requests are rejected. |
 | Still snapshots (JPEG) | App screenshots (`support_screenshot_3_million_pixels` = 1) [cfg] | **Supported** (media) | `GET /api/v1/snapshot?channel=0` and `2`, ONVIF `GetSnapshotUri`, and the admin UI: 1920×1080 from the pan/tilt lens and 1024×576 from the fixed lens, in hardware. Refused during privacy mode. A still costs live video at most about one frame. |
 | Flip and mirror | Yes (`image_rollovers` = 1) [cfg] | **Supported** (media) | `flip`, `hflip` and `vflip` controls. Saved, and pan/tilt directions follow the image. |

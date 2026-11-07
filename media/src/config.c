@@ -119,6 +119,8 @@ int jipc_native_video_validate(const jipc_config *c, char *error, size_t capacit
     } else if (c->width > 1280 || c->height > 720 || (c->sensors == 2 &&
         (jipc_video_width(c,0) != jipc_video_width(c,2) || jipc_video_height(c,0) != jipc_video_height(c,2)))) {
         return fail(error, capacity, "independent native streams require matching main dimensions up to 1280x720");
+    } else if (c->sub_width > 640 || c->sub_height > 360) {
+        return fail(error, capacity, "independent native substreams go up to 640x360: more does not fit the reserved memory");
     }
     return 0;
 }

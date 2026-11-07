@@ -796,17 +796,25 @@ static int copy_stream(imp_state *s, int channel, jipc_frame *frame,
     }
     jipc_imp_stream *stream = &output.stream;
     size_t bytes = 0;
-    int valid = stream->packs && stream->pack_count && stream->pack_count <= 4096;
+    int valid = stream->packs && stream->pack_count && stream->pack_count <= 4096, oversized = 0;
     jipc_imp_pack *packs = (jipc_imp_pack *)(uintptr_t)stream->packs;
     if (valid) {
         for (uint32_t i = 0; i < stream->pack_count; ++i) {
-            if (!packs[i].address || packs[i].length > JIPC_MAX_FRAME - bytes) { valid = 0; break; }
+            if (!packs[i].address) { valid = 0; break; }
+            if (packs[i].length > JIPC_MAX_FRAME - bytes) { oversized = 1; break; }
             memcpy(s->frame + bytes, (const void *)(uintptr_t)packs[i].address, packs[i].length);
             bytes += packs[i].length;
         }
     }
     /* Release even when validation or allocation fails. SDK owns pack memory. */
     int release = s->release_stream(channel, stream);
+    if (oversized && !release) {
+        /* One frame too big is a lost frame, not a reason to stop the camera: its size comes
+         * from the scene and from settings the API accepts. */
+        jipc_log("error", "dropped an oversized encoder frame on channel %d", channel);
+        frame->size = 0;
+        return 0;
+    }
     if (!valid || !bytes) return failure(error, capacity, "invalid/oversized IMP encoder frame on channel %d", channel);
     if (release) return failure(error, capacity, "IMP_Encoder_ReleaseStream(%d) failed (%d)", channel, release);
     frame->data = s->frame;
@@ -906,6 +914,20 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
         if (fds[p].revents & POLLIN) {
             jipc_frame frame = {0};
             if (copy_stream(s, enc_channels[i], &frame, error, capacity)) return -1;
+            if (!frame.size) { /* dropped: what follows needs a keyframe, and the stream is alive */
+                (void)s->idr(enc_channels[i]);
+                s->last_video[i] = now;
+                continue;
+            }
+            /* Check the output, not only what the SDK returned: at night the ISP once took the
+             * black-out calls, said yes, and sent the street. Nothing that big gets out. */
+            if (atomic_load(&app->privacy_on) && !atomic_load(&app->privacy_hold) && frame.size > JIPC_PRIVACY_MAX_FRAME) {
+                atomic_store(&app->privacy_hold, 1);
+                atomic_store(&app->privacy_leak, 1);
+                jipc_log("error", "privacy: a frame of %zu bytes on stream %u is not black; holding video", frame.size, i);
+                s->last_video[i] = now;
+                continue;
+            }
             if (jipc_publish_video(app, i, s->main_only, frame.data, frame.size, frame.pts_us, 0))
                 return failure(error, capacity, "cannot publish hardware video stream %u", i);
             s->last_video[i] = now;

@@ -125,7 +125,9 @@ static void end_session(speaker_state *s, int close_output)
     s->siren_on = 0;
     s->session_end_us = jipc_now_us();
     stop_output(s, close_output); /* its tail goes through the same write, so the watch stays on until here */
-    s->siren_deadline = 0; s->watch_muted = 0;
+    /* A siren asked for during that tail keeps its deadline. */
+    if (!s->siren_on) s->siren_deadline = 0;
+    s->watch_muted = 0;
     /* The next talker gets the speaker's own volume back. */
     if (s->volume_restore) {
         int open = s->open, volume = s->volume;
@@ -184,6 +186,7 @@ static void *speaker_main(void *opaque)
             if (s->siren_on && (s->faulted || !jipc_speaker_gate_open(s->app))) s->siren_on = 0;
             if (!s->count && !s->siren_on) { timed_wait(s, 100); continue; }
             /* A talker's first audio, or the siren: start a session. */
+            if (!s->siren_on) s->siren_deadline = 0; /* left by a siren stopped before it got this far */
             s->session = 1;
             ++s->sessions;
             int volume = s->siren_on ? siren_gain(s->siren_volume) : s->volume, need_open = !s->open;
@@ -203,6 +206,14 @@ static void *speaker_main(void *opaque)
             pthread_mutex_lock(&s->mutex);
             continue;
         }
+        /* The watch cut the amplifier, the write came back, and there is something new to play. */
+        if (s->watch_muted && (s->count || (s->siren_on && now < s->siren_until))) {
+            s->watch_muted = 0;
+            pthread_mutex_unlock(&s->mutex);
+            (void)s->sink.amplifier(s->sink.context, 1);
+            pthread_mutex_lock(&s->mutex);
+            continue;
+        }
         if (s->siren_on && now >= s->siren_until) { s->siren_on = 0; s->released = 1; }
         int finished = !s->siren_on && (s->released ? !s->count : !s->count && now - s->last_submit_us > DEADMAN_US);
         if (finished) { end_session(s, 0); continue; }
@@ -219,7 +230,7 @@ static void *speaker_main(void *opaque)
         } else if (s->volume_restore) {
             /* A talker took over from the siren: at the speaker's own volume, not the siren's. */
             int volume = s->volume;
-            s->volume_restore = 0; s->siren_deadline = 0; s->watch_muted = 0;
+            s->volume_restore = 0; s->siren_deadline = 0;
             pthread_mutex_unlock(&s->mutex);
             (void)s->sink.volume(s->sink.context, volume);
             pthread_mutex_lock(&s->mutex);
@@ -419,7 +430,6 @@ int jipc_siren_start(jipc_app *app, unsigned sound, unsigned seconds, int percen
             s->siren_volume = percent;
             s->siren_volume_applied = 0; /* no percentage: whatever the output has now is not it */
             s->siren_until = s->siren_deadline = jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000);
-            s->watch_muted = 0;
             jipc_siren_init(&s->siren, sound);
             pthread_cond_signal(&s->wake);
         }

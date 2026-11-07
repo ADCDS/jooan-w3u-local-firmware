@@ -19,6 +19,7 @@ static int opens, closes, amp_on, amp_off, amp_state, write_result, volume_set =
 static int fake_open(void *c, int volume, char *e, size_t n)
 { (void)c; (void)e; (void)n; pthread_mutex_lock(&fake_lock); ++opens; volume_set = volume; pthread_mutex_unlock(&fake_lock); return 0; }
 static volatile int write_blocked;
+static int speech_volume = -999; /* the output's volume when the speech below first played */
 static int fake_write(void *c, const unsigned char *pcma)
 {
     (void)c;
@@ -26,6 +27,7 @@ static int fake_write(void *c, const unsigned char *pcma)
     while (write_blocked) jipc_sleep_ms(5);
     pthread_mutex_lock(&fake_lock);
     int rc = write_result;
+    if (!rc && pcma[0] == 0x81 && speech_volume == -999) speech_volume = volume_set;
     if (!rc && played_size + JIPC_SPEAKER_FRAME <= sizeof played) {
         memcpy(played + played_size, pcma, JIPC_SPEAKER_FRAME);
         played_size += JIPC_SPEAKER_FRAME;
@@ -285,13 +287,15 @@ int main(void)
     /* A talker right after a siren plays at the speaker's volume, not the siren's. */
     CHECK(!jipc_speaker_set_volume(app, 60, error, sizeof error));
     reset_fake();
+    speech_volume = -999;
     CHECK(!jipc_siren_start(app, 0, 60, 10, error, sizeof error));
     CHECK(wait_until(session_running, 1000));
     jipc_siren_stop(app);
     CHECK(jipc_talk_submit(app, 6, 6, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
     CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
     CHECK(read_int(&volume_set) == 60);
-    /* Whether or not the talker got in before the session ended, no volume is left over. */
+    /* And its audio is at that volume from its first frame, not only once it has ended. */
+    CHECK(speech_volume == 60);
 
     /* Faults: three refused frames close the output, mute, and back off. */
     speaker_retry_unit_us = 40000; /* 5 "seconds" = 200 ms */

@@ -55,7 +55,7 @@ network updates and use external recovery.
 Runtime replacement is a maintenance transaction: the signed controller and SSH
 recovery bundle remain available while the sole persistent runtime is replaced.
 During the two-minute health trial the supervisor applies the committed Wi-Fi
-network (a native boot gives up on its gateway after 300 s) and restarts a
+network (a native boot with nothing to wait for gives up on its gateway after 300 s) and restarts a
 candidate whose start failed: `start.sh` is bounded to 15 s while `entropy-ready.sh` waits up to
 30 s, and an early native boot gathers entropy slowly. If the candidate still
 fails, or the trial is interrupted, it stays selected as the only runtime,
@@ -67,7 +67,7 @@ on-flash rollback slot. A failed platform update does not fall back to the OEM
 updater: GoAhead stays killed while the controller runs.
 
 Without a runtime, nothing applies the committed Wi-Fi network. A native boot
-then cannot reach its gateway, fails after 300 s and latches `native-failed`,
+then cannot reach its gateway, sees that nothing is trying to, fails after 300 s and latches `native-failed`,
 and later boots run the guarded OEM application, which joins its own stored
 network. On the verified unit that is the vendor bench network `JOOANTEST`
 (open, probed as a hidden SSID). To reach the camera in that state:
@@ -89,10 +89,17 @@ network. On the verified unit that is the vendor bench network `JOOANTEST`
 
 If the media daemon exits during a native boot, its armed watchdog resets the board.
 A boot that recorded the failure makes the next one latch `native-failed` and take the
-handoff; a boot only cut short, by a power cut or a hang, gets one more try first. A
+handoff; a boot only cut short, by a power cut or a hang, gets two more tries first. A
 handoff that also fails latches `boot-trial` and leaves the guarded OEM application
-running. A reboot the platform asked for, and a boot still waiting for the network, count
-for nothing. The
+running. A reboot the platform asked for counts for nothing against the boot it cut short,
+though not against a failure recorded before it.
+
+A native boot with no gateway waits, with no reset and no marker, as long as something can
+come of it: a committed network, a runtime trying to join it, and an earlier boot that has
+qualified here. Otherwise it fails after 300 s, as above. A release that loses the gateway
+after starting qualifies, unless that happens on three boots in a row. A committed
+network that is gone for good, on a camera that has qualified before, leaves it waiting: bring
+back a network with that name and password to reach it. The
 platform and SSH still answer, and the HTTPS UI does not. To recover:
 
 1. Read why it failed in `/tmp/jooanipc-open.log`, or in a log mirrored off the camera
@@ -212,8 +219,9 @@ flash images, keys, tokens, cookies, or Wi-Fi configuration to an issue.
 
 A fixed address stays through a restart, and a new router may be on another subnet. Reset to
 defaults puts the address back to automatic and keeps the Wi-Fi network, so holding the reset
-button for 5 seconds is the way back. Without reaching the button: a computer on the
-old subnet, or a temporary router on it, then Network in the admin UI.
+button for 5 seconds is the way back. Without reaching the button: a temporary router on the
+old subnet, with the old gateway's address, because the media daemon only starts once
+that answers. Then the admin UI, under Network.
 
 ## Recovery is complete only when
 

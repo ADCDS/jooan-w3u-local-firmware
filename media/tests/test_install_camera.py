@@ -219,6 +219,17 @@ try:
     raise AssertionError("it kept waiting")
 except ic.InstallerStopped as stop:
     assert "DO NOT restart" in str(stop)
+# Every message past a script's point of no return is known for what it is: a new one must not read
+# as "nothing was changed".
+import re
+for name in ("first-appfs.sh", "upgrade-appfs.sh"):
+    text = (pathlib.Path(sys.argv[1]).parent / name).read_text()
+    after = text[text.index("# Commit point"):]
+    for said in re.findall(r"""\bdie\s+["']([^"']*)""", after):
+        assert ic.after_commit(said), (name, said)
+    before = text[:text.index("# Commit point")]
+    for said in re.findall(r"""\bdie\s+["']([^"']*)""", before):
+        assert not ic.after_commit(said), (name, said)
 # The password for ssh is only ever in the environment, and the helper prints it.
 with tempfile.TemporaryDirectory() as temporary:
     helper = ic.askpass_helper(temporary)

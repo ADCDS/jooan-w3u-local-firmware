@@ -192,7 +192,8 @@ reboot_asked() {
         fi ;;
     esac
     # printf, not ":": a failed redirection on a special builtin would end the shell before the reboot.
-    [ ! -d "$media_root" ] || printf '' 2>/dev/null > "$media_root/reboot-requested" || :
+    boot_now=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || boot_now=
+    [ ! -d "$media_root" ] || printf '%s\n' "$boot_now" 2>/dev/null > "$media_root/reboot-requested" || :
     sync
     reboot
 }
@@ -224,6 +225,15 @@ case "$op" in
         # The reply goes out first; the helper's process group is only killed
         # on timeout, so this survives the helper exiting.
         ( trap '' HUP; sleep 2; reboot_asked ) </dev/null >/dev/null 2>&1 &
+        ;;
+    firmware-status)
+        # What the last platform install came to, until the restart clears it.
+        latest=$(ls -t "$run"/firmware.*.status 2>/dev/null | head -n 1)
+        if [ -z "$latest" ]; then printf '{"state":"idle"}\n'; exit 0; fi
+        state=$(sed -n 's/^state=\([a-z-]*\)$/\1/p' "$latest" | head -n 1)
+        reason=$(sed -n 's/^reason=\([a-z-]*\)$/\1/p' "$latest" | head -n 1)
+        restart=$(sed -n 's/^restart=\([a-z-]*\)$/\1/p' "$latest" | head -n 1)
+        printf '{"state":"%s","reason":"%s","restart":"%s"}\n' "${state:-unknown}" "$reason" "$restart"
         ;;
     restart-check)
         # What a Wi-Fi trial asks first: a rollback would cut this boot short.
@@ -569,7 +579,15 @@ case "$op" in
                 # lands in the middle of its write costs the camera. Holding the lock
                 # from here keeps a new one from starting.
                 i=0
-                until mkdir "$run/state.lock" 2>/dev/null || [ "$i" -ge 300 ]; do sleep 1; i=$((i + 1)); done
+                until mkdir "$run/state.lock" 2>/dev/null; do
+                    # Still held after this long means a flash that failed and is being
+                    # looked after: restarting could lose the camera. It is left to the owner.
+                    if [ "$i" -ge 300 ]; then
+                        printf 'state=complete\nrestart=needed\n' > "$status"
+                        exit 0
+                    fi
+                    sleep 1; i=$((i + 1))
+                done
                 reboot_asked
             else
                 rc=$?

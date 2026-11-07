@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.34, release sequence 68) has a supported tag until the
+current one is 0.2.35, release sequence 69) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -97,7 +97,7 @@ keys supplement password authentication; private keys are never uploaded.
 | `/api/v1/system/restart` | `POST` | Restart the camera. See [Restarting](#restarting) |
 | `/api/v1/system/restart-schedule` | `GET`, `PUT` | Read or set a daily restart. See [Restarting](#restarting) |
 | `/api/v1/system/reset` | `POST` | Reset to defaults, keeping Wi-Fi. See [Reset to defaults](#reset-to-defaults) |
-| `/api/v1/update` | `POST`, `PUT` | Stage then apply an authenticated release |
+| `/api/v1/update` | `POST`, `PUT`, `GET` | Stage then apply an authenticated release; `GET` says how the last install ended: `{"state":"running","reason":"","restart":""}`, and `restart` is `needed` when it did not restart because a media flash holds the lock |
 
 Clients must ignore unknown response fields.
 
@@ -163,16 +163,17 @@ use a server on the camera's own network (see
 `POST /api/v1/system/restart` answers `200 {"ok":true}` and restarts the camera
 about 2 seconds later. It refuses with `409 {"ok":false,"reason":"..."}` while
 a restart would do harm: `update` (an update or a media install holds the state
-lock), `wifi-trial` (a Wi-Fi change is waiting to be kept) or `boot-trial` (a
-new runtime is being qualified).
+lock), `wifi-trial` (a Wi-Fi change is waiting to be kept), `boot-trial` (a
+new runtime is being qualified) or `starting` (this boot is still qualifying).
 
 `GET /api/v1/system/restart-schedule` returns `{"enabled":true,"time":"04:00"}`
 or `{"enabled":false,"time":null}`. `PUT` with `{"time":"04:00"}` sets a daily
 restart in the camera's time zone (`/api/v1/timezone`), and `{"time":""}` turns
 it off; a bad time is a 400 `invalid_time`. The boot supervisor checks it every
 few seconds. It skips the restart when the camera has been up for less than an
-hour, the clock has not been set, or one of the conditions above holds; a
-skipped restart waits for the next day.
+hour, the gateway is not answering, or one of the conditions above holds; a skipped
+restart waits for the next day. With no clock anything has confirmed, it runs once a day
+counted from the last start instead of at its set time.
 
 ## Reset to defaults
 

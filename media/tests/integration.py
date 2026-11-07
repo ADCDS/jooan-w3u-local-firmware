@@ -330,6 +330,13 @@ def siren_checks(request, capture, context_status):
     assert request("POST", "/api/v1/controls", {"siren": {"strobe": True}})[0] == 200
     assert op("siren", 1, 20) == 200
     wait_strobe(lambda left: left > 0, "the siren brings its flashing")
+    # ...on the pin as well as in the report.
+    seen = set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and len(seen) < 2:
+        seen.add(json.loads(request("GET", "/api/v1/status")[1])["platform"]["white_light"])
+        time.sleep(0.1)
+    assert seen == {0, 1}, seen
     assert op("siren", 0) == 200
     wait_strobe(lambda left: left == 0, "the siren's stop ends it")
     wait_for(lambda: speaker()["state"] == "idle", "idle after stopping")
@@ -584,9 +591,13 @@ def controls_checks(request, root, connection=None, secret=None):
     time.sleep(1.5)
     state = controls()
     assert state["live"]["privacy"] is True and state["privacy"]["on"] is False and state["privacy"]["held_until"] > time.time(), state["privacy"]
+    # Turning that schedule off keeps it on, by hand: nothing the owner chose ends by surprise.
     assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
-    wait_for(lambda: controls()["live"]["privacy"] is False, 5, "schedule off")
-    assert "held_until" not in controls()["privacy"]
+    time.sleep(1.2)
+    state = controls()
+    assert state["live"]["privacy"] is True and state["privacy"]["on"] is True and "held_until" not in state["privacy"], state["privacy"]
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"] is False, 5, "off by hand")
     # Privacy runs in day mode, whatever is chosen: the ISP's night mode undoes the black-out.
     assert request("POST", "/api/v1/controls", {"night": {"mode": "night"}})[0] == 200
     wait_for(lambda: platform()["night"] == 1, 5, "night chosen")
@@ -624,6 +635,13 @@ def controls_checks(request, root, connection=None, secret=None):
     assert request("POST", "/api/v1/control", {"operation": "white_light_trigger", "value": 2, "value2": 0})[0] == 200
     wait_for(lambda: platform()["white_light"] == 1, 4, "trigger on")
     wait_for(lambda: platform()["white_light"] == 0 and controls()["live"]["trigger_left_s"] == 0, 6, "trigger off")
+    # A rename while someone is steering waits: it writes flash, and only the lease stops the head.
+    if request("POST", "/api/v1/control", {"operation": "preset_set", "value": 16, "value2": 0})[0] == 200:
+        assert request("POST", "/api/v1/control", {"operation": "ptz", "value": 50, "value2": 0})[0] == 200
+        status, _ = request("POST", "/api/v1/control", {"operation": "preset_rename", "value": 16, "value2": 0, "name": "Renamed"})
+        assert status == 409, status
+        assert request("POST", "/api/v1/control", {"operation": "ptz_stop", "value": 0, "value2": 0})[0] == 200
+        assert request("POST", "/api/v1/control", {"operation": "preset_remove", "value": 16, "value2": 0})[0] == 200
     # Saved (after a short debounce) and readable.
     saved = root / "state" / "controls.json"
     wait_for(lambda: saved.exists() and json.loads(saved.read_text())["night"]["ir"] == "off", 8, "controls.json")
@@ -1178,7 +1196,8 @@ def main():
                                     "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12", "JIPC_AUTO_SETTLE_S": "4",
                                     "JIPC_UPDATE_STAGED_S": "6", "JIPC_UPDATE_DIR": str(root / "staged"), "JIPC_UPDATE_VERIFIER": str(root / "verifier.sh"),
                                     "JIPC_OEM_CONFIG": str(root / "oem-config.json"),
-                                    "JIPC_CLOCK_MARKER": str(root / "clock-set"), "JIPC_CLOCK_WAIT_S": "100000",
+                                    "JIPC_CLOCK_MARKER": str(root / "clock-set"), "JIPC_CLOCK_WAIT_S": "100000", "JIPC_CLOCK_IGNORE_SNTP": "1",
+                                    "JIPC_NTP_CONFIG": str(root / "ntp-server"),
                                     "JIPC_BOOT_LOG_DIR": str(root)}
         (root / "clock-set").write_text("")
         (root / "oem-config.json").write_text('{"IpcParam":{"TimeZomeCfg":{\n "GmtTz":\t"GMT-03:00"\n}}}\n')
@@ -1342,6 +1361,15 @@ def main():
             code,body=request("GET","/api/v1/aim");aimed=json.loads(body);assert code==200 and aimed["calibrated"] is False and aimed["view"] is None
             assert request("POST","/api/v1/aim",{"u":2,"v":0.5})[0]==400
             assert request("POST","/api/v1/aim",{"x":[0,60,0,0,0,0],"y":[0,0,60,0,0,0]})[0]==200
+            # A calibration is for the fixed lens the way up it was, and says which.
+            aim_file=root/"state"/"aim.json"
+            stored_aim=json.loads(aim_file.read_text());assert "flip1" in stored_aim,stored_aim
+            aim_file.write_text(json.dumps(stored_aim|{"flip1":(stored_aim["flip1"]+1)%4}))
+            assert json.loads(request("GET","/api/v1/aim")[1])["calibrated"] is False
+            assert request("POST","/api/v1/aim",{"u":0.75,"v":0.25})[0]==409
+            aim_file.write_text(json.dumps({k:v for k,v in stored_aim.items() if k!="flip1"}))
+            assert json.loads(request("GET","/api/v1/aim")[1])["calibrated"] is True # an older file has no say
+            aim_file.write_text(json.dumps(stored_aim))
             assert request("POST","/api/v1/aim",{"u":0.75,"v":0.25})[0]==200
             deadline=time.time()+15
             while time.time()<deadline:

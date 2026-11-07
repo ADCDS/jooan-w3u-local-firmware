@@ -1039,7 +1039,8 @@
 			other = now == 'night' ? 'day' : 'night';
 		if (now == 'unknown') return 'Starting…';
 		let t = cap(now) + ' now' + (L.since_s ? `, for ${dur(L.since_s + age('x') / 1e3)}` : '') + '.';
-		if (n.mode == 'auto') {
+		if (L.privacy) t = `Day mode during privacy, which its black-out needs. Then back to ${n.mode}.`;
+		else if (n.mode == 'auto') {
 			const stays = `if it stays ${now == 'night' ? 'light' : 'dark'}`,
 				wait = left(n.wait_s - L.pending_s),
 				hold = left(L.hold_left_s || 0);
@@ -1051,7 +1052,7 @@
 							? ` Back to day when the level falls to ${num(n.day_ev)}.`
 							: ` Night when the level reaches ${num(n.night_ev)}.`
 						: hold > wait
-							? ` Switching to ${other} in ${dur(hold)} ${stays}: at least 5 minutes pass between automatic switches.`
+							? ` Switching to ${other} in ${dur(hold)} ${stays}: at least 5 minutes pass between automatic switches, and longer if they keep reversing.`
 							: ` Switching to ${other} ${wait ? 'in ' + dur(wait) : 'now'} ${stays}.`;
 		} else if (n.mode == 'schedule') t += ` Night from ${n.from} until ${n.until}, camera time.` + camNow() + clockNote();
 		else t += ' It stays so until you change it.';
@@ -1083,7 +1084,8 @@
 				? 'From and until are the same, so the light never turns on.'
 				: `Every day, camera time (${utc(x.utc_offset_min)}${camZone() ? ', set under System' : ''}). ` +
 					(inside ? `On now, off ${day} at ${s.until}.` : `Next: ${day} ${s.from}.`)) +
-			(dz != null && x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '')
+			(dz != null && x.utc_offset_min != dz ? ` Saving uses this device’s zone, ${utc(dz)}.` : '') +
+			camNow() + clockNote()
 		);
 	}
 	function lights() {
@@ -1139,6 +1141,7 @@
 		setIn($('im-ovm'), o.format);
 		busy($('im-ovn')) || ($('im-ovn').checked = !!o.name);
 		tx('im-ovt', `Add the camera name (${o.name || ovName()})`);
+		tx('im-ovw', o.enabled && S.x?.live?.clock_ok === false ? 'Not on the picture yet: it waits until network time or you have set the clock, because the time a restart restores can be hours behind.' : '');
 	}
 	function rControls(x) {
 		privacyShow();
@@ -1459,7 +1462,10 @@
 		p.position_known ? `Pan ${sg(p.position_x)} · Tilt ${sg(p.position_y)}` : 'Position unknown';
 	function pos() {
 		const p = S.m.platform;
-		if (!p) return tx('pt-pos', 'Pan/tilt is unavailable: its saved presets could not be read.');
+		if (!p) {
+			$$('button', $('pt-pad')).forEach(b => (b.disabled = true));
+			return tx('pt-pos', 'Pan/tilt is unavailable: its saved presets could not be read.');
+		}
 		const t = where(p),
 			l = t + ' · ' + (p.privacy ? 'privacy mode' : p.homing ? 'calibrating' : p.moving ? 'moving' : 'stopped');
 		$$('.pos').forEach(e => (e.textContent = t));
@@ -1551,7 +1557,9 @@
 		clockNote = () =>
 			S.x?.live?.clock_ok === false
 				? ' Nothing has confirmed this clock since the camera started, so this can be off by as long as it had no power. Turn on network time, or set the clock under System.'
-				: '';
+				: S.x?.live?.network_time === false
+					? ' Network time is off, so after a power cut this runs late by the time without power until the clock is set again.'
+					: '';
 	function privacyShow() {
 		const x = S.x;
 		if (!x?.privacy) return;
@@ -1578,7 +1586,10 @@
 	}
 	$('pt-pvs').onchange = e => {
 		const el = e.target;
-		run(el, () => putX({ privacy: { slot: +el.value } }), $('pt-pln'));
+		run(el, async () => {
+			await putX({ privacy: { slot: +el.value } });
+			toast('Saved: this applies the next time privacy mode turns on');
+		}, $('pt-pln'));
 	};
 	$('pt-prs').onclick = e => {
 		const b = e.currentTarget,
@@ -1744,8 +1755,10 @@
 			...[...Array(16)].map((_, i) => (by.has(i + 1) ? used(by.get(i + 1)) : free(i + 1)))
 		);
 		$('pt-list').hidden = !L.length;
-		$('pt-empty').hidden = !!L.length;
+		const noPlat = !!S.m && !S.m.platform;
+		$('pt-empty').hidden = !!L.length || noPlat;
 		$('pt-free').hidden = !L.length;
+		$('pt-save').disabled = noPlat;
 		tx('pt-count', L.length ? `${L.length} of 16 slots used` : '');
 		tx(
 			'pt-free',
@@ -1965,7 +1978,7 @@
 		/* Older media releases report neither the mute state nor the level. */
 		$('au-mic').hidden = typeof mu != 'boolean';
 		busy($('au-mic')) || sw($('au-mic'), !mu);
-		const pv = !!S.x?.live?.privacy;
+		const pv = !!S.m?.platform?.privacy;
 		$('au-mic').disabled = pv;
 		$('au-lv').hidden = !lv;
 		if (lv) {
@@ -2001,9 +2014,17 @@
 			ok: on ? 'Turn on' : 'Turn off',
 			icon: 'audio',
 			run: async () => {
-				await api(M + 'config', { method: 'POST', json: { audio: on } });
+				try {
+					await api(M + 'config', { method: 'POST', json: { audio: on }, quiet: 1 });
+				} catch (x) {
+					/* The restart can take the answer with it. Whether it was saved shows below. */
+					if (x.kind != 'off') throw x;
+				}
 				holdOff = Date.now() + 8e3;
+				S.c && (S.c.audio = on);
+				audio();
 				toast(on ? 'Audio on: video is restarting' : 'Audio off: video is restarting');
+				setTimeout(() => config().catch(noop), 5e3);
 			}
 		});
 	};
@@ -2351,8 +2372,13 @@
 		b.lastChild.textContent = on ? `Stop the siren · ${sirLeft()} s` : talking ? 'Siren (after talk)' : 'Siren…';
 		b.disabled = !on && (talking || aon() === false);
 		b.title = !on && aon() === false ? 'Audio is off: turn it on under Audio.' : '';
-		const flashing = S.x?.live?.strobe_left_s || 0;
+		const flashing = left(S.x?.live?.strobe_left_s || 0);
 		$('au-sirx').hidden = !on && !flashing;
+		if (!on && flashing) {
+			b.lastChild.textContent = `Stop the flashing · ${flashing} s`;
+			b.classList.add('dzf');
+			b.disabled = false;
+		}
 		tx('au-sirn', on ? `${sirName(on.sound)}: ${sirLeft()} s left.` : flashing ? `The white light is flashing: ${flashing} s left.` : '');
 	}
 	function sirShow(x) {
@@ -2409,7 +2435,7 @@
 	});
 	$('au-sirx').onclick = sirStop;
 	$('ov-sir').onclick = e => {
-		if (sirOn()) return sirStop(e);
+		if (sirOn() || left(S.x?.live?.strobe_left_s || 0)) return sirStop(e);
 		const x = S.x?.siren;
 		sheet({
 			title: 'Sound the siren?',
@@ -3310,12 +3336,15 @@
 		busy(b) || sw(b, d.enabled);
 		$('sy-rsf').hidden = !d.enabled;
 		d.time && setIn(i, d.time);
-		tx('sy-rsn', d.enabled ? 'Next: ' + restartNext(d.time) : 'Off');
+		const unset = S.x?.live?.clock_ok === false;
+		tx('sy-rsn', !d.enabled ? 'Off' : unset ? 'Once a day, counted from the last start' : 'Next: ' + restartNext(d.time));
 		tx(
 			'sy-rsz',
-			camZone()
-				? `Every day, in the camera’s time zone (${utc(S.x.utc_offset_min)}).`
-				: 'Every day, in UTC: the camera has no time zone set yet.'
+			unset
+				? 'Nothing has confirmed the clock since the camera started, so it restarts 24 hours after the last start, until network time or you set it.'
+				: camZone()
+					? `Every day, in the camera’s time zone (${utc(S.x.utc_offset_min)}).`
+					: 'Every day, in UTC: the camera has no time zone set yet.'
 		);
 	}
 	const putRestart = async time => {
@@ -3612,12 +3641,34 @@
 					$('sy-mapply').disabled = $('sy-mstage').disabled = true;
 					await api(J + 'update', { method: 'PUT', json: { id: fw }, timeout: 6e4, quiet: 1 });
 				} catch (x) {
-					if (x.kind != 'off') throw x;
+					if (x.kind != 'off') {
+						installing = 0;
+						$('sy-mapply').disabled = !mfw;
+						$('sy-mstage').disabled = false;
+						throw x;
+					}
 				}
 				fw = '';
 				$('sy-file').value = '';
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
+				/* It runs on behind the answer. If it stops, nothing else would say so. */
+				for (let i = 0; i < 90; i++) {
+					await new Promise(z => setTimeout(z, 2e3));
+					const d = await api(J + 'update', { quiet: 1 }).catch(() => null);
+					if (!d) return;
+					if (d.state == 'failed' || d.restart == 'needed') {
+						installing = 0;
+						$('sy-mapply').disabled = !mfw;
+						$('sy-mstage').disabled = false;
+						return fwUI(
+							0,
+							d.restart == 'needed'
+								? 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.'
+								: 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).'
+						);
+					}
+				}
 			}
 		});
 	/* A media package: the same three steps. A failure before the flash leaves the camera up
@@ -3677,6 +3728,8 @@
 				reloadOn = 1;
 				mfUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts soon.');
+				/* A flash that fails stops the daemon first, so no message can come from it. */
+				setTimeout(() => reloadOn && mfUI(4, 'It has not come back after 5 minutes. Do not cut its power yet: look at it over SSH first (see Recovery in the documentation).'), 3e5);
 				/* It says so if it stopped short of the flash; once it goes away, it has not. */
 				for (let i = 0; i < 36; i++) { /* stopping the media daemon can take a minute before it refuses */
 					await new Promise(z => setTimeout(z, 2500));
@@ -3687,14 +3740,7 @@
 						installing = 0;
 						$('sy-apply').disabled = !fw;
 						$('sy-stage').disabled = false;
-						return mfUI(
-							0,
-							(/rollback failed/.test(d.error)
-								? 'Do not restart or unplug the camera: the flash failed and so did putting the old one back. See Recovery in the documentation. '
-								: /config space low/.test(d.error)
-									? 'Installed, but flash space is nearly gone. Free some over SSH, then restart. '
-									: 'Not installed, nothing changed: ') + d.error
-						);
+						return mfUI(0, 'Not installed, nothing changed: ' + d.error);
 					}
 				}
 			}
@@ -3758,7 +3804,7 @@
 			if (age('a') > (mv ? 1e3 : 5e3)) aim().catch(noop);
 		}
 		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
-		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' ? 5e3 : 1 / 0)) controls().catch(noop);
+		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' || route == 'audio' ? 5e3 : 1 / 0)) controls().catch(noop);
 		/* A Wi-Fi trial: every 3 s while one runs; otherwise now and then on Network. */
 		if (age('w') > (joining || (W && !W.end) ? 3e3 : route == 'network' ? 2e4 : 1 / 0)) wifiState().catch(wifiLost);
 		if ((route == 'overview' || route == 'system') && age('j') > 6e4) joan().catch(noop);

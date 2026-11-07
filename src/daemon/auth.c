@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "joan_daemon.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <crypt.h>
 #include <stdio.h>
@@ -78,7 +79,9 @@ static void remembered_save(const JoanConfig *cfg)
         used += (size_t)n;
     }
     remembered_path(cfg, path);
-    if (!used) unlink(path); else joan_write_atomic(path, text, used, 0600);
+    /* On a full flash this table is only true until the next restart: at least say so. */
+    if (used ? joan_write_atomic(path, text, used, 0600) != 0 : (unlink(path) != 0 && errno != ENOENT))
+        fprintf(stderr, "cannot save remembered sign-ins: %s\n", strerror(errno));
     memset(text, 0, sizeof(text));
 }
 
@@ -405,6 +408,8 @@ int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
     if (save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
     pthread_mutex_lock(&lock);
     for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
+    /* Again: a sign-in with the old password may have got in while the new one was hashed. */
+    memset(remembered, 0, sizeof(remembered)); remembered_save(cfg);
     pthread_mutex_unlock(&lock); return 0;
 }
 

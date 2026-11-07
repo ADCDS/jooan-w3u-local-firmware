@@ -954,7 +954,7 @@ static int stream_frames(rtsp_client *client)
         }
         if (!track && previous && frame.sequence != previous + 1 &&
             !frame.keyframe && !client->need_keyframe) {
-            /* A slow socket can let the source overwrite our four-slot ring.
+            /* A slow socket can let the source overwrite our ring.
              * Sending retained P frames would preserve RTP sequence continuity
              * while silently losing decoder references. Wait for an IDR and
              * request one once, rather than emitting an undecodable GOP.

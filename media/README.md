@@ -248,6 +248,7 @@ Authenticated REST endpoints:
 | `POST /api/v1/update/media` | Admin UI session: a signed package (`application/octet-stream`). Verified and kept in RAM for 15 minutes; `200` gives its `release`; any other status says why not, with nothing kept |
 | `POST /api/v1/update/media/apply` | Admin UI session: `{"release":"..."}` flashes that package and restarts the camera |
 | `POST /api/v1/update/media/discard` | Admin UI session: forgets the package |
+| A change of `username` or `password` | Ends RTSP sessions: whoever had the old one does not keep watching. `preset_rename` answers 409 while the head is being steered |
 | `POST /api/v1/talk` | Binary `audio/PCMA`, 8 kHz mono, at most 8000 bytes (1 s) per request: `200` queued, `409` another talker or the 2 s queue is full, `503` speaker unavailable |
 
 `/health` and `/healthz` report readiness without credentials and are never

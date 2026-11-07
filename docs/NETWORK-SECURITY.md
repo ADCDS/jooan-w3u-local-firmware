@@ -189,7 +189,7 @@ kernel log under `jooan-local/netdog-*.log` on the microSD card first, when
 one is mounted. A network that never worked in the current boot is given 15
 minutes of uptime first, and each watchdog reboot doubles that wait (up to 4
 hours) until the network has stayed up for 30 minutes, so an absent network
-cannot make the camera reboot in a loop. It never acts during maintenance or a
+cannot make the camera reboot in a tight loop. It never acts during maintenance or a
 Wi-Fi trial. `tools/wifi-deadman.sh` records the Wi-Fi state in detail when
 this needs diagnosing again.
 

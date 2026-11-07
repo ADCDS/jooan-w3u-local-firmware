@@ -73,8 +73,8 @@ if [ "$jl_running" != - ]; then
         # restart it inside the two-minute window, as the supervisor loop does
         # for a stable runtime. The window is elapsed time, not attempts: a
         # failed start alone can take 25 s.
-        # The committed network must not wait for the trial either: a native
-        # boot gives up on its gateway after 300 s and latches native-failed.
+        # The committed network must not wait for the trial either: a native boot
+        # with nothing to wait for gives up on its gateway after 300 s and latches.
         jl_trial_deadline=$(( $(jl_uptime) + 120 ))
         while [ "$(jl_uptime)" -lt "$jl_trial_deadline" ]; do
             sleep 5

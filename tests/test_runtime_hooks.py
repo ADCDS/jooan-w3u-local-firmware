@@ -139,12 +139,24 @@ class RuntimeHookTests(unittest.TestCase):
             self.assertEqual(boot("enabled", *scripts)[0], "handoff")
             out, _ = boot("enabled", "native", *scripts)
             self.assertTrue(out.startswith("native") and "function" in out, out)
-            # A boot cut short (a power cut, a hang) gets one more try...
+            # A boot cut short (a power cut, a hang) gets two more tries...
             out, names = boot("enabled", "native", "native-trial", *scripts)
             self.assertTrue(out.startswith("native"), out)
             self.assertEqual(names, ["native-boot.sh", "native-retry"])
-            # ...and the second one falls back, keeping the stage.
-            out, names = boot("enabled", "native", "native-trial", "native-retry", *scripts)
+            self.assertEqual((media / "native-retry").read_text().strip(), "1")
+            def again() -> tuple[str, list[str]]:
+                retry = (media / "native-retry").read_text()
+                for name in ("out", "native-trial"):
+                    (media / name).unlink(missing_ok=True)
+                (media / "native-trial").write_text("boot=x\nstage=launch\n")
+                subprocess.run(["sh", "-c", script], check=True)
+                out = (media / "out").read_text().strip() if (media / "out").exists() else ""
+                return out, sorted(p.name for p in media.iterdir() if p.name.startswith("native-"))
+            out, names = again()
+            self.assertTrue(out.startswith("native"), out)
+            self.assertEqual((media / "native-retry").read_text().strip(), "2")
+            # ...and then falls back, keeping the stage.
+            out, names = again()
             self.assertEqual((out, names), ("handoff", ["native-boot.sh", "native-failed"]))
             self.assertIn("stage=launch", (media / "native-failed").read_text())
             # A boot that recorded a failure falls back at once.
@@ -152,15 +164,38 @@ class RuntimeHookTests(unittest.TestCase):
             out, names = boot("enabled", "native", "native-trial", *scripts)
             self.assertEqual((out, names), ("handoff", ["native-boot.sh", "native-failed"]))
             stage = "launch"
-            # A reboot the platform asked for counts for nothing, and is used up.
+            # A reboot the platform asked for counts for nothing, for the boot it cut short...
             out, names = boot("enabled", "native", "native-trial", "reboot-requested", *scripts)
+            def asked(*present: str, boot_id: str = "x") -> tuple[str, list[str]]:
+                for name in ("out", "native-trial", "native-failed", "native-retry", "reboot-requested", "boot-trial"):
+                    (media / name).unlink(missing_ok=True)
+                for name in present:
+                    (media / name).write_text(f"boot={boot_id}\nstage={stage}\n" if name == "native-trial" else "x\n")
+                (media / "reboot-requested").write_text("x\n")
+                subprocess.run(["sh", "-c", script], check=True)
+                out = (media / "out").read_text().strip() if (media / "out").exists() else ""
+                return out, sorted(p.name for p in media.iterdir() if p.name.startswith("native-"))
+            out, names = asked("native-trial")
             self.assertTrue(out.startswith("native"), out)
             self.assertEqual(names, ["native-boot.sh"])
             self.assertFalse((media / "reboot-requested").exists())
-            # The handoff's marker too, which otherwise selects the OEM rescue.
-            boot("enabled", "boot-trial", "reboot-requested", *scripts)
+            # ...the handoff's marker too, which otherwise selects the OEM rescue...
+            asked("boot-trial")
             self.assertFalse((media / "boot-trial").exists())
-            # A boot that got through forgets the earlier interruption.
+            # ...but not what an earlier boot found: another boot's marker counts as usual,
+            out, names = asked("native-trial", boot_id="y")
+            self.assertEqual(names, ["native-boot.sh", "native-retry"])
+            (media / "boot-trial").write_text("y\n")
+            (media / "reboot-requested").write_text("x\n")
+            subprocess.run(["sh", "-c", script], check=True)
+            self.assertTrue((media / "boot-trial").exists(), "another boot's rescue latch was erased")
+            (media / "boot-trial").unlink()
+            # and a recorded failure stays one, even in the boot that asked.
+            stage = "failed: pan/tilt homing failed"
+            out, names = asked("native-trial")
+            self.assertEqual((out, names), ("handoff", ["native-boot.sh", "native-failed"]))
+            stage = "launch"
+            # A boot that got through forgets the earlier interruptions.
             out, names = boot("enabled", "native", "native-retry", *scripts)
             self.assertTrue(out.startswith("native"), out)
             self.assertEqual(names, ["native-boot.sh"])

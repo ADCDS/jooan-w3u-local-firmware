@@ -172,6 +172,11 @@ streams being read:
 Measured with the fixed lens at 640×360; at 1024×576 a still is 77 to 87 KB. At most two are
 served at a time: the rest get 503, so stills cannot take every HTTP worker.
 
+A viewer that falls behind by more than the 12-frame ring, about 0.8 s, loses frames until the
+next keyframe, which it asks for; forced keyframes are limited to one a second per encoder. At the
+earlier 4-frame ring this showed as gaps of 0.4 s on Wi-Fi with two viewers. A frame over the 2 MiB
+limit is dropped and a keyframe asked for, and stops nothing.
+
 | | 1920×1080 | 640×360 |
 |---|---|---|
 | Size | about 370 KB | about 38 KB |
@@ -485,7 +490,7 @@ connected, 60 s each and six requests each:
 
 | | `-Os` | `-O3` |
 |---|---|---|
-| Stripped daemon | 708,776 bytes | 760,044 bytes |
+| Stripped daemon | 649,452 bytes | 760,044 bytes |
 | Free in the app partition | 167,936 bytes | 131,072 bytes |
 | Daemon's share of the CPU | 24-25% | 24% |
 | System idle | 40-44% | 43% |
@@ -493,10 +498,16 @@ connected, 60 s each and six requests each:
 | TLS handshake, new connection | 0.28-0.70 s, median 0.46 | 0.36-0.50 s, median 0.42 |
 | ONVIF `GetStatus` | 0.30-0.65 s | 0.31-0.86 s |
 
+Memory and RTSP were not compared: the runs were at different uptimes, so resident memory and
+free memory would say more about those than about the build (`VmRSS` was 3.6 and 3.2 MB), and CPU
+and frame rate gave no reason to spend two more flashes on it.
+
 A reset is only held against a release if it failed: `local.rc` latches `native-failed` at
-once for a boot that recorded a failure, and after a second try for one that was cut short.
-A reboot the platform asked for (`reboot-requested`) counts for nothing, and no marker
-exists while a boot waits for the network, so an outage changes nothing.
+once for a boot that recorded a failure, and after two more tries for one that was cut short.
+A reboot the platform asked for (`reboot-requested`, which holds the boot's ID) counts for
+nothing against that boot. No marker exists while a boot waits for the network, so an outage
+changes nothing on a camera that has qualified before (`ever-qualified`); without that, with no
+committed network, or with no runtime trying to join it, the wait ends at 300 s.
 
 The appfs installer upgrades only a native boot: it refuses to run while the
 OEM application or its watchdog is running. It takes the platform maintenance

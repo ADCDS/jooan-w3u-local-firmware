@@ -21,6 +21,7 @@ import os
 import ssl
 import sys
 import time
+import urllib.error
 import urllib.request
 
 import cv2
@@ -50,7 +51,17 @@ class Camera:
         return json.loads(self.request(path, body))
 
     def still(self, channel):
-        data = np.frombuffer(self.request(f"/api/v1/snapshot?channel={channel}"), np.uint8)
+        for _ in range(30):
+            try:
+                body = self.request(f"/api/v1/snapshot?channel={channel}")
+                break
+            except urllib.error.HTTPError as error:  # someone else's stills: not worth losing a scan over
+                if error.code != 503:
+                    raise
+                time.sleep(1)
+        else:
+            raise RuntimeError("the camera stayed busy with other stills")
+        data = np.frombuffer(body, np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
 
     def goto(self, x, y):

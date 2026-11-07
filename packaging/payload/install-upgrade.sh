@@ -122,6 +122,30 @@ require_copy_headroom() {
     JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control COPY_KB=$copy_kb /bin/sh -c \
         '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" $((COPY_KB + 56)) 20'
 }
+# Everything an update replaces, against the room it will have. The steps below delete
+# the only persistent runtime as soon as they run short, so this has to be asked before
+# the first of them: a refusal now leaves the camera as it was.
+tree_bytes() {
+    find "$1" -print 2>/dev/null | while IFS= read -r tree_path; do
+        [ ! -f "$tree_path" ] || wc -c < "$tree_path"
+    done | awk '{n+=$1} END {printf "%.0f\n",n}'
+}
+transaction_fits() {
+    fit_new=0
+    for fit_name in controller.tar.gz local.rc recovery.tar.gz recovery.md5 runtime.tar.gz runtime.md5; do
+        [ ! -f "$self/$fit_name" ] || fit_new=$((fit_new + $(wc -c < "$self/$fit_name")))
+    done
+    fit_old=0
+    for fit_name in controller.tar.gz local.rc; do
+        [ ! -f "$root/$fit_name" ] || fit_old=$((fit_old + $(wc -c < "$root/$fit_name")))
+    done
+    fit_old=$((fit_old + $(tree_bytes "$root/recovery") + $(tree_bytes "$root/slots")))
+    fit_free=$(df -k "$root" | awk 'END {print $4}')
+    case "$fit_free" in ''|*[!0-9]*) return 1 ;; esac
+    [ $((fit_free + fit_old / 1024)) -ge $((fit_new / 1024 + 8 + 56)) ] || return 1
+    # The logical budget too: a tree over it is refused later, with the runtime gone by then.
+    [ $(( $(tree_bytes "$root") - fit_old + fit_new + 4096 )) -le 200704 ]
+}
 enter_runtime_recovery() {
     mkdir -p "$root/state" "$root/slots" || return 1
     printf '%s\n' '- - 0' > "$root/state/selection.new" || return 1
@@ -424,6 +448,7 @@ if [ "$legacy" = manual-admin ]; then
     sync
 fi
 
+[ "$expanded" != 0 ] || transaction_fits || die 'this update does not fit in /opt: nothing was changed'
 case "$expanded" in
     1|6) ;;
     *)

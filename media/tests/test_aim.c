@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 /* camera1's own, measured on 2026-11-06. */
+/* The fixed lens's orientation is checked where the file is read: see integration.py. */
 static const jipc_aim CAMERA1 = {{2021, -457, 2, -54, 5, 2}, {385, -5, 220, 8, -69, -10}};
 #define NEAR(a, b, tolerance) (fabs((a) - (b)) <= (tolerance))
 

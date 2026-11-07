@@ -132,7 +132,8 @@ class SystemOpsTests(unittest.TestCase):
             time.sleep(0.2)
         self.assertTrue(self.rebooted.exists(), "the delayed reboot did not run")
         # It told the next boot, and kept the clock's time.
-        self.assertTrue((media / "reboot-requested").exists())
+        self.assertEqual((media / "reboot-requested").read_text().strip(),
+                         Path("/proc/sys/kernel/random/boot_id").read_text().strip())
         self.assertTrue((self.root / "state/last-time").exists())
 
     def test_reset_during_a_trial_is_allowed_and_latches_nothing(self) -> None:
@@ -146,6 +147,44 @@ class SystemOpsTests(unittest.TestCase):
             time.sleep(0.2)
         self.assertTrue(self.rebooted.exists())
         self.assertTrue((media / "reboot-requested").exists())
+
+    def test_last_platform_install_can_be_asked_about(self) -> None:
+        self.assertEqual(json.loads(self.helper("firmware-status").stdout)["state"], "idle")
+        (self.run / "firmware.abc.status").write_text("state=failed\nreason=upgrade\nexit=1\n")
+        self.assertEqual(json.loads(self.helper("firmware-status").stdout),
+                         {"state": "failed", "reason": "upgrade", "restart": ""})
+        (self.run / "firmware.abc.status").write_text("state=complete\nrestart=needed\n")
+        self.assertEqual(json.loads(self.helper("firmware-status").stdout)["restart"], "needed")
+
+    def test_update_is_refused_before_anything_is_deleted(self) -> None:
+        """The whole update against the room it will have, with the real function."""
+        script = (REPOSITORY / "packaging/payload/install-upgrade.sh").read_text()
+        # Asked before the first step that can delete the runtime.
+        first = script.index("publish_controller_core || die", script.index("transaction_fits ||"))
+        self.assertLess(script.index("transaction_fits || die"), first)
+        self.assertEqual(script.count("transaction_fits || die"), 1)
+        start = script.index("tree_bytes() {")
+        end = script.index("enter_runtime_recovery() {")
+        functions = script[start:end]
+        base = Path(self.temporary.name) / "fit"
+        stage, tree, fake = base / "stage", base / "tree", base / "bin"
+        for folder in (stage, tree / "slots/A", tree / "recovery", fake):
+            folder.mkdir(parents=True)
+        (fake / "df").write_text('#!/bin/sh\nprintf "x\\nd 384 288 $FAKE_FREE 75%% /opt\\n"\n')
+        (fake / "df").chmod(0o755)
+        def fits(free: int, new_kb: int, old_kb: int = 90) -> bool:
+            (stage / "runtime.tar.gz").write_bytes(b"x" * (new_kb * 1024))
+            (tree / "slots/A/runtime.tar.gz").write_bytes(b"x" * (old_kb * 1024))
+            result = subprocess.run(["sh", "-c", functions + "\ntransaction_fits"],
+                                    env=os.environ | {"PATH": f"{fake}:/bin:/usr/bin", "FAKE_FREE": str(free),
+                                                      "self": str(stage), "root": str(tree)},
+                                    capture_output=True, text=True)
+            return result.returncode == 0
+        self.assertTrue(fits(free=96, new_kb=90))           # camera1's figures: replacing like for like
+        self.assertTrue(fits(free=64, new_kb=90))           # just enough, once the old one is gone
+        self.assertFalse(fits(free=60, new_kb=90))          # a little short: nothing is touched
+        self.assertFalse(fits(free=96, new_kb=130))         # a release that grew too much
+        self.assertFalse(fits(free=500, new_kb=300, old_kb=90))  # room on flash, but over the logical budget
 
     def test_clock_confirmed(self) -> None:
         self.assertFalse((self.run / "clock-set").exists())

@@ -49,7 +49,7 @@ RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
-FIRST_PLATFORM_SEQUENCE = 68
+FIRST_PLATFORM_SEQUENCE = 69
 
 
 def log(message):
@@ -345,10 +345,10 @@ def first_install(args, cam, bundle, spec):
         write_remote(cam, f"{root}/deployment.env.next", deployment)
         cam.ssh("cat > /tmp/jipc-flash-candidate.squashfs", data=(bundle / appfs["image"]).read_bytes(), timeout=300)
         cam.ssh("cat > /tmp/first-appfs.sh && chmod 700 /tmp/first-appfs.sh", data=(bundle / appfs["installer"]).read_bytes())
+        before = cam.boot_id()
     except Exception:
         cam.ssh(tidy, timeout=20, check=False)  # the staged copies take up the small settings partition
         raise
-    before = cam.boot_id()
     log("flashing the first release (it verifies, keeps a RAM copy of the stock partition and reboots)")
     cam.ssh(f"( trap '' HUP; exec sh /tmp/first-appfs.sh {appfs['image_md5']} {facts['appfs_md5']} ) "
             "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")

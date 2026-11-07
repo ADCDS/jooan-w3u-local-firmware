@@ -34,7 +34,7 @@ boundary.
   install and uninstall, migration, Wi-Fi, network time, SSH, routing,
   power-loss and cold-recovery checks pass on that camera
   ([hardware promotion gates](tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Published: v0.2.34** (2026-11-07): the platform package and, for the first
+- **Published: v0.2.35** (2026-11-07): the platform package and, for the first
   time, the media layer's binaries and scripts. Each owner still builds the
   image for the camera from that camera's own app partition, because it holds
   vendor files, so no image is published.
@@ -69,7 +69,7 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.34 and its media layer:
+With 0.2.35 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 1024×576 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,
@@ -78,8 +78,8 @@ With 0.2.34 and its media layer:
   a network list, a static address, stage, commit and rollback; restart, a daily restart and reset
   to defaults; privacy mode; a preset patrol; exact ONVIF moves;
   optional network time from a local server; mDNS; signed updates.
-- **Off by default, works with `audio=1`:** audio (microphone on RTSP, talk
-  through the speaker from Frigate, the admin UI or the API).
+- **On unless `audio=0`:** audio (microphone on RTSP, talk through the speaker from
+  Frigate, the admin UI or the API).
 - **Missing:** motion and person detection; digital zoom; a logo on the picture;
   on-camera recording (off in the qualified profile: record with the NVR) and SD-card
   management; any cloud or phone-app access.

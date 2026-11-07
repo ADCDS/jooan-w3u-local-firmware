@@ -20,6 +20,7 @@ typedef struct {
     void *imp;
     replay_input replay[JIPC_VIDEO_STREAMS];
     unsigned idr_mask;
+    uint64_t idr_at[JIPC_STREAMS];
     atomic_int quit;
     FILE *speaker_capture; /* replay sink: what the speaker would play */
 } media_state;
@@ -116,6 +117,17 @@ static int stream_parameters(jipc_stream *stream, const unsigned char *copy, siz
     return idr;
 }
 
+/* A privacy hold has begun: nothing already in the rings may reach anyone, later or at all. */
+void jipc_streams_forget_video(jipc_app *app)
+{
+    for (unsigned i = 0; i < JIPC_STREAMS; ++i) {
+        if (i == JIPC_AUDIO_STREAM || !app->streams[i].capacity) continue;
+        pthread_mutex_lock(&app->streams[i].mutex);
+        app->streams[i].floor = app->streams[i].sequence;
+        pthread_mutex_unlock(&app->streams[i].mutex);
+    }
+}
+
 int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes,
                  uint64_t pts_us, int keyframe, enum jipc_codec codec)
 {
@@ -201,12 +213,12 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
     /* Held for privacy: what is still in the ring is the picture from before, and someone
      * joining now gets the newest frame, which may be a whole picture. */
 #define PRIVACY_HELD (channel != JIPC_AUDIO_STREAM && (atomic_load(&app->privacy_hold) || atomic_load(&app->privacy_wait_key)))
-    while ((stream->sequence <= *cursor || PRIVACY_HELD) && !app->stop) {
+    while ((stream->sequence <= *cursor || stream->sequence <= stream->floor || PRIVACY_HELD) && !app->stop) {
         if (!timeout_ms) { pthread_mutex_unlock(&stream->mutex); return 0; }
         int rc = pthread_cond_timedwait(&stream->ready, &stream->mutex, &deadline);
         if (rc) { pthread_mutex_unlock(&stream->mutex); return rc == ETIMEDOUT ? 0 : -1; }
     }
-    if (!stream->sequence || stream->sequence <= *cursor || PRIVACY_HELD) {
+    if (!stream->sequence || stream->sequence <= *cursor || stream->sequence <= stream->floor || PRIVACY_HELD) {
         pthread_mutex_unlock(&stream->mutex);
         return 0;
     }
@@ -215,6 +227,7 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
                       stream->sequence - stream->capacity + 1 : 1;
     uint64_t wanted = *cursor ? *cursor + 1 : stream->sequence;
     if (wanted < oldest) wanted = oldest;
+    if (wanted <= stream->floor) wanted = stream->floor + 1;
     jipc_frame *source = &stream->slots[(wanted - 1) % stream->capacity];
     unsigned char *copy = malloc(source->size);
     if (!copy) { pthread_mutex_unlock(&stream->mutex); return -1; }
@@ -632,8 +645,18 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     else if (!strcmp(operation, "idr")) {
         if (value < 0 || (unsigned)value >= state->config.sensors * 2)
             rc = fail(error, capacity, "invalid stream channel");
-        else if (state->imp) rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
-        else { state->idr_mask |= 1u << jipc_video_owner(&state->config,(unsigned)value); rc = 0; }
+        else {
+            /* At most one forced keyframe a second per encoder: each costs the shared bitrate, and a
+             * viewer that keeps falling behind must not make it worse for everyone. */
+            unsigned owner = jipc_video_owner(&state->config, (unsigned)value);
+            uint64_t idr_now = jipc_now_us();
+            if (state->idr_at[owner] && idr_now - state->idr_at[owner] < UINT64_C(1000000)) rc = 0;
+            else {
+                state->idr_at[owner] = idr_now;
+                if (state->imp) rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);
+                else { state->idr_mask |= 1u << owner; rc = 0; }
+            }
+        }
     } else if (!strcmp(operation, "night") && (value == 2 || value == 3)) {
         rc = jipc_controls_patch(app, value == 2 ? "{\"night\":{\"mode\":\"auto\"}}" : "{\"night\":{\"mode\":\"schedule\"}}",
                                  error, capacity);

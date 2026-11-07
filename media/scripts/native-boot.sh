@@ -71,12 +71,23 @@ grep -qx 'motor_home=1' "$root/camera.ini" || fail 'native boot requires motor_h
 
 # The daemon binds the camera's address: wait for Wi-Fi, DHCP and the gateway. A
 # network that is down says nothing about this release, so no trial marker stays
-# while waiting: a reset here (the ten-minute feeder limit, the network watchdog, a
-# power cut) just boots native again. Only with no committed network at all can this
-# never end, and then the handoff is the way forward.
+# while waiting: a reset here (the network watchdog, a power cut) just boots native
+# again, and local.rc's feeder limit waits with us.
+#
+# That is only for a camera with something to wait for. After 300 s the boot still
+# fails, which leads to the OEM application and its own stored network, the only way
+# back onto a network, if nothing can come of waiting: no committed network, no runtime
+# trying to join it (a power cut during a platform update can leave none), or a camera
+# whose native boot has never once worked here, such as a first install.
 rm -f "$root/native-trial" "$root/native-trial.new"
 sync
 wifi_committed=${JIPC_WIFI_JSON:-/opt/custom/jooan-local/config/wifi.json}
+wifi_attempts=${JIPC_WIFI_ATTEMPTS:-/run/jooan-local/wifi-attempts}
+network_wait=${JIPC_NETWORK_WAIT:-/tmp/jipc-network-wait}
+worth_waiting() {
+    [ -s "$wifi_committed" ] && [ -e "$wifi_attempts" ] && [ -e "$root/ever-qualified" ]
+}
+printf '%s\n' "$$" > "$network_wait"
 network_ready() {
     read -r gateway interface < /run/jooan-local/default-gateway 2>/dev/null || return 1
     [ "$interface" = wlan0 ] || return 1
@@ -85,9 +96,13 @@ network_ready() {
 }
 i=0
 until network_ready; do
-    [ "$i" -lt 300 ] || [ -s "$wifi_committed" ] || fail 'no committed Wi-Fi network: nothing can provide the gateway'
+    if [ "$i" -ge 300 ] && ! worth_waiting; then
+        rm -f "$network_wait"
+        fail 'no gateway, and no committed network, runtime or earlier qualified boot to wait for'
+    fi
     sleep 1; i=$((i + 1))
 done
+rm -f "$network_wait"
 log 'network ready'
 
 # Hand the armed watchdog from the rootfs feeder to the media daemon.
@@ -134,8 +149,28 @@ while [ "$i" -lt 185 ]; do
         fail 'pan/tilt homing failed'
 done
 [ -n "$homed" ] || fail 'pan/tilt homing did not complete'
-# Whether the router is up right now is not evidence about this release.
-network_ready || log 'network is down at the end of qualification; the network watchdog handles that'
+# The gateway answered before the daemon started. If it does not now, that may be the
+# router, which can go down at any moment, or this release, which can take the network
+# with it. Once says nothing. Three boots in a row do.
+i=0
+until network_ready || [ "$i" -ge 60 ]; do
+    native_ready || fail 'media daemon lost health during final network check'
+    sleep 1; i=$((i + 1))
+done
+if network_ready; then
+    rm -f "$root/net-lost"
+else
+    lost=$(cat "$root/net-lost" 2>/dev/null) || lost=0
+    case "$lost" in ''|*[!0-9]*) lost=0 ;; esac
+    lost=$((lost + 1))
+    if [ "$lost" -ge 3 ]; then
+        rm -f "$root/net-lost"
+        fail 'the gateway answered before the daemon started and not after, on three boots in a row'
+    fi
+    printf '%s\n' "$lost" > "$root/net-lost" || :
+    log "gateway silent at the end of qualification ($lost of 3)"
+fi
+[ -e "$root/ever-qualified" ] || printf '' > "$root/ever-qualified"
 printf '%s\n' "$boot $native" > "$run/qualified"
 rm -f "$root/native-trial" "$root/native-trial.new"
 sync

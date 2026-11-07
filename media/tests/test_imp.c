@@ -170,7 +170,8 @@ static void test_packs(void)
     CHECK(release_count == 1 && frame.size == sizeof expected);
     CHECK(!memcmp(frame.data, expected, sizeof expected));
     packs[1].length = JIPC_MAX_FRAME + 1;
-    CHECK(copy_stream(&state, 4, &frame, error, sizeof error) == -1);
+    /* Too big: a lost frame and no error, still released. */
+    CHECK(!copy_stream(&state, 4, &frame, error, sizeof error) && !frame.size);
     CHECK(release_count == 2); /* Even malformed SDK frames must be released. */
     packs[1].length = sizeof expected - 6;
     release_result = -1;
@@ -585,6 +586,28 @@ static void test_main_only_delivery(void)
         CHECK(app.streams[owner].sps_size==app.streams[owner+1].sps_size);
         CHECK(!memcmp(app.streams[owner].sps,app.streams[owner+1].sps,app.streams[owner].sps_size));
     }
+    /* A frame over the limit is dropped and a keyframe asked for; the camera carries on. */
+    {
+        uint64_t before=app.produced[0];int get=pair_get[0];
+        pair_packs[0].length=JIPC_MAX_FRAME+1;pair_idr=-1;
+        CHECK(write(pair_pipe[0][1],"x",1)==1);CHECK(!jipc_imp_poll(&app,&s,0,error,sizeof(error)));
+        CHECK(pair_get[0]==get+1&&app.produced[0]==before&&pair_idr==0);
+        pair_packs[0].length=sizeof(data);
+    }
+    /* Privacy: a frame that is not black does not get out, whatever the SDK has said. It takes
+     * more than the fake's bytes, so this is about the size alone, and only while the hold is off. */
+    {
+        static unsigned char big[JIPC_PRIVACY_MAX_FRAME+1];
+        unsigned char *image=low_memory(sizeof(big));memcpy(image,data,sizeof(data));
+        uint32_t address=pair_packs[0].address,length=pair_packs[0].length;
+        pair_packs[0].address=(uint32_t)(uintptr_t)image;pair_packs[0].length=sizeof(big);
+        uint64_t before=app.produced[0];
+        atomic_store(&app.privacy_on,1);
+        CHECK(write(pair_pipe[0][1],"x",1)==1);CHECK(!jipc_imp_poll(&app,&s,0,error,sizeof(error)));
+        CHECK(app.produced[0]==before&&atomic_load(&app.privacy_hold)==1&&atomic_load(&app.privacy_leak)==1);
+        atomic_store(&app.privacy_on,0);atomic_store(&app.privacy_hold,0);atomic_store(&app.privacy_leak,0);atomic_store(&app.privacy_wait_key,0);
+        pair_packs[0].address=address;pair_packs[0].length=length;
+    }
     for(int ch=0;ch<4;++ch){CHECK(!jipc_imp_control(&s,"idr",ch,0,error,sizeof(error)));CHECK(pair_idr==ch/2);}
     CHECK(jipc_imp_control(&s,"idr",4,0,error,sizeof(error))<0);
     s.last_video[2]=jipc_now_us()-16000000;CHECK(write(pair_pipe[0][1],"x",1)==1);
@@ -631,6 +654,10 @@ static void test_provider(void)
         v.fps = 15; v.width1 = 1000; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
         v.width1 = 1024; v.height1 = 570; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
         v.height1 = 576; v.width = 1900; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+        /* Four encoders: only what fits the reserved memory. */
+        v.width = 1280; v.height = 720; v.main_only = 0; v.width1 = 0; v.height1 = 0; v.sub_width = 640; v.sub_height = 360;
+        CHECK(!jipc_native_video_validate(&v, error, sizeof error));
+        v.sub_width = 1024; v.sub_height = 576; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
     }
     config.width=1280;config.height=720;config.width1=640;config.height1=360;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);

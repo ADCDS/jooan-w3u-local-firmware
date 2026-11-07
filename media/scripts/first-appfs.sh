@@ -80,6 +80,7 @@ restore_config() {
 phase=checking
 on_exit() {
     case "$phase" in
+        checking) log 'ABORT: stopped before changing anything' ;;
         stopped) trap - EXIT; log 'ABORT before flash: stopped unexpectedly; rebooting into the unchanged appfs'
                  sync; /bin/busybox reboot -f ;;
         commit) trap - EXIT; log 'ABORT before flash: could not commit the configuration; undoing it and rebooting'

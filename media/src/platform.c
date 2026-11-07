@@ -70,7 +70,7 @@ typedef struct {
     int goto_rate, patrol_move;
     uint64_t manual_at;
     /* Privacy: where the head waits (x -1: stays where it is), and where it goes back to. */
-    int privacy, privacy_x, privacy_y, return_valid, return_x, return_y;
+    int privacy, privacy_x, privacy_y, return_valid, return_x, return_y, privacy_called;
     char position_path[640];
 } platform_state;
 
@@ -903,7 +903,10 @@ int jipc_platform_privacy(jipc_app *app, int on, int slot, char *error, size_t c
         /* Already at the pose with nothing here remembering why: a daemon restart during
          * privacy. The way back is then the saved view, not the pose. */
         int at_pose = abs(state->x - pose_x) <= 2 && abs(state->y - state->privacy_y) <= 2;
-        if (!was && going) { state->return_x = going_x; state->return_y = going_y; state->return_valid = 1; }
+        /* The first call since this daemon started, with privacy on: wherever the head is, it
+         * was going to or at the pose, and the view is what was saved. */
+        if (!was && !state->privacy_called && state->saved_valid) { state->return_x = state->saved_x; state->return_y = state->saved_y; state->return_valid = 1; }
+        else if (!was && going) { state->return_x = going_x; state->return_y = going_y; state->return_valid = 1; }
         else if (!was && at_pose && state->saved_valid) { state->return_x = state->saved_x; state->return_y = state->saved_y; state->return_valid = 1; }
         else if (!was && state->known && state->position_trusted) { state->return_x = state->x; state->return_y = state->y; state->return_valid = 1; }
         state->target_x = state->privacy_x < 0 ? state->x : state->privacy_x;
@@ -916,6 +919,7 @@ int jipc_platform_privacy(jipc_app *app, int on, int slot, char *error, size_t c
     state->goto_rate = 0; state->patrol_move = 0; state->goto_until = jipc_now_us() + PRESET_LIMIT_US; state->goto_active = 1;
     state->last_error[0] = 0; state->faulted = 0;
 done:
+    state->privacy_called = 1;
     pthread_mutex_unlock(&state->mutex);
     pthread_mutex_unlock(&platform_lifetime);
     return rc;

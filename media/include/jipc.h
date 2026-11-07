@@ -15,9 +15,15 @@
  * for an IDR); audio keeps 1.28 s of 40 ms frames so jittery readers do not
  * drop sound. */
 #define JIPC_RING_MAX 32
-#define JIPC_VIDEO_RING 4
+/* Close to a second at 15 fps. A reader further behind than this loses frames until the next
+ * keyframe, and a short stall on Wi-Fi should not cost half a second of video. */
+#define JIPC_VIDEO_RING 12
 #define JIPC_AUDIO_RING 32
-#define JIPC_MAX_FRAME (1024u * 1024u)
+/* The encoder's window for 1080p. A frame above it is dropped, never fatal. */
+#define JIPC_MAX_FRAME (2u * 1024u * 1024u + 64u * 1024u)
+/* Measured on camera1: a black IDR is under 1 KB, under 7 KB with the timestamp, and a picture
+ * 120 to 220 KB at night. Above this, privacy mode is not black, whatever the SDK said. */
+#define JIPC_PRIVACY_MAX_FRAME 32768u
 #define JIPC_MAX_JSON 16384
 enum jipc_codec { JIPC_H264 = 1, JIPC_PCMA = 2, JIPC_JPEG = 3 };
 typedef struct {
@@ -32,7 +38,7 @@ typedef struct {
     pthread_cond_t ready;
     jipc_frame slots[JIPC_RING_MAX];
     unsigned capacity;
-    uint64_t sequence;
+    uint64_t sequence, floor; /* floor: nothing at or below this may be read again */
     unsigned char sps[512], pps[512];
     size_t sps_size, pps_size;
     unsigned width, height, fps;
@@ -90,6 +96,8 @@ typedef struct jipc_app {
      * until the black-out is confirmed, so nothing can leak if it fails. */
     atomic_int privacy_on, privacy_hold;
     atomic_uint privacy_wait_key; /* by source: frames resume at the next keyframe */
+    atomic_int privacy_leak; /* the output says the black-out is not working */
+    atomic_int clock_confirmed; /* this daemon's own SNTP client has synchronized */
     uint64_t video_grace_until; /* jipc_video_healthy */
     /* Level of the microphone audio the NVR receives, over the last full
      * second, in hundredths of a dBFS; audio_level_ms is when it was taken
@@ -142,6 +150,7 @@ int jipc_config_json(jipc_app *app, char *out, size_t capacity);
 int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capacity);
 
 int jipc_streams_init(jipc_app *app);
+void jipc_streams_forget_video(jipc_app *app);
 void jipc_streams_destroy(jipc_app *app);
 int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes,
                  uint64_t pts_us, int keyframe, enum jipc_codec codec);

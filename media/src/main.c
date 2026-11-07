@@ -210,6 +210,8 @@ int main(int argc, char **argv)
                 jipc_sleep_ms(100);
             }
         }
+        /* Whatever asked for this restart is waiting for its answer: let it go out. */
+        if (app->restart) jipc_sleep_ms(300);
         int restart = !result && !interrupted && (!deadline || jipc_now_us() < deadline) && (reload_requested || app->restart);
         app->stop = 1; jipc_discovery_stop(app); jipc_http_stop(app); jipc_controls_stop(app); jipc_ntp_stop(app); jipc_rtsp_stop(app); jipc_record_stop(app);
         jipc_backend_stop(app); jipc_platform_stop(app); jipc_streams_destroy(app);

@@ -18,9 +18,20 @@ assert text.index("stage launch") < text.index('kill -TERM "$f"')
 # and the daemon's own launch is recorded again before it can go wrong.
 waiting = text.index('rm -f "$root/native-trial" "$root/native-trial.new"')
 assert text.index("stage start") < waiting < text.index("until network_ready") < text.index("stage launch")
-assert "stage network" not in text and "did not stay healthy" not in text
-# ...and only with no committed network does the wait end in a failure.
-assert '[ "$i" -lt 300 ] || [ -s "$wifi_committed" ] || fail' in text
+assert "stage network" not in text
+# ...but it ends in a failure, and so the OEM's network, if nothing can come of it: no committed
+# network, no runtime trying it, or a camera that has never qualified here (a first install).
+worth = text[text.index("worth_waiting() {"):]
+worth = worth[:worth.index("}")]
+for needed in ('"$wifi_committed"', '"$wifi_attempts"', '"$root/ever-qualified"'):
+    assert needed in worth, needed
+assert 'if [ "$i" -ge 300 ] && ! worth_waiting; then' in text
+# The feeder limit waits with it, and a failure clears that first.
+assert text.index('> "$network_wait"') < text.index("until network_ready")
+assert text.index('rm -f "$network_wait"') < text.index("fail 'no gateway")
+# Only a qualified boot earns the wait; a lost network counts on three boots, not one.
+assert text.rindex('"$root/ever-qualified"') > text.index("[ -n \"$homed\" ]")
+assert '"$lost" -ge 3' in text and "three boots in a row" in text
 # TERM hands the feeder over cleanly; only a failure leaves the watchdog armed.
 assert 'kill -TERM "$f"' in text and 'kill -KILL "$f"' in text
 assert "grep -qx 'motor_home=1'" in text and "motor homing complete" in text

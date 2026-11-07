@@ -79,7 +79,7 @@ def unused_port() -> int:
         return probe.getsockname()[1]
 
 
-PLATFORM = json.dumps({"release_version": "0.2.34", "release_sequence": 68}).encode()
+PLATFORM = json.dumps({"release_version": "0.2.35", "release_sequence": 69}).encode()
 
 
 class CameraStateTests(unittest.TestCase):
@@ -102,7 +102,7 @@ class CameraStateTests(unittest.TestCase):
             self.assertIsNone(uploader.running_release("127.0.0.1", camera.port))
         self.assertIsNone(uploader.running_release("127.0.0.1", unused_port()))
         with FakeCamera(get=(200, PLATFORM)) as camera:
-            self.assertEqual(uploader.running_release("127.0.0.1", camera.port)["release_sequence"], 68)
+            self.assertEqual(uploader.running_release("127.0.0.1", camera.port)["release_sequence"], 69)
 
     def test_a_camera_with_the_platform_gets_no_upload(self) -> None:
         # This used to end "active" for the same release without anything having been sent.
@@ -110,7 +110,7 @@ class CameraStateTests(unittest.TestCase):
             self.assertEqual(self.run_tool(camera.port), 2)
             self.assertEqual(camera.posts, 0)
         with FakeCamera(get=(200, PLATFORM)) as camera:
-            self.assertEqual(self.run_tool(camera.port, "0.2.34", 68), 0)
+            self.assertEqual(self.run_tool(camera.port, "0.2.35", 69), 0)
             self.assertEqual(camera.posts, 0)
 
     def test_nothing_listening_is_a_failure_at_once(self) -> None:

@@ -101,7 +101,7 @@ static void audio_checks(void)
     CHECK(accepted == 5 && dropped == 15); /* stays within 150 ms of now */
     uint64_t forced = jipc_audio_clock_stamp(&clock, t0, 320, &jump);
     CHECK(!jump && forced == last + 40000);
-    /* Ring depth per stream: video 4, audio 32; a slow audio reader resumes
+    /* Ring depth per stream; a slow audio reader resumes
      * at the oldest retained frame, not the newest. */
     jipc_app *app = calloc(1, sizeof *app); CHECK(app);
     jipc_config_defaults(&app->config);
@@ -113,6 +113,16 @@ static void audio_checks(void)
     jipc_frame frame = {0}; uint64_t cursor = 1;
     CHECK(jipc_read(app, JIPC_AUDIO_STREAM, &cursor, &frame, 0) == 1);
     CHECK(frame.sequence == 40 - JIPC_AUDIO_RING + 1 && frame.pts_us == 1000 + 40 - JIPC_AUDIO_RING);
+    jipc_frame_free(&frame);
+    /* Privacy: what was in a video ring before a hold is not read by anyone afterwards. */
+    for (unsigned i = 0; i < 3; ++i) CHECK(!jipc_publish(app, 0, sample, sizeof sample, 2000 + i, 1, JIPC_H264));
+    jipc_streams_forget_video(app);
+    cursor = 0;
+    CHECK(jipc_read(app, 0, &cursor, &frame, 0) == 0);      /* someone joining */
+    cursor = 1;
+    CHECK(jipc_read(app, 0, &cursor, &frame, 0) == 0);      /* someone behind */
+    CHECK(!jipc_publish(app, 0, sample, sizeof sample, 3000, 1, JIPC_H264));
+    CHECK(jipc_read(app, 0, &cursor, &frame, 0) == 1 && frame.pts_us == 3000);
     jipc_frame_free(&frame);
     jipc_streams_destroy(app); free(app);
 }
@@ -211,7 +221,7 @@ int main(void)
     uint64_t cursor = 0; jipc_frame frame; CHECK(jipc_read(&app, 0, &cursor, &frame, 0) == 1);
     CHECK(frame.sequence == 1 && frame.keyframe && frame.size == sizeof(access_unit)); jipc_frame_free(&frame);
     CHECK(jipc_read(&app, 0, &cursor, &frame, 0) == 0);
-    for (unsigned i = 0; i < 6; ++i) CHECK(!jipc_publish(&app, 0, access_unit, sizeof(access_unit), 2000 + i, 1, JIPC_H264));
+    for (unsigned i = 0; i < JIPC_VIDEO_RING + 2; ++i) CHECK(!jipc_publish(&app, 0, access_unit, sizeof(access_unit), 2000 + i, 1, JIPC_H264));
     CHECK(jipc_read(&app, 0, &cursor, &frame, 0) == 1); CHECK(frame.sequence == 4); jipc_frame_free(&frame);
     CHECK(jipc_publish(&app, 5, access_unit, sizeof(access_unit), 0, 1, JIPC_H264) < 0);
     CHECK(jipc_publish(&app, 0, access_unit, JIPC_MAX_FRAME + 1u, 0, 1, JIPC_H264) < 0);

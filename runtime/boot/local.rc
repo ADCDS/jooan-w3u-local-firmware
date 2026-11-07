@@ -127,7 +127,7 @@ fi
 # jooanipc did, and the daemon homes pan/tilt. The guarded OEM handoff remains
 # the fallback. A native boot that did not qualify leaves native-trial behind;
 # the next boot latches it as native-failed and uses the handoff, at once if it
-# recorded a failure and otherwise after one more try.
+# recorded a failure and otherwise after two more tries.
 jl_media=/opt/jooanipc-open
 jl_native_media() {
     # Feed the hardware watchdog until the media daemon takes it over. If none
@@ -137,7 +137,16 @@ jl_native_media() {
     echo $! > /tmp/jipc-watchdog-feeder.pid
     (
         trap '' HUP
-        sleep 600
+        # A boot waiting for its network is alive, and a reset would not bring the
+        # router back. If that script dies, the ten minutes run out as usual.
+        jl_waited=0
+        while [ "$jl_waited" -lt 600 ]; do
+            sleep 5
+            jl_waited=$((jl_waited + 5))
+            if read -r jl_waiter < /tmp/jipc-network-wait 2>/dev/null && [ -n "$jl_waiter" ] && [ -d "/proc/$jl_waiter" ]; then
+                jl_waited=0
+            fi
+        done
         jl_feeder=$(cat /tmp/jipc-watchdog-feeder.pid 2>/dev/null)
         [ -n "$jl_feeder" ] && [ "$(cat "/proc/$jl_feeder/comm" 2>/dev/null)" = watchdog ] &&
             kill -KILL "$jl_feeder"
@@ -160,19 +169,32 @@ jl_native_media() {
     /bin/sh "$jl_media/native-boot.sh" </dev/null >/tmp/jipc-native.log 2>&1 &
 }
 if [ -f "$jl_media/enabled" ]; then
-    # A reboot the platform asked for says nothing about the boot it cut short.
+    # A reboot the platform asked for says nothing about the boot it cut short:
+    # that boot's own markers go, if they do not record a failure. It holds the
+    # boot's ID, so it cannot erase what an earlier boot found.
     if [ -f "$jl_media/reboot-requested" ]; then
-        rm -f "$jl_media/reboot-requested" "$jl_media/native-trial" "$jl_media/boot-trial"
+        jl_asked=$(cat "$jl_media/reboot-requested" 2>/dev/null)
+        for jl_mark in native-trial boot-trial; do
+            if [ -n "$jl_asked" ] && [ -f "$jl_media/$jl_mark" ] &&
+               grep -q "$jl_asked" "$jl_media/$jl_mark" 2>/dev/null &&
+               ! grep -q '^stage=failed' "$jl_media/$jl_mark" 2>/dev/null; then
+                rm -f "$jl_media/$jl_mark"
+            fi
+        done
+        rm -f "$jl_media/reboot-requested"
     fi
     if [ -f "$jl_media/native-trial" ]; then
         # A boot that recorded a failure is final. One that was only cut short, by
-        # a power cut or a hang, gets one more try: a smart plug or a bad socket
+        # a power cut or a hang, gets two more tries: a smart plug or a bad socket
         # must not end native boot, but a hang must not loop either.
-        if [ -f "$jl_media/native-retry" ] || grep -q '^stage=failed' "$jl_media/native-trial" 2>/dev/null; then
+        jl_tries=$(cat "$jl_media/native-retry" 2>/dev/null)
+        case "$jl_tries" in ''|*[!0-9]*) jl_tries=0 ;; esac
+        if [ "$jl_tries" -ge 2 ] || grep -q '^stage=failed' "$jl_media/native-trial" 2>/dev/null; then
             mv -f "$jl_media/native-trial" "$jl_media/native-failed" 2>/dev/null || :
             rm -f "$jl_media/native-retry"
         else
-            mv -f "$jl_media/native-trial" "$jl_media/native-retry" 2>/dev/null || :
+            printf '%s\n' "$((jl_tries + 1))" > "$jl_media/native-retry" 2>/dev/null || :
+            rm -f "$jl_media/native-trial"
         fi
     else
         rm -f "$jl_media/native-retry"

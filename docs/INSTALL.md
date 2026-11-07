@@ -15,14 +15,14 @@ As of 2026-11-07, two releases are on
   lenses and ONVIF pan/tilt and presets for an NVR such as Frigate, and the
   camera can no longer reach the JOOAN cloud. The video still comes from the
   vendor's camera program, which keeps running under confinement.
-- **v0.2.34** (2026-11-07) adds the open media daemon in
+- **v0.2.35** (2026-11-07) adds the open media daemon in
   [`media/`](../media/), and is what the rest of this repository describes.
-  **No camera has yet been taken from stock to v0.2.34 with these
+  **No camera has yet been taken from stock to v0.2.35 with these
   instructions.** See [The media layer](#the-media-layer), including what has
   and has not been tested, before choosing it.
 - **Each installs only on a camera whose vendor firmware matches the verified
   unit's.** Before it writes anything, the installer compares vendor files with
-  the verified unit's: v0.2.21 the whole application partition, and v0.2.34 the
+  the verified unit's: v0.2.21 the whole application partition, and v0.2.35 the
   twelve files it depends on. If they differ, it refuses and leaves the camera as
   it was. The media layer then asks more of your application partition: every
   file it keeps must be there, and the camera must have the CV2005 sensors.
@@ -38,7 +38,7 @@ As of 2026-11-07, two releases are on
 | Later updates and uninstall | Over Wi-Fi, from the web console's Firmware section | None |
 | Backup of the camera's flash | Over SSH, after the install ([step 7](#7-back-up-the-camera-over-ssh)) | None |
 | Chip-level backup or restore | With an SPI flash programmer and SOIC-8 clip, camera opened | Optional for the install. It is the only way to recover a camera that no longer boots |
-| Media layer (v0.2.34, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
+| Media layer (v0.2.35, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
 
 **You do not need a microSD card, a USB cable, a serial adapter or a flash
 programmer to install v0.2.21, and you do not need to open the camera.** The
@@ -261,7 +261,7 @@ With v0.2.21:
 The v0.2.21 documentation describes these features. Read it at the tag:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 and [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-The documents on `main` describe 0.2.34.
+The documents on `main` describe 0.2.35.
 
 ## Updating later
 
@@ -296,9 +296,10 @@ in it, are deleted. Details are in
 `/opt/jooanipc-open` stay, including the stream password and the TLS private key,
 so delete them first over SSH: `rm -rf /opt/jooanipc-open`. The application
 partition also stays the reduced one, without the vendor's voice prompts and other
-sensors' drivers. Putting the original back takes the `my-appfs.img` you saved and
-the manual steps in [Recovery](RECOVERY.md#appfs-reflash-recovery), which have not
-been run for this.
+sensors' drivers. **Do not try to write it back on a running camera:** the program
+running from that partition dies as it is erased, and a reset before the write ends
+needs a flash programmer. Putting the original back takes a flash programmer and the
+`my-appfs.img` you saved.
 
 ## If something goes wrong
 
@@ -332,7 +333,7 @@ stock to try it. What has been checked, and what has not:
 | The configuration | What the installer writes passes the shipped daemon's own check |
 | The installer | Its decisions and order, against a stand-in for the camera; its preflight, against the real camera, which it correctly refuses |
 | The flash script, `first-appfs.sh` | Only read and checked statically. It has never run. Most of its sequence comes from the script behind every later update, which has run many times |
-| Installing 0.2.34 from stock | Not repeated since v0.2.21, through the same updater |
+| Installing 0.2.35 from stock | Not repeated since v0.2.21, through the same updater |
 
 If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup
@@ -341,9 +342,9 @@ of that partition can bring the camera back** (see
 working, stay on v0.2.21 until someone has reported this working.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
-and OpenSSL, and the v0.2.34 files from the release page.
+and OpenSSL, and the v0.2.35 files from the release page.
 
-1. **Install the platform.** Follow steps 4 and 5 with the v0.2.34 source and
+1. **Install the platform.** Follow steps 4 and 5 with the v0.2.35 source and
    files, or from v0.2.21 update as in [Updating later](#updating-later). The
    camera now has no video until the last step. The web console stays at
    `http://CAMERA_IP/`.
@@ -382,7 +383,8 @@ and OpenSSL, and the v0.2.34 files from the release page.
    `http://CAMERA_IP/` now only redirects there.
 
 The boot checks itself: a native boot that records a failure, or is cut short
-twice in a row, makes the next boot fall back to the vendor's program (see
+three times in a row, makes the next boot fall back to the vendor's program. So does
+one with no gateway after 5 minutes, until a native boot has qualified once (see
 [Recovery](RECOVERY.md#a-media-change-that-stops-native-boot)).
 
 **On Windows,** build the bundle in WSL, then run the installer with `py` in

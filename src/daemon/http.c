@@ -151,6 +151,7 @@ static int route(Conn*c,JoanRequest*r){JoanAuthz a;char x[256],y[256],id[65],pat
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"POST")){if(!r->body||r->content_length>16384)return json(c,400,"{\"error\":\"invalid key\"}");if(joan_stage_blob(&G,"ssh-key",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"ssh-add",path,id);}
     if(!strcmp(r->path,"/api/ssh/keys")&&!strcmp(r->method,"DELETE")){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"ssh-delete",NULL,id);}
     if(!strcmp(r->path,"/api/firmware/stage")&&!strcmp(r->method,"POST")){if(!r->body||!r->content_length)return json(c,400,"{\"error\":\"image required\"}");if(joan_stage_blob(&G,"firmware",r->body,r->content_length,id,path))return json(c,500,"{\"error\":\"stage failed\"}");return helper_json(c,"firmware-verify",path,id);}
+    if(!strcmp(r->path,"/api/firmware/apply")&&!strcmp(r->method,"GET"))return helper_result(c,"firmware-status",NULL,NULL,15);
     if(!strcmp(r->path,"/api/firmware/apply")&&(!strcmp(r->method,"POST")||!strcmp(r->method,"PUT"))){if(json_field(r->body,r->content_length,"id",id,sizeof(id)))return json(c,400,"{\"error\":\"id required\"}");return helper_json(c,"firmware-apply",NULL,id);}
     return error_json(c,404,"route_not_found","route not found");
 }

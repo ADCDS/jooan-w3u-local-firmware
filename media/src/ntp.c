@@ -151,6 +151,7 @@ static void *ntp_main(void *opaque)
         }
         pthread_mutex_lock(&s->mutex);
         ++s->attempts; s->synchronized = ok;
+        if (ok) atomic_store(&s->app->clock_confirmed, 1);
         if (ok) { s->ever = 1; s->last_sync_us = jipc_now_us(); s->last_offset_us = offset; s->error[0] = 0; }
         else snprintf(s->error, sizeof(s->error), "%s", error);
         pthread_mutex_unlock(&s->mutex);

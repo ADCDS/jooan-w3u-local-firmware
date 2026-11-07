@@ -2,8 +2,8 @@
 #define _POSIX_C_SOURCE 200809L
 /* The reset button: held for 5 seconds it resets the camera to defaults, the
  * same way the admin UI does. GPIO 62, which reads 0 while pressed (ResetGpio
- * and ResetLevel in the vendor configuration). Native boots only: where the OEM
- * application runs, the button is its own. It arms only after seeing the button
+ * and ResetLevel in the vendor configuration). Not while the OEM application runs:
+ * the button is its own then. It arms only after seeing the button
  * released, so a stuck or unreadable line can never erase anything. */
 #include "joan_daemon.h"
 #include <fcntl.h>
