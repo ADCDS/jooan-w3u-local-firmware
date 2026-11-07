@@ -200,6 +200,14 @@ nothing, and each stream then resumes at a keyframe. If the black-out fails, the
 frames stay dropped and `live.error` says so: a failure pauses the video instead of
 showing it. The hardware watchdog's stream check allows for this.
 
+The black-out only works in the ISP's day mode: in night mode it ignores the picture
+settings that make it, and on camera1 at night the whole street showed. So privacy runs in day
+mode with the infrared off, whatever the chosen mode says, and nothing can flip it to night
+meanwhile. Frames stay held until day mode and the black-out are confirmed, plus 2 s. Afterwards the
+chosen mode comes back, automatic mode as at a start. Measured on camera1 at night with every frame of
+both lenses recorded across the switch: pictures, then only black (Y=16, U=V=128 at the
+source), then pictures, through a day/night request and a daemon restart too.
+
 The microphone is muted, and moves from anyone else are refused (`privacy mode is
 on`), as is setting a home position; a stop or a preset's removal leaves the head going
 to its pose. The head goes to `privacy.slot` if that preset exists, and otherwise looks

@@ -169,7 +169,8 @@ allocates no reserved memory, and the VPU takes the job between two H.264
 pictures. Measured on camera1 on 2026-11-06, with Frigate connected and both
 streams being read:
 
-Measured with the fixed lens at 640×360; at 1024×576 a still is about 87 KB.
+Measured with the fixed lens at 640×360; at 1024×576 a still is 77 to 87 KB. At most two are
+served at a time: the rest get 503, so stills cannot take every HTTP worker.
 
 | | 1920×1080 | 640×360 |
 |---|---|---|
@@ -478,6 +479,19 @@ Either layer may be omitted. `files` maps camera paths to new contents, to
 With a media layer, `camera_ini` changes go into the staged configuration the
 appfs installer commits, so new keys meet the binary that accepts them. Bundles contain vendor-derived appfs images and backups
 holding the camera password, so keep them private.
+
+The daemon is built for size. Compared on camera1 on 2026-11-07, the same source with Frigate
+connected, 60 s each and six requests each:
+
+| | `-Os` | `-O3` |
+|---|---|---|
+| Stripped daemon | 708,776 bytes | 760,044 bytes |
+| Free in the app partition | 167,936 bytes | 131,072 bytes |
+| Daemon's share of the CPU | 24-25% | 24% |
+| System idle | 40-44% | 43% |
+| Frames per second, both streams | 14.99 | 14.99 |
+| TLS handshake, new connection | 0.28-0.70 s, median 0.46 | 0.36-0.50 s, median 0.42 |
+| ONVIF `GetStatus` | 0.30-0.65 s | 0.31-0.86 s |
 
 A reset is only held against a release if it failed: `local.rc` latches `native-failed` at
 once for a boot that recorded a failure, and after a second try for one that was cut short.
