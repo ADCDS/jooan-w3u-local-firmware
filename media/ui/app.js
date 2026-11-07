@@ -141,6 +141,7 @@ function main() {
 		fwWas = 0, // the install now running is a retry after one that stopped
 		fwV = '', // what is staged, for the dialog
 		fwW = 0, // a watch is running
+		fwAsked = 0, // the camera has answered about its update at least once
 		fwMsg = '', // an update needs a look, on every page until it has had one
 		fwStopped = 0, // a platform install stopped: a media install ends in the restart that must not happen yet
 		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
@@ -3781,6 +3782,7 @@ function main() {
 						checking: () => fwUI(2, _('Checking the signature (up to a minute). Keep this page open.')),
 						refused: _('The camera refused this package: it must be a signed, newer platform release for this camera.')
 					});
+					if (g != fwG) throw new Fail('', 'cancel');
 					if (!d?.id) no(_('The camera did not stage the package. Try again.'));
 					fw = d.id;
 					fwV = d.version || f.name;
@@ -3808,7 +3810,7 @@ function main() {
 		const still = stopped || (refused && fwWas); /* a refusal changes nothing: what stopped before is still there */
 		fwStopped = +still;
 		fwMsg = needed ? FW_NOT_RESTARTED : still ? FW_STOPPED : '';
-		still && restartAt().catch(noop);
+		still && !S.y && restartAt().catch(noop);
 		shell();
 		$('sy-mapply').disabled = !mfw || fwStopped;
 		$('sy-mstage').disabled = false;
@@ -3820,6 +3822,7 @@ function main() {
 		if (installing) return;
 		S['f@'] = Date.now(); /* the check every 30 s counts from this one */
 		const d = await api(J + 'update', { quiet: 1 });
+		fwAsked = 1;
 		if (installing) return; /* it left before this install began, so it says nothing about it */
 		if (d.state == 'failed' && d.reason != 'upgrade') return; /* old news, and nothing changed */
 		if (fwReport(d)) return;
@@ -3879,6 +3882,7 @@ function main() {
 		instAt = 0;
 		fwStopped = 1;
 		fwMsg = _('Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see docs/RECOVERY.md).');
+		S.y || restartAt().catch(noop);
 		shell();
 		$('sy-mapply').disabled = true;
 		$('sy-mstage').disabled = false;
@@ -3951,6 +3955,7 @@ function main() {
 						pn: 'sy-mpn',
 						checking: () => mfUI(2, _('Checking the signature. Keep this page open.'))
 					});
+					if (g != mfG) throw new Fail('', 'cancel');
 					if (!d?.release) no(_('The camera did not keep the package. Try again.'));
 					mfw = d.release;
 					mfUI(3, _('Signature verified: release {release}. Ready to install.', { release: d.release }));
@@ -4151,7 +4156,7 @@ function main() {
 		W && !W.end && wifi();
 		if (!csrf || document.hidden) return;
 		attn();
-		if (fwMsg && !installing && age('f') > 3e4) {
+		if ((fwMsg || !fwAsked) && !installing && age('f') > 3e4) {
 			fwLast().catch(noop);
 		}
 		stShow();

@@ -21,12 +21,13 @@ const b = await launch(9412, mkdtempSync(join(tmpdir(), 'ui-compare-')));
 await b.send('Network.enable');
 await b.send('Page.addScriptToEvaluateOnNewDocument', { source: "window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));addEventListener('unhandledrejection',e=>__errs.push('rejected: '+e.reason));document.addEventListener('securitypolicyviolation',e=>__errs.push('CSP '+e.violatedDirective))" });
 // What the mock cannot be told to do: answers set from the test, a dead camera, a clock moved on.
-await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{const D=Date.now;Date.now=()=>D()+(window.__skew||0);const f=window.fetch;window.__gets=0;
+await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{const D=Date.now;Date.now=()=>D()+(window.__skew||0);const f=window.fetch;window.__gets=0;const xs=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(b){window.__xs=(window.__xs||0)+1;return xs.call(this,b)};const xa=XMLHttpRequest.prototype.abort;XMLHttpRequest.prototype.abort=function(){if(!window.__noabort)return xa.call(this)};
  const J=(s,o)=>new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json'}});
  window.fetch=async(u,o={})=>{u=String(u);const m=o.method||'GET';
   if(window.__off)throw new TypeError('off');
   if(window.__401)return J(401,{error:{code:'x'}});
   if(/joan.v1.update$/.test(u)){if(m=='GET'){window.__gets++;const a=window.__upd||JSON.parse(localStorage.getItem('__upd')||'null');if(window.__hold)await new Promise(r=>window.__release=r);if(a)return J(200,a)}if(m=='PUT'&&window.__put)return J(window.__put,{error:'no',reason:'wifi-trial'})}
+  if(/restart-schedule$/.test(u)&&m=='GET')window.__sched=(window.__sched||0)+1;
   if(/network.mdns$/.test(u)&&localStorage.getItem('__nomdns'))return J(500,{error:'no'});
   if(/v1.controls?$/.test(u)&&m=='POST'&&window.__ctl)return J(500,{error:'boom'});
   const r=await f(u,o);
@@ -238,6 +239,34 @@ await choose('#sy-file', 'pkg-b.bin');
 await until(`document.getElementById('sy-stage').getAttribute('aria-busy')!='true'`, 20);
 await sleep(300);
 ok(await E(`document.getElementById('sy-apply').disabled&&document.getElementById('sy-fn').textContent=='pkg-b.bin'`), 'another file while uploading cancels the first');
+// an upload the page can no longer abort, as when another upload has taken its handle
+const both = await mock('--latency', '1500');
+ok(await signIn(both), 'an upload out of reach');
+await go('system');
+await sleep(2500);
+await choose('#sy-file', 'pkg-a.bin');
+await E(`window.__xs=0;document.getElementById('sy-stage').click();1`);
+await until(`window.__xs>=1`, 12);
+await E(`window.__noabort=1;1`);
+await choose('#sy-file', 'pkg-b.bin');
+await until(`document.getElementById('sy-stage').getAttribute('aria-busy')!='true'`, 20);
+await sleep(300);
+ok(await E(`document.getElementById('sy-apply').disabled`), 'its answer does not leave the first file ready under the second one\'s name');
+// the first check failed: ask again
+ok(await signIn(await mock('--update-status', '500,failed:upgrade')), 'a first check with no answer');
+await sleep(2000);
+ok(await E(`document.getElementById('at-stop').hidden`), 'nothing to show yet');
+await E(`window.__skew=31e3;1`);
+ok(await until(vis('at-stop'), 6), 'the next check finds the stopped update');
+// the schedule once per stop
+ok(await signIn(await mock(), `window.__upd={state:'failed',reason:'upgrade'}`), 'a stopped update, checked again and again');
+await until(vis('at-stop'), 6);
+await sleep(1200);
+await E(`window.__sched=0;window.__skew=31e3;1`);
+await sleep(2200);
+await E(`window.__skew=62e3;1`);
+await sleep(2200);
+ok((await E('window.__sched||0')) <= 1, `the schedule is not read on every check (${await E('window.__sched||0')})`);
 // the daily restart under a stopped update
 const dm = await mock();
 ok(await signIn(dm), 'a daily restart');

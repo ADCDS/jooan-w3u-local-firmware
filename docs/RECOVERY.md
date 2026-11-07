@@ -130,7 +130,8 @@ on when it saw a restart.
    ```
 
 The supervisor reads the selection only at boot, so this disturbs nothing. With `df -k /opt` at 51 KiB or
-more the camera can now restart safely, and the update can be tried again. This was done for real on camera1 on 2026-11-07, from RAM.
+more the camera can now restart safely, and the update can be tried again. The admin page keeps Restart and
+Reset locked until the camera has restarted, so restart it from the same SSH session with `reboot`. This was done for real on camera1 on 2026-11-07, from RAM.
 
 ## A media change that stops native boot
 
