@@ -29,3 +29,5 @@ for left_file in sorted(design.glob("*.png")):
     canvas.save(out / (left_file.stem + ".jpg"), quality=80)
     made += 1
 print(f"{made} comparisons in {out}")
+if not made:
+    sys.exit("nothing compared: no picture has the same name in both directories")

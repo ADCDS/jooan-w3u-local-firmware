@@ -3,7 +3,7 @@
 Pictures of every page at both widths, checked for script errors, CSP reports and sideways
 scroll, then side by side with the design. The design's files and its canvas runtime are the
 owner's and stay out of this repository, so its pictures come in as a directory with the same
-file names (`pantilt-phone.png`).
+file names (`pantilt-phone.png`, and `pantilt-phone-dark.png` for the dark theme).
 
 ```sh
 python3 media/tools/ui-mock-server.py --port 8094 &

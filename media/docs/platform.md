@@ -231,7 +231,7 @@ below it, up the street.
 ## Presets and status
 
 `preset_set`, `preset_goto`, `preset_remove` and `preset_rename` accept slots 1 through 16.
-`preset_rename` takes a `name` and changes only the name: the saved position stays,
+`preset_rename` takes a `name` and changes only the name (409 for a name already in use or an empty slot): the saved position stays,
 the motor does not move, and a name another slot already uses (ignoring ASCII case)
 or an empty slot is refused.
 Setting a slot stops current movement and reads the driver position first.

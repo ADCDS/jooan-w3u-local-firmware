@@ -1513,6 +1513,23 @@ def main():
             assert live["live"]["privacy"] is True and live["picture"][0]["brightness"] == 128, live
             assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
             result["checks"].append("a bad saved value costs its section only")
+            # The microphone's mute is still on after a start.
+            assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 1, "value2": 0})[0] == 200
+            end = time.time() + 8
+            while time.time() < end and not json.loads(saved.read_text()).get("mic_mute"):
+                time.sleep(0.2)
+            process.send_signal(signal.SIGHUP)
+            time.sleep(0.5)
+            assert wait_ready()["audio"]["muted"] is True
+            assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 0, "value2": 0})[0] == 200
+            assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is False
+            result["checks"].append("the microphone's mute is kept across a start")
+            # Audio off and on again: the daemon restarts each way and comes back with it.
+            for wanted in (False, True):
+                assert request("POST", "/api/v1/config", {"audio": wanted})[0] == 200
+                time.sleep(1)
+                assert wait_ready()["audio"]["enabled"] is wanted
+            result["checks"].append("audio can be turned off and on again")
             # Last: this locks 127.0.0.1 out for a minute. Earlier negative
             # tests may already have counted, so the block can come sooner.
             statuses = [request("GET", "/api/v1/status", password="not-" + secret)[0] for _ in range(10)]

@@ -50,7 +50,8 @@ xz, which keeps at least 48 KiB of the partition free.
 - Status `audio.muted` and `audio.level` (`{"peak_dbfs","rms_dbfs"}` or `null`)
   drive the microphone switch and the "Sound level now" meter (polled every
   2 s on Audio); without them, both stay hidden.
-- The stream password: `POST /api/v1/config {"password"}` changes it;
+- The stream password: `POST /api/v1/config {"password"}` changes it, and RTSP sessions using
+  the old one are dropped at once, so an NVR has to reconnect with the new one;
   `GET /api/v1/config/password` is fetched only to show or copy it (the daemon
   answers only the UI's own signed-in fetch) and is forgotten on leaving the
   page. Copied URLs and snippets never contain it: Frigate gets a
