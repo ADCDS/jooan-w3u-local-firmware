@@ -178,14 +178,42 @@ json_ssid() {
            if (length(out)) printf "\"%s\"",out; else printf "null" }'
 }
 
+media_root=${JL_MEDIA_ROOT:-/opt/jooanipc-open}
+# A reboot asked for here: keep the clock's time, which is otherwise saved only
+# every half hour and has no battery behind it, and tell the next boot this was no
+# failure of the media layer.
+reboot_asked() {
+    now=$(date -u +%s 2>/dev/null) || now=
+    saved=$(cat "$root/state/last-time" 2>/dev/null) || saved=0
+    case "$saved" in ''|*[!0-9]*) saved=0 ;; esac
+    case "$now" in ''|*[!0-9]*) ;; *)
+        if [ "$now" -gt "$saved" ] && printf '%s\n' "$now" > "/tmp/jl-set-time.$$" 2>/dev/null; then
+            mv -f "/tmp/jl-set-time.$$" "$root/state/last-time" 2>/dev/null || rm -f "/tmp/jl-set-time.$$"
+        fi ;;
+    esac
+    # printf, not ":": a failed redirection on a special builtin would end the shell before the reboot.
+    [ ! -d "$media_root" ] || printf '' 2>/dev/null > "$media_root/reboot-requested" || :
+    sync
+    reboot
+}
 # Refuse a restart while anything must not be interrupted: maintenance (an
 # update or a media install holds the state lock), a Wi-Fi trial, or a boot
 # trial of a new runtime. Prints the reason, or nothing when it is safe.
-restart_blocker() {
+busy_blocker() {
     [ ! -d "$run/state.lock" ] || { echo update; return; }
     [ ! -e "$root/state/wifi-trial" ] || { echo wifi-trial; return; }
     if [ -r "$root/state/selection" ] && read -r _stable sel_pending _x < "$root/state/selection" &&
        [ "${sel_pending:--}" != - ]; then echo boot-trial; return; fi
+}
+# ...and while this boot is still proving itself. The page is up well before that
+# ends. Bounded by the uptime, because a failed trial's marker can stay for good.
+restart_blocker() {
+    up=$(cut -d. -f1 "${JL_PROC_UPTIME:-/proc/uptime}" 2>/dev/null) || up=0
+    case "$up" in ''|*[!0-9]*) up=0 ;; esac
+    if [ "$up" -lt 900 ] && { [ -e "$media_root/native-trial" ] || [ -e "$media_root/boot-trial" ]; }; then
+        echo starting; return
+    fi
+    busy_blocker
 }
 
 case "$op" in
@@ -195,18 +223,29 @@ case "$op" in
         printf '{"ok":true}\n'
         # The reply goes out first; the helper's process group is only killed
         # on timeout, so this survives the helper exiting.
-        ( trap '' HUP; sleep 2; sync; reboot ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; sleep 2; reboot_asked ) </dev/null >/dev/null 2>&1 &
+        ;;
+    restart-check)
+        # What a Wi-Fi trial asks first: a rollback would cut this boot short.
+        blocker=$(restart_blocker)
+        if [ -n "$blocker" ]; then printf '{"ok":false,"reason":"%s"}\n' "$blocker"; else printf '{"ok":true}\n'; fi
+        ;;
+    clock-known)
+        # The clock is right, whether or not it needed a step. Schedules wait for this.
+        printf '' > "$run/clock-set"
         ;;
     factory-reset)
         # Reset to defaults, from the admin UI or the reset button: mark it and
         # restart. The next boot erases, before anything owning those files runs
         # (jl_apply_reset in common.sh), so a power cut cannot leave half of it.
-        blocker=$(restart_blocker)
+        # Unlike a restart this is allowed during a boot's trial: someone holding
+        # the button just after power-on means it, and it latches nothing.
+        blocker=$(busy_blocker)
         if [ -n "$blocker" ]; then printf '{"ok":false,"reason":"%s"}\n' "$blocker"; exit 0; fi
         : > "$root/state/reset-pending"
         sync
         printf '{"ok":true}\n'
-        ( trap '' HUP; sleep 2; sync; reboot ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; sleep 2; reboot_asked ) </dev/null >/dev/null 2>&1 &
         ;;
     restart-schedule)
         at=-
@@ -269,13 +308,16 @@ case "$op" in
             now=$(cut -d. -f1 /proc/uptime)
             case "$deadline:$now" in *[!0-9:]*|:*|*:) left=null ;; *) left=$((deadline - now)); [ "$left" -ge 0 ] || left=0 ;; esac
             ssid=$(sed -n 's/.*"ssid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$root/state/wifi-trial/candidate.json" 2>/dev/null | head -n 1 | json_ssid)
+            gw=$(sed -n 's/.*"gateway"[[:space:]]*:[[:space:]]*"\([0-9.]*\)".*/\1/p' "$root/state/wifi-trial/candidate.json" 2>/dev/null) || gw=
+            if [ -z "$gw" ] && [ -r "$run/default-gateway" ]; then read -r gw _gw_dev < "$run/default-gateway" || gw=; fi
+            case "$gw" in ''|*[!0-9.]*) gw=null ;; *) gw="\"$gw\"" ;; esac
             status=$(wpa_cli -iwlan0 status 2>/dev/null || :)
             joined=false; printf '%s\n' "$status" | grep -qx 'wpa_state=COMPLETED' && joined=true
             addr=$(printf '%s\n' "$status" | awk -F= '$1=="ip_address"{print $2;exit}')
             case "$addr" in *[!0-9.]*|'') addr=null ;; *) addr="\"$addr\"" ;; esac
             static=$(sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([0-9.]*\)".*/\1/p' "$root/state/wifi-trial/candidate.json" 2>/dev/null | head -n 1)
             case "$static" in '') static=null ;; *) static="\"$static\"" ;; esac
-            printf '{"pending":true,"seconds_left":%s,"ssid":%s,"joined":%s,"address":%s,"static":%s}\n' "$left" "${ssid:-null}" "$joined" "$addr" "$static"
+            printf '{"pending":true,"seconds_left":%s,"ssid":%s,"joined":%s,"address":%s,"static":%s,"gateway":%s}\n' "$left" "${ssid:-null}" "$joined" "$addr" "$static" "$gw"
         else
             last=null
             [ ! -e "$root/state/wifi-committed" ] || last='"committed"'
@@ -335,7 +377,10 @@ case "$op" in
         printf '{"ok":true}\n'
         ;;
     network-quality) network_quality ;;
-    wifi-stage) exec "$control/admin/wifi-transaction.sh" apply "$path" ;;
+    wifi-stage)
+        # A new network only. An address comes through ip-stage, which checks it.
+        if grep -q -e '"address"' -e '"prefix"' -e '"gateway"' "$path"; then exit 1; fi
+        exec "$control/admin/wifi-transaction.sh" apply "$path" ;;
     wifi-commit) exec "$control/admin/wifi-transaction.sh" commit ;;
     wifi-rollback) exec "$control/admin/wifi-transaction.sh" rollback ;;
     ssh-list)
@@ -344,7 +389,9 @@ case "$op" in
     ssh-add)
         key=$(cat "$path")
         case "$key" in ssh-ed25519\ *) ;; *) exit 1 ;; esac
-        case "$key" in *'\n'*|*'\r'*) exit 1 ;; esac
+        # One line: a second one would be a key of its own, past the limit of 8.
+        [ "$(printf '%s' "$key" | wc -l)" -eq 0 ] || exit 1
+        case "$key" in *"$(printf '\r')"*) exit 1 ;; esac
         mkdir -p "$root/config/ssh"
         chmod 700 "$root/config/ssh"
         keys=$root/config/ssh/authorized_keys
@@ -403,6 +450,7 @@ case "$op" in
                 rm -f /tmp/jl-set-time.$$
         fi
         date -s "@$id" >/dev/null 2>&1 || exit 1
+        printf '' 2>/dev/null > "$run/clock-set" || :
         ;;
     timezone-set)
         # id is a "GMT+HH:MM" offset; the daemon validated it, re-checked here
@@ -517,8 +565,12 @@ case "$op" in
             printf 'state=running\n' > "$status"
             if /bin/sh "$apply_mount/upgrade.sh" "$image"; then
                 printf 'state=complete\n' > "$status"
-                sync
-                reboot
+                # A media flash keeps this lock until its own reboot, and one that
+                # lands in the middle of its write costs the camera. Holding the lock
+                # from here keeps a new one from starting.
+                i=0
+                until mkdir "$run/state.lock" 2>/dev/null || [ "$i" -ge 300 ]; do sleep 1; i=$((i + 1)); done
+                reboot_asked
             else
                 rc=$?
                 printf 'state=failed\nreason=upgrade\nexit=%s\n' "$rc" > "$status"

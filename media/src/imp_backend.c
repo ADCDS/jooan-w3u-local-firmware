@@ -65,7 +65,8 @@ typedef struct {
     int (*super_frame)(int, jipc_imp_super *);
     imp_one osd_pool, isp_pool, vpubs_pool, vb_pool;
     imp_one osd_group_create, osd_group_destroy, osd_group_start, osd_group_stop;
-    int (*osd_rgn_create)(void *), (*osd_rgn_destroy)(int), (*osd_rgn_register)(int, int, void *),
+    void (*osd_rgn_destroy)(int); /* returns nothing on the T23: reading a result would read a stale register */
+    int (*osd_rgn_create)(void *), (*osd_rgn_register)(int, int, void *),
         (*osd_rgn_unregister)(int, int), (*osd_rgn_set)(int, void *), (*osd_rgn_show)(int, int, int);
     /* Per lens. osd_bound: 1 frame source to OSD, 2 and OSD to encoder. osd_rgn: handle + 1. */
     int osd_group[2], osd_bound[2], osd_started[2], osd_rgn[2], osd_shown[2];
@@ -298,7 +299,7 @@ void jipc_imp_close(void *state)
         if (s->osd_rgn[lens]) {
             if (s->osd_shown[lens]) cleanup_result("OSD_ShowRgn", s->osd_rgn_show(s->osd_rgn[lens] - 1, lens, 0));
             cleanup_result("OSD_UnRegisterRgn", s->osd_rgn_unregister(s->osd_rgn[lens] - 1, lens));
-            cleanup_result("OSD_DestroyRgn", s->osd_rgn_destroy(s->osd_rgn[lens] - 1));
+            s->osd_rgn_destroy(s->osd_rgn[lens] - 1);
         }
         if (s->osd_started[lens]) cleanup_result("OSD_Stop", s->osd_group_stop(lens));
         jipc_imp_cell source = {0, source_channel(s, (unsigned)lens * 2), 0}, osd = {4, lens, 0}, destination = {1, enc_groups[lens * 2], 0};
@@ -568,8 +569,9 @@ static void *mic_main(void *opaque)
             }
             if (valid && !released) {
                 uint64_t pts = jipc_audio_clock_stamp(&clock, now, (unsigned)samples, NULL);
-                const unsigned char *payload = jipc_mic_silenced(app) ? silence : encoded;
-                if (samples > sizeof silence) payload = encoded; /* oversized frames are never muted */
+                int silenced = jipc_mic_silenced(app);
+                const unsigned char *payload = silenced ? silence : encoded;
+                if (silenced && samples > sizeof silence) { last_frame = now; continue; } /* never real audio while muted */
                 if (!jipc_publish(app, JIPC_AUDIO_STREAM, payload, samples, pts, 1, JIPC_PCMA)) {
                     atomic_fetch_add(&s->mic_frames, 1);
                     published_until = pts + (uint64_t)samples * 125u;
@@ -1065,6 +1067,14 @@ int jipc_imp_snapshot(void *state, unsigned channel, pthread_mutex_t *control,
     do { rc = poll(&pollfd, 1, 2000); } while (rc < 0 && errno == EINTR);
     if (control) pthread_mutex_lock(control);
     if (rc <= 0 || !(pollfd.revents & POLLIN)) { failure(error, capacity, "JPEG encoder timed out or failed"); goto done; }
+    /* The picture is ready. Stop now, or the channel starts another JPEG while this one is
+     * copied, and taking it down later waits for that with the control lock held. */
+    if (receiving) {
+        int stopped = s->stop(encoder_channel);
+        receiving = 0;
+        cleanup_result("JPEG encoder stop", stopped);
+        if (stopped) { result = failure(error, capacity, "JPEG encoder stop failed"); goto done; }
+    }
     jipc_frame image = {0};
     if (copy_stream(s, encoder_channel, &image, error, capacity)) goto done;
     if (image.size < 4 || image.data[0] != 0xff || image.data[1] != 0xd8 ||

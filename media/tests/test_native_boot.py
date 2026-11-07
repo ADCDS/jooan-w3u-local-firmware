@@ -14,11 +14,18 @@ assert logged and "'ready: backend=imp, 4 video streams'" in text
 # The trial marker is persisted before anything that can fail or hang.
 assert text.index("stage start") < text.index('. "$root/deployment.env"')
 assert text.index("stage launch") < text.index('kill -TERM "$f"')
+# Waiting for the network leaves no marker, so an outage cannot latch the fallback,
+# and the daemon's own launch is recorded again before it can go wrong.
+waiting = text.index('rm -f "$root/native-trial" "$root/native-trial.new"')
+assert text.index("stage start") < waiting < text.index("until network_ready") < text.index("stage launch")
+assert "stage network" not in text and "did not stay healthy" not in text
+# ...and only with no committed network does the wait end in a failure.
+assert '[ "$i" -lt 300 ] || [ -s "$wifi_committed" ] || fail' in text
 # TERM hands the feeder over cleanly; only a failure leaves the watchdog armed.
 assert 'kill -TERM "$f"' in text and 'kill -KILL "$f"' in text
 assert "grep -qx 'motor_home=1'" in text and "motor homing complete" in text
 assert text.rstrip().endswith("log 'native boot qualified; OEM application never started'")
-assert text.index('rm -f "$root/native-trial"') > text.index("[ -n \"$homed\" ]")
+assert text.rindex('rm -f "$root/native-trial"') > text.index("[ -n \"$homed\" ]")
 # Lock contention is recorded, never a silent exit 0 that leaves the feeder
 # timer to reset the camera back into the same native boot.
 assert 'mkdir "$run/boot.lock" 2>/dev/null || exit 0' not in text

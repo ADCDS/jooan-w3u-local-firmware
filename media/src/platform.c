@@ -651,7 +651,11 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         state->manual_at = jipc_now_us(); state->patrol_move = 0;
         if (generation) *generation = state->generation;
     } else if (!strcmp(operation, "ptz_stop")) {
-        if (motor_stop_motion(state)) rc = fail(error, capacity, "motor stop: %s", strerror(errno));
+        /* In privacy mode the only motion is the head on its way to the pose. */
+        if (!state->privacy) {
+            if (motor_stop_motion(state)) rc = fail(error, capacity, "motor stop: %s", strerror(errno));
+            state->manual_at = jipc_now_us(); state->patrol_move = 0; /* someone chose to stop it: steering */
+        }
     } else if (!strcmp(operation, "preset_set")) {
         if (motor_stop_motion(state) || motor_read(state)) { rc = fail(error, capacity, "motor position: %s", strerror(errno)); goto done; }
         previous = state->presets[value - 1];
@@ -678,6 +682,8 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             if (i != value - 1 && state->presets[i].valid && !strcasecmp(name, state->presets[i].name)) {
                 rc = fail(error, capacity, "preset name already exists"); goto done;
             }
+        /* This writes flash with the lock held, and only a manual move's lease stops it. */
+        if (state->lease_until) { rc = fail(error, capacity, "the head is being steered: try again"); goto done; }
         previous = state->presets[value - 1];
         strcpy(state->presets[value - 1].name, name);
         if (presets_save(state)) {
@@ -685,8 +691,9 @@ static int platform_control(jipc_app *app, const char *operation, int value,
             rc = fail(error, capacity, "rename preset: %s", strerror(errno));
         }
     } else if (!strcmp(operation, "preset_remove")) {
-        /* Persistence cannot hold a live manual deadline behind flash I/O. */
-        if (motor_stop_motion(state)) { rc = fail(error, capacity, "motor stop failed"); goto done; }
+        /* Persistence cannot hold a live manual deadline behind flash I/O. In privacy
+         * mode there is none, and the head must get to its pose. */
+        if (!state->privacy && motor_stop_motion(state)) { rc = fail(error, capacity, "motor stop failed"); goto done; }
         previous = state->presets[value - 1];
         state->presets[value - 1].valid = 0;
         if (presets_save(state)) {
@@ -700,6 +707,9 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         if (!motor_read(state) && state->position_trusted && (!state->saved_valid || state->saved_x != state->x || state->saved_y != state->y))
             position_save(state);
         state->last_error[0] = 0; state->faulted = 0; state->patrol_move = 0; state->manual_at = jipc_now_us();
+        /* These steps stop meaning anything from here until the run ends. A restart meanwhile
+         * homes again instead of trusting them. */
+        (void)unlink(HOMED_MARKER); state->position_trusted = 0;
         if (motor_home_begin(state, jipc_now_us())) { int saved = errno; worker_error(state, "motor homing start"); rc = fail(error, capacity, "motor homing: %s", strerror(saved)); }
     } else if (!strcmp(operation, "preset_goto") || !strcmp(operation, "preset_patrol")) {
         saved_preset *preset = &state->presets[value - 1];
@@ -718,7 +728,7 @@ static int platform_control(jipc_app *app, const char *operation, int value,
         state->faulted = 0;
     } else if (!strcmp(operation, "ir_mode")) {
         state->ir_off = value;
-        if (!state->replay && state->night && gpio_output(59, !value))
+        if (!state->replay && state->night == 1 && gpio_output(59, !value)) /* -1: nothing applied yet */
             rc = fail(error, capacity, "infrared GPIO: %s", strerror(errno));
     } else if (!strcmp(operation, "night") || !strcmp(operation, "ircut")) {
         pthread_mutex_unlock(&state->mutex);
@@ -857,6 +867,7 @@ int jipc_platform_motion(jipc_app *app, jipc_ptz_motion *motion)
     motion->moving = state->moving || state->goto_active || state->vx || state->vy;
     motion->homing = state->homing;
     uint64_t now = jipc_now_us();
+    motion->trusted = state->position_trusted;
     motion->manual_age_s = state->manual_at ? (long)((now - state->manual_at) / 1000000u) : -1;
     pthread_mutex_unlock(&state->mutex);
     pthread_mutex_unlock(&platform_lifetime);
@@ -878,13 +889,23 @@ int jipc_platform_privacy(jipc_app *app, int on, int slot, char *error, size_t c
     if (on) {
         saved_preset *preset = slot >= 1 && slot <= PRESET_COUNT && state->presets[slot - 1].valid ? &state->presets[slot - 1] : NULL;
         state->privacy_x = preset ? preset->x : -1;
-        state->privacy_y = preset ? preset->y : state->replay ? 100 : state->tilt_max;
+        /* Down is the far end of the tilt on an upside-down mount, and step 0 on an upright one. */
+        state->privacy_y = preset ? preset->y : state->replay ? 100 : state->tilt_sign < 0 ? state->tilt_max : 0;
     }
     state->privacy = on;
     if (state->homing) goto done; /* homing's end goes to the right place */
+    /* Where the head really belongs, read before the stop forgets it: where it was going,
+     * if it was on its way there, is the view, not the point it had got to. */
+    int going = state->goto_active && !state->patrol_move, going_x = state->target_x, going_y = state->target_y;
     if (motor_open_device(state) || motor_stop_motion(state)) { rc = fail(error, capacity, "motor: %s", strerror(errno)); goto done; }
     if (on) {
-        if (!was && state->known && state->position_trusted) { state->return_x = state->x; state->return_y = state->y; state->return_valid = 1; }
+        int pose_x = state->privacy_x < 0 ? state->x : state->privacy_x;
+        /* Already at the pose with nothing here remembering why: a daemon restart during
+         * privacy. The way back is then the saved view, not the pose. */
+        int at_pose = abs(state->x - pose_x) <= 2 && abs(state->y - state->privacy_y) <= 2;
+        if (!was && going) { state->return_x = going_x; state->return_y = going_y; state->return_valid = 1; }
+        else if (!was && at_pose && state->saved_valid) { state->return_x = state->saved_x; state->return_y = state->saved_y; state->return_valid = 1; }
+        else if (!was && state->known && state->position_trusted) { state->return_x = state->x; state->return_y = state->y; state->return_valid = 1; }
         state->target_x = state->privacy_x < 0 ? state->x : state->privacy_x;
         state->target_y = state->privacy_y;
     } else if (was && state->return_valid) {

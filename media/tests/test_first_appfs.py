@@ -38,6 +38,13 @@ assert 'until /sbin/flashcp -v "$backup" /dev/mtd4 && [ "$(hash /dev/mtd4)" = "$
 assert after.index("restore_config") < after.index("/bin/busybox reboot -f")
 # It refuses a camera that already has a media layer.
 assert 'die \'this camera already has a media layer\'' in before and "a media daemon is already running" in before
+# Past the first stop an exit of any kind must end in a reboot, never in a camera with
+# nothing running; the commit point undoes the configuration too.
+assert "trap on_exit EXIT" in text and text.index("trap on_exit EXIT") < stop
+assert 'phase=stopped' in before and 'phase=commit' in after and 'phase=flash' in after
+assert after.index('phase=commit') < after.index('mv "$root/$name.next"') < after.index('phase=flash') < after.index('/sbin/flashcp -v "$image"')
+# A platform update or a Wi-Fi trial cannot be under way.
+assert "firmware-apply.lock" in before and "wifi-trial" in before
 print("first-appfs script: PASS")
 
 if not shutil.which("mksquashfs") or not shutil.which("unsquashfs"):

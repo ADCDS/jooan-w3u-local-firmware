@@ -47,7 +47,7 @@ if [ "${1:-}" = --first ]; then
     mkdir -p "$out"
     mksquashfs "$tree" "$out/appfs.raw" -comp xz -b 1048576 -all-root -no-xattrs -noappend -quiet >/dev/null
     size=$(wc -c < "$out/appfs.raw")
-    [ "$size" -le 3211264 ] || { rm -f "$out/appfs.raw"; echo "image too large: $size" >&2; exit 1; }
+    [ "$size" -le $((3211264 - 49152)) ] || { rm -f "$out/appfs.raw"; echo "image too large: $size, with 48 KiB to stay free" >&2; exit 1; }
     { cat "$out/appfs.raw"; head -c $((3211264 - size)) /dev/zero | tr '\0' '\377'; } > "$out/appfs.img"
     rm "$out/appfs.raw"
     scripts=$here/../scripts

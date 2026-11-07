@@ -80,7 +80,7 @@ daemon replays the OEM `motor_step_reset` once per boot, asynchronously after
 startup: request 5 speed 450; request 2 `{4080, 1200, 2040, 200}` from the
 factory `HorizontalMaxStep`, `VerticalMaxStep` and `VerticalResetStep`;
 request 3 `{+2040, 0}` into the pan end stop; then request 2 `{0, 0, 0, 0}`,
-the driver's own reset, which rams both axes and returns to `2040,200` (the
+the driver's own reset, which rams both axes and returns to `2040,1199` (the
 kernel logs `cx=4080,cy=1200,x move=-2040,y move=-1000`). Each stage is polled
 with request 4 for up to 60 s. Limits are then reread and the head returns to
 the last position, which the daemon saves in `state_dir/position` once the head
@@ -109,27 +109,36 @@ does a return to a preset approached from the other side.
 
 The siren is a generator inside the speaker service, so one thread still owns the
 audio output and the amplifier. It comes ahead of a talker: their audio is dropped, and
-talk answers 409 until it ends. It always ends by itself, at 300 s at most, and it ends if
-the output fails. The microphone is out of it, as in any talk session, so it does not
+talk answers 409 until it ends. It ends by itself, each request at 300 s at most, and it ends if
+the output fails; nothing limits how often something can ask for it again. Its time and its
+stop are looked at between writes to the driver, so if a write ever blocks, the controls
+engine cuts the amplifier 2 s after either. If the daemon crashes, the amplifier and the
+light stay as they were until the hardware watchdog resets the camera, 180 s at most. It
+needs `audio=1`. The microphone is out of it, as in any talk session, so it does not
 reach the NVR's recording. `siren` in `/api/v1/controls` keeps `sound` (`alarm`,
 `two_tone`, `pulse`, `chime`), `volume` (1 to 100), `seconds` and `strobe`. Volume is the
-DAC's gain: 100% is its unity, where the sounds play just below clipping, and 50% is
+output's gain: 100% is its unity, where the sounds play just below clipping, and 50% is
 15 dB less. The speaker's own volume comes back afterwards. On camera1 it was checked at
 5% and 15% for state, timing, the amplifier and video, which it did not disturb, and the
 owner found 100% right by ear; its level has not been measured.
 
-`strobe` flashes the white light on a 500 ms cycle (measured on its pin), which stays
-well below the flash rates that are a concern for photosensitivity. It stops after its
-time and leaves the light as it was; any manual change of the light ends it.
+`strobe` flashes the white light, 500 ms on and 500 ms off (measured on its pin), which
+stays well below the flash rates that are a concern for photosensitivity. It stops after
+its time and leaves the light as it was. Any manual change of the light ends it, and one
+that came with the siren goes when the siren does, however that ends. `live.strobe_left_s`
+reports it. Only the white light flashes: an infrared flash deters nobody.
 
 `overlay` in `/api/v1/controls` burns a timestamp into both lenses' video and
 stills: `enabled`, `position` (a corner), `format` (`ymd`, `dmy`, `mdy`) and `name`
 (plain text, at most 16 characters). It is redrawn on each second in the camera's
-time zone, and shows nothing until the clock has been set. An OSD group sits between
+time zone, and shows nothing until network time or a person has confirmed the clock since
+the camera started (`live.clock_ok`): the time a boot restores lags by the time without
+power, and would be burned into recordings. An OSD group sits between
 the frame source and the encoder of each lens all the time, in `main_only`; the IPU
 blends the picture into each frame. Measured on camera1 with both lenses drawing: the
 daemon went from 36% to 38% of the CPU, with no frames lost. The pictures take about
-310 KiB of reserved memory, only once it has been turned on. The ISP's own OSD is not
+210 KiB of reserved memory as measured, and by calculation up to about 280 KiB with a
+16-character name, only once it has been turned on. The ISP's own OSD is not
 used: on camera1 its calls succeed and nothing reaches the channels the encoders read.
 Changing digits look like motion to an NVR, so mask that corner in its motion detection.
 
@@ -140,7 +149,7 @@ shows.
 `tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
 which motor steps centre each point of that picture and stores six numbers per axis
 in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
-lenses are mounted; a change of orientation for either lens needs a new calibration.
+lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.34 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
 Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
 with 20 stops matched, points of the street land a median of 1.2% of the frame's
 width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside
@@ -192,8 +201,17 @@ frames stay dropped and `live.error` says so: a failure pauses the video instead
 showing it. The hardware watchdog's stream check allows for this.
 
 The microphone is muted, and moves from anyone else are refused (`privacy mode is
-on`). The head goes to `privacy.slot` if that preset exists, and otherwise looks
-down at the end of its tilt travel, on the same pan; it comes back afterwards. On
+on`), as is setting a home position; a stop or a preset's removal leaves the head going
+to its pose. The head goes to `privacy.slot` if that preset exists, and otherwise looks
+down at the end of its tilt travel that means down for this mount, on the same pan; it
+comes back afterwards, to where it was going if it was moving, and to the saved view if a
+daemon restart found it already at the pose.
+
+With a schedule, the clock may be hours behind after a power cut, so privacy stays on after
+a start until network time or a person has confirmed the clock, or for 2 minutes if nothing
+does; the other schedules wait that long too, and the page warns while the clock is
+unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
+`privacy.held_until`. Turning a schedule on during manual privacy works the same way. On
 camera1's mounting no end stop hides the lens: down shows the wall and the ledge
 below it, up the street.
 
@@ -260,7 +278,8 @@ With the IMP backend, `POST /api/v1/control` also accepts:
 keeps the night mode, infrared mode, the automatic levels and wait, the night
 and white-light schedules, the white-light trigger time, the pilot LED, the
 microphone mute, each lens's picture settings and anti-flicker. The daemon
-applies them once the backend is ready. `GET /api/v1/controls` returns them
+applies them once the backend is ready, without waiting for homing. A saved file with one
+bad value costs that section only: the rest, privacy included, still applies. `GET /api/v1/controls` returns them
 with a `live` block (current day/night, the exposure level, the pending
 switch, the trigger countdown, the last error); `POST /api/v1/controls` takes
 any part of the same JSON, validates all of it, and changes nothing on an
@@ -284,8 +303,12 @@ the reading itself. With the IR-cut filter open the level reads lower for the
 same light: about 3.6x at twilight, when the sky has plenty of infrared
 (measured at dawn on camera1, under a street light; deep night reads about
 41,000 in day mode and 37,000 with the infrared on). So `day_ev` must stay
-under `night_ev` / 3.6, or the switch to day reads dark again and flaps. The
-defaults are 30000 and 5000, with a 60 s wait. Schedules use the camera's time
+under `night_ev` / 3.6, or the switch to day reads dark again and flaps. A switch that
+reverses within four holds doubles the hold, up to an hour, until a switch lasts: aimed at
+something close, the camera's own infrared can read as daylight, and no level is right
+for that. A trigger or a strobe does not count as daylight either: decisions wait for
+them, and for `wait_s` after. The defaults are 30000 and 5000, with a 60 s wait, from
+measurements at dawn; dusk has not been recorded. Schedules use the camera's time
 zone (`GmtTz` in the vendor config, set by `PUT /api/v1/timezone`) when it has
 one, otherwise `utc_offset_min`.
 

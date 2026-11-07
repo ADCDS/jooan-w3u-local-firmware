@@ -221,6 +221,8 @@ static void *ntp_main(void *unused)
             else snprintf(N.error, sizeof(N.error), "%s", error);
         }
         pthread_mutex_unlock(&N.lock);
+        /* Schedules wait until something has confirmed the clock, step or no step. */
+        if (ok) { static int told; if (!told && !joan_run_helper(N.cfg, "clock-known", NULL, NULL, NULL, NULL, 10)) told = 1; }
         if (stepped) fprintf(stderr, "clock stepped %+.3f s from NTP server %s\n", (double)offset / 1e6, name);
         else if (ok && failing) fprintf(stderr, "NTP server %s reachable again (offset %+.3f s)\n", name, (double)offset / 1e6);
         else if (!ok && !failing) fprintf(stderr, "NTP %s: %s; retrying every %u s\n", server, error, NTP_RETRY_MS / 1000);

@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.33, release sequence 67) has a supported tag until the
+current one is 0.2.34, release sequence 68) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -35,8 +35,8 @@ without a request, unless the sign-in asked to be remembered.
 cookie and answers `"remember":true`. Such a sign-in lasts 30 days and survives
 camera restarts. At most 8 are kept (the oldest is replaced), as SHA-256 of the
 cookie, in `sessions.db` in the platform's state directory, which is written
-only at sign-in and sign-out. Signing out ends that one; changing the password
-ends them all.
+only at sign-in, sign-out and a change of password. Signing out ends that one; changing the
+password ends them all, before the new one is saved.
 
 ## Authentication
 
@@ -124,7 +124,11 @@ subset on port 80 are gone; they answer `404 route_not_found`.
 The board has no RTC. Boot restores a coarse saved time that lags real time by
 the downtime, and ONVIF clients such as Frigate measure the camera's clock
 offset only once, so a camera reboot broke them until they restarted. An
-optional SNTP client keeps the clock on UTC. It is off by default. The Web UI's
+optional SNTP client keeps the clock on UTC. It is off by default. Once it or a person
+has set the clock, `/run/jooan-local/clock-set` says so, until the next boot: the media
+layer's schedules and timestamp wait for it, and a daily restart runs at its set time only
+then, and otherwise once a day counted from the start. Every restart the platform asks for
+first saves the time. A daily restart also waits while the gateway is not answering. The Web UI's
 Camera time card shows its state and sets its server.
 
 `PUT /api/v1/time` with `{"ntp":"gateway"}` or `{"ntp":"192.0.2.1"}` (an IPv4
@@ -175,7 +179,8 @@ skipped restart waits for the next day.
 `POST /api/v1/system/reset` with `{"confirm":"<camera name>"}` (the name from
 `/api/v1/network/mdns`) answers `200 {"ok":true}` and restarts the camera. A wrong
 name is a 400 `confirm_mismatch`, and it refuses with the same `409` reasons as a
-restart. Holding the reset button for 5 seconds does the same in a native boot;
+restart, except `starting`: someone holding the button just after power-on means it, and
+it counts for nothing against that boot. A fixed address goes back to automatic. Holding the reset button for 5 seconds does the same in a native boot;
 the button only counts once it has been seen released, so a stuck one does nothing.
 
 The next boot erases, before anything that owns those files is running: both
@@ -237,8 +242,11 @@ be private, the prefix from 8 to 30, and the gateway on the same subnet (400
 {"ok":false,"reason":"..."}`, when something else answers on that address
 (`address-in-use`), the gateway does not answer (`gateway-silent`), there is no
 committed network (`no-network`), or for a restart's reasons. During such a trial
-`GET /api/v1/network/wifi` also has `"static"`, the proposed address. Joining a new
-network goes back to an automatic address.
+`GET /api/v1/network/wifi` also has `"static"`, the proposed address, and `"gateway"`.
+Joining a new network goes back to an automatic address, and `POST` refuses an address in
+its body: that goes through `network/ip`, which checks it. Both, and a restart, answer
+`409 starting` while a boot is still proving itself, for up to about 4 minutes, because
+a rollback or restart then would otherwise count against it.
 
 Authenticated `GET /api/v1/network/quality` is read-only and sampled on demand
 (the Network UI refreshes on entry or on pressing Refresh; there is no polling).

@@ -88,16 +88,19 @@ network. On the verified unit that is the vendor bench network `JOOANTEST`
 ## A media change that stops native boot
 
 If the media daemon exits during a native boot, its armed watchdog resets the board.
-The next boot latches `native-failed` and takes the handoff, and a handoff that also
-fails latches `boot-trial` and leaves the guarded OEM application running. The
+A boot that recorded the failure makes the next one latch `native-failed` and take the
+handoff; a boot only cut short, by a power cut or a hang, gets one more try first. A
+handoff that also fails latches `boot-trial` and leaves the guarded OEM application
+running. A reboot the platform asked for, and a boot still waiting for the network, count
+for nothing. The
 platform and SSH still answer, and the HTTPS UI does not. To recover:
 
 1. Read why it failed in `/tmp/jooanipc-open.log`, or in a log mirrored off the camera
    if the board has reset since. Grep for `startup failed` and `health check`, and the
    kernel's messages for `Process `: an oops means the cause may not be the release.
 2. Undo the cause, if it is a saved setting. For example, in
-   `/opt/jooanipc-open/state/controls.json`.
-3. `cd /opt/jooanipc-open && rm -f native-failed native-trial boot-trial && sync`
+   `/opt/jooanipc-open/state/controls.json` or `/opt/jooanipc-open/camera.ini`.
+3. `cd /opt/jooanipc-open && rm -f native-failed native-trial native-retry boot-trial && sync`
    and reboot. The boot goes native again, and the installer accepts the camera.
 
 This happened on the test camera on 2026-11-06, twice, with a release that could not
@@ -157,6 +160,13 @@ sync
 reboot
 ```
 
+A first install keeps no `.before` files, because there was no media layer. After the
+`flashcp` and the check, instead of the three `cp` lines:
+
+```sh
+cd /opt/jooanipc-open && rm -f boot-handoff.sh camera.ini deployment.env enabled native
+```
+
 The original appfs MD5 is the second argument the installer was given: the
 bundle's `expected_current_appfs_md5`, which `install-camera.py` also prints at
 preflight. Retry `flashcp` until `md5sum` matches; do not reboot before it
@@ -197,6 +207,13 @@ camera to normal use.
 
 Record why recovery was needed and retain sanitized logs. Do not upload raw
 flash images, keys, tokens, cookies, or Wi-Fi configuration to an issue.
+
+## A fixed address on the wrong network
+
+A fixed address stays through a restart, and a new router may be on another subnet. Reset to
+defaults puts the address back to automatic and keeps the Wi-Fi network, so holding the reset
+button for 5 seconds is the way back. Without reaching the button: a computer on the
+old subnet, or a temporary router on it, then Network in the admin UI.
 
 ## Recovery is complete only when
 

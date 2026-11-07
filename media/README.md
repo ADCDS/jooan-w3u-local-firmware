@@ -51,7 +51,7 @@ JA-A12 storage budget and required boot dependencies.
 | --- | --- |
 | Video | Four H.264 URLs; two main encoders with shared aliases or four independent encoders; bounded rings, SPS/PPS cache, IDR recovery |
 | RTSP | Digest authentication, TCP interleaving, UDP unicast, H.264 FU-A, PCMA, RTCP sender reports and BYE |
-| HTTPS and REST | MbedTLS 3.6.7 as a TLS 1.2 server only (ECDHE with an RSA or EC certificate, AES-GCM; `include/mbedtls_user_config.h` leaves the rest out to save flash), Basic authentication over TLS, bounded requests, private atomic configuration |
+| HTTPS and REST | MbedTLS 3.6.7 as a TLS 1.2 server only (ECDHE with an RSA, P-256 or P-384 certificate and a non-PSS signature, AES-GCM; `include/mbedtls_user_config.h` leaves the rest out to save flash), Basic authentication over TLS, bounded requests, private atomic configuration |
 | Failed-login throttle | Per peer address across HTTP Basic, ONVIF WS-Security and RTSP Digest: 10 failures within 60 s of the first block that address for the rest of the window (HTTP `429`, RTSP `503` with `Retry-After: 60`); requests without credentials never count |
 | ONVIF subset | Device/Media/PTZ queries and control, absolute and relative moves (generic and field-of-view spaces) and a home position, WSSE PasswordDigest, replay protection, authenticated stream/snapshot URLs |
 | Discovery | IPv4 WS-Discovery Probe/Resolve, stable identity, response limits and interface-local discovery; off by default (`discovery=0`), enable with `discovery=1` |
@@ -60,7 +60,7 @@ JA-A12 storage budget and required boot dependencies.
 | PTZ | Steady OEM-style 350 ms ONVIF nudges, 1.2-second REST lease, 16 named persisted presets; replay simulation |
 | Lights and night | White light (manual, schedule, timed trigger), day/night (manual, automatic from the ISP exposure, schedule), infrared mode, pilot LED; remembered across restarts |
 | Audio | Microphone: 16 kHz capture to 8 kHz PCMA on the RTSP URLs, timestamps from the sample count, silence over gaps, restart with backoff after a stall; a microphone fault never stops video. Talk: ONVIF RTSP backchannel and `POST /api/v1/talk`, one talker at a time, half-duplex, amplifier switched per session with a 500 ms deadman mute. Replay: silence (or a test tone), talk written to a capture file |
-| Siren | Four generated sounds through the speaker service, ahead of any talker, with volume, length and a flashing white light; it always ends by itself |
+| Siren | Four generated sounds through the speaker service, ahead of any talker, with volume, length and a flashing white light; each request ends by itself, within 300 s; needs `audio=1` |
 | Stills | Hardware JPEG of either lens over HTTPS and ONVIF, one at a time, refused during privacy mode |
 | Timestamp | Burned into both lenses' video and stills by an OSD stage, off by default: corner, date format, camera name |
 | Hardware adapter | Runtime `dlopen` of an operator-supplied compatible `libimp`, guarded output records, state-gated cleanup |
@@ -244,7 +244,7 @@ Authenticated REST endpoints:
 | `POST /api/v1/control` `{"operation":"siren","value":1}` | Sounds the siren with its saved settings; `value2` gives another length, 1 to 300 seconds; `value` 0 stops it. `siren_test` with `value` 0 to 3 plays that sound for 3 s. `strobe` with `value` in seconds flashes the white light, 0 stops it. `privacy` with `value` 1 or 0 |
 | `GET /api/v1/aim` | Whether aiming is calibrated, the motors' steps, and where the pan/tilt lens's view falls in the fixed lens's picture |
 | `POST /api/v1/aim` | `{"u":0.25,"v":0.75}` turns the pan/tilt lens to that point of the fixed lens's picture (0 to 1 across it); `{"steps":[x,y]}` to those motor steps; `{"x":[…6],"y":[…6]}` stores a calibration |
-| `GET /api/v1/update/media` | Admin UI session: `{"state":"idle","release":"","error":""}`, where `state` is also `receiving`, `staged` or `installing` |
+| `GET /api/v1/update/media` | Admin UI session: `{"state":"idle","release":null,"error":""}`, where `state` is also `receiving`, `staged` or `installing` |
 | `POST /api/v1/update/media` | Admin UI session: a signed package (`application/octet-stream`). Verified and kept in RAM for 15 minutes; `200` gives its `release`; any other status says why not, with nothing kept |
 | `POST /api/v1/update/media/apply` | Admin UI session: `{"release":"..."}` flashes that package and restarts the camera |
 | `POST /api/v1/update/media/discard` | Admin UI session: forgets the package |
@@ -286,7 +286,7 @@ loopback port (tests only).
 
 ## Audio and talk
 
-`audio=1` turns on both directions; `audio=0` (the default) leaves the audio
+`audio=1` (the default) turns on both directions; `audio=0` leaves the audio
 device closed.
 
 **Microphone.** Each main URL (`/live/ch0`, `/live/ch2`) carries a second

@@ -6,7 +6,7 @@ building their own releases want [Building and releasing](BUILDING.md).
 
 ## Read this first
 
-As of 2026-11-06, two releases are on
+As of 2026-11-07, two releases are on
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases):
 
 - **v0.2.21** (2026-10-16) is the one this guide walks through, and the last
@@ -15,15 +15,17 @@ As of 2026-11-06, two releases are on
   lenses and ONVIF pan/tilt and presets for an NVR such as Frigate, and the
   camera can no longer reach the JOOAN cloud. The video still comes from the
   vendor's camera program, which keeps running under confinement.
-- **v0.2.33** (2026-11-06) adds the open media daemon in
+- **v0.2.34** (2026-11-07) adds the open media daemon in
   [`media/`](../media/), and is what the rest of this repository describes.
-  **No camera has yet been taken from stock to v0.2.33 with these
+  **No camera has yet been taken from stock to v0.2.34 with these
   instructions.** See [The media layer](#the-media-layer), including what has
   and has not been tested, before choosing it.
-- **Either release installs only on a camera whose vendor firmware is identical
-  to the verified unit's.** Before it writes anything, the installer compares
-  the vendor's files, including the whole application partition, with the
-  verified unit's. If they differ, it refuses and leaves the camera as it was.
+- **Each installs only on a camera whose vendor firmware matches the verified
+  unit's.** Before it writes anything, the installer compares vendor files with
+  the verified unit's: v0.2.21 the whole application partition, and v0.2.34 the
+  twelve files it depends on. If they differ, it refuses and leaves the camera as
+  it was. The media layer then asks more of your application partition: every
+  file it keeps must be there, and the camera must have the CV2005 sensors.
   Nobody knows yet whether cameras sold today ship the same vendor firmware.
 - No release is "supported" yet. Every release so far is an engineering
   pre-release, tested on one camera.
@@ -36,7 +38,7 @@ As of 2026-11-06, two releases are on
 | Later updates and uninstall | Over Wi-Fi, from the web console's Firmware section | None |
 | Backup of the camera's flash | Over SSH, after the install ([step 7](#7-back-up-the-camera-over-ssh)) | None |
 | Chip-level backup or restore | With an SPI flash programmer and SOIC-8 clip, camera opened | Optional for the install. It is the only way to recover a camera that no longer boots |
-| Media layer (v0.2.33, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
+| Media layer (v0.2.34, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
 
 **You do not need a microSD card, a USB cable, a serial adapter or a flash
 programmer to install v0.2.21, and you do not need to open the camera.** The
@@ -259,7 +261,7 @@ With v0.2.21:
 The v0.2.21 documentation describes these features. Read it at the tag:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 and [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-The documents on `main` describe 0.2.33.
+The documents on `main` describe 0.2.34.
 
 ## Updating later
 
@@ -286,9 +288,17 @@ In the Firmware section, apply the `JOOAN_UNINSTALL` file from the release you
 installed. After the reboot the camera runs its vendor firmware unconfined
 again: the vendor web server comes back, and the camera can reach the cloud
 again unless the router still blocks it. The camera keeps the vendor's own
-Wi-Fi settings. Settings made in this firmware, including a Wi-Fi network
-committed in it, are deleted. Details are in
+Wi-Fi settings. The platform's settings, including a Wi-Fi network committed
+in it, are deleted. Details are in
 [Recovery](RECOVERY.md#booting-camera-rollback).
+
+**With the media layer installed, uninstalling does not remove it.** Its files in
+`/opt/jooanipc-open` stay, including the stream password and the TLS private key,
+so delete them first over SSH: `rm -rf /opt/jooanipc-open`. The application
+partition also stays the reduced one, without the vendor's voice prompts and other
+sensors' drivers. Putting the original back takes the `my-appfs.img` you saved and
+the manual steps in [Recovery](RECOVERY.md#appfs-reflash-recovery), which have not
+been run for this.
 
 ## If something goes wrong
 
@@ -322,7 +332,7 @@ stock to try it. What has been checked, and what has not:
 | The configuration | What the installer writes passes the shipped daemon's own check |
 | The installer | Its decisions and order, against a stand-in for the camera; its preflight, against the real camera, which it correctly refuses |
 | The flash script, `first-appfs.sh` | Only read and checked statically. It has never run. Most of its sequence comes from the script behind every later update, which has run many times |
-| Installing 0.2.33 from stock | Not repeated since v0.2.21, through the same updater |
+| Installing 0.2.34 from stock | Not repeated since v0.2.21, through the same updater |
 
 If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup
@@ -331,9 +341,9 @@ of that partition can bring the camera back** (see
 working, stay on v0.2.21 until someone has reported this working.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
-and OpenSSL, and the v0.2.33 files from the release page.
+and OpenSSL, and the v0.2.34 files from the release page.
 
-1. **Install the platform.** Follow steps 4 and 5 with the v0.2.33 source and
+1. **Install the platform.** Follow steps 4 and 5 with the v0.2.34 source and
    files, or from v0.2.21 update as in [Updating later](#updating-later). The
    camera now has no video until the last step. The web console stays at
    `http://CAMERA_IP/`.
@@ -371,19 +381,22 @@ and OpenSSL, and the v0.2.33 files from the release page.
    certificate, so the browser warns once. Sign in with the admin password.
    `http://CAMERA_IP/` now only redirects there.
 
-The boot checks itself: a native boot that does not qualify makes the next boot
-fall back to the vendor's program (see
+The boot checks itself: a native boot that records a failure, or is cut short
+twice in a row, makes the next boot fall back to the vendor's program (see
 [Recovery](RECOVERY.md#a-media-change-that-stops-native-boot)).
 
 **On Windows,** build the bundle in WSL, then run the installer with `py` in
 Command Prompt, using `set` for each password. It uses the OpenSSH that comes
-with Windows. OpenSSH 8.4 or later (Windows 11) takes the password from
-`CAMERA_PASSWORD`; Windows 10's version asks for it at every connection, so add
-an SSH key in the web console first. This has not been run on Windows either.
+with Windows, and needs `openssl` on the path, which Git for Windows includes.
+OpenSSH 8.4 or later (Windows 11) takes the password from `CAMERA_PASSWORD`;
+Windows 10's version asks for it at every connection, so add an SSH key in the
+web console first. This has not been run on Windows either.
 
-**Later media updates** are built the same way from your camera's current
-partition (see [Building and releasing](BUILDING.md#media-layer)) and installed
-with the same tool. The admin UI's System → Media form only accepts packages
+**Later media updates** start from your camera's current partition, with
+`build-appfs.sh` without `--first`, and a `bundle.json` you write for it (see
+[camera release bundles](../media/docs/hardware.md#camera-release-bundles)). The
+installer then also needs `MEDIA_PASSWORD`, the stream password, to verify the
+result. The admin UI's System → Media form only accepts packages
 signed with this project's release key. Since an image holds vendor files, none
 is published, so that form is for the key's holder or anyone building the
 platform with their own key.

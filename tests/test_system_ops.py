@@ -109,11 +109,48 @@ class SystemOpsTests(unittest.TestCase):
         refused("boot-trial")
         (self.root / "state/selection").write_text("A - 0\n")
         self.assertFalse(self.rebooted.exists())
+        # While this boot is proving itself, a restart would latch the fallback.
+        media = Path(self.temporary.name) / "media"
+        media.mkdir(exist_ok=True)
+        self.env["JL_MEDIA_ROOT"] = str(media)
+        uptime = Path(self.temporary.name) / "uptime"
+        self.env["JL_PROC_UPTIME"] = str(uptime)
+        uptime.write_text("120.00 1.00\n")
+        for marker in ("native-trial", "boot-trial"):
+            (media / marker).write_text("stage=qualify\n")
+            refused("starting")
+            self.assertEqual(json.loads(self.helper("restart-check").stdout), {"ok": False, "reason": "starting"})
+            (media / marker).unlink()
+        # A marker a failed boot left for good must not refuse restarts for ever.
+        (media / "boot-trial").write_text("x\n")
+        uptime.write_text("4000.00 1.00\n")
+        self.assertEqual(json.loads(self.helper("restart-check").stdout), {"ok": True})
+        self.assertFalse(self.rebooted.exists())
         self.assertEqual(json.loads(self.helper("restart").stdout), {"ok": True})
         deadline = time.monotonic() + 6
         while not self.rebooted.exists() and time.monotonic() < deadline:
             time.sleep(0.2)
         self.assertTrue(self.rebooted.exists(), "the delayed reboot did not run")
+        # It told the next boot, and kept the clock's time.
+        self.assertTrue((media / "reboot-requested").exists())
+        self.assertTrue((self.root / "state/last-time").exists())
+
+    def test_reset_during_a_trial_is_allowed_and_latches_nothing(self) -> None:
+        media = Path(self.temporary.name) / "media"
+        media.mkdir(exist_ok=True)
+        self.env["JL_MEDIA_ROOT"] = str(media)
+        (media / "native-trial").write_text("stage=qualify\n")
+        self.assertEqual(json.loads(self.helper("factory-reset").stdout), {"ok": True})
+        deadline = time.monotonic() + 6
+        while not self.rebooted.exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertTrue(self.rebooted.exists())
+        self.assertTrue((media / "reboot-requested").exists())
+
+    def test_clock_confirmed(self) -> None:
+        self.assertFalse((self.run / "clock-set").exists())
+        self.assertEqual(self.helper("clock-known").returncode, 0)
+        self.assertTrue((self.run / "clock-set").exists())
 
     def test_wifi_scan(self) -> None:
         self.env["FAKE_OLD_SCAN"] = ("bssid / frequency / signal level / flags / ssid\\n"
@@ -354,27 +391,41 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
         minute = (int(time.time()) // 60 - 180 + 300) % 1440
         (self.root / "config/restart-schedule").write_text(f"{minute // 60:02d}:{minute % 60:02d}\n")
         (self.root / "oem.json").write_text('{"GmtTz": "GMT-03:00"}\n')
-        self.assertEqual(self.common("jl_scheduled_restart").returncode, 0)
+        (self.run / "clock-set").write_text("")
+        due = "jl_netdog_ok=1; jl_scheduled_restart"
+        self.assertEqual(self.common(due).returncode, 0)
         self.assertFalse(self.rebooted.exists())
         # Due, in the camera's time zone, but in the first hour after a boot.
         self.schedule_now()
-        self.common("jl_scheduled_restart", uptime=1200)
+        self.common(due, uptime=1200)
+        self.assertFalse(self.rebooted.exists())
+        # Due, but the gateway is not answering: not into an outage.
+        self.common("jl_scheduled_restart")
+        self.assertFalse(self.rebooted.exists())
+        self.common("jl_netdog_ok=1; jl_netdog_down=7000; jl_scheduled_restart")
         self.assertFalse(self.rebooted.exists())
         # Due, but an update is running, or a Wi-Fi or boot trial is pending.
         (self.run / "state.lock").mkdir()
-        self.common("jl_scheduled_restart")
+        self.common(due)
         self.assertFalse(self.rebooted.exists())
         (self.run / "state.lock").rmdir()
         (self.root / "state/wifi-trial").mkdir()
-        self.common("jl_scheduled_restart")
+        self.common(due)
         self.assertFalse(self.rebooted.exists())
         (self.root / "state/wifi-trial").rmdir()
         (self.root / "state/selection").write_text("A B 1\n")
-        self.common("jl_scheduled_restart")
+        self.common(due)
         self.assertFalse(self.rebooted.exists())
         (self.root / "state/selection").write_text("A - 0\n")
-        result = self.common("jl_scheduled_restart")
+        result = self.common(due)
         self.assertTrue(self.rebooted.exists(), result.stderr)
+        self.rebooted.unlink()
+        # With no clock anything has confirmed: once a day counted from the start.
+        (self.run / "clock-set").unlink()
+        self.common(due, uptime=7200)
+        self.assertFalse(self.rebooted.exists())
+        self.common(due, uptime=86400)
+        self.assertTrue(self.rebooted.exists())
 
     def test_flight_recorder(self) -> None:
         history = self.root / "state/reset-history"

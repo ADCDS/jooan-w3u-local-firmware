@@ -84,11 +84,12 @@ export OPENIMP_T23_ENCODER=native
 export OPENIMP_T23_NATIVE_FALLBACK=0
 ```
 
-Set `sensors=2`, `fps=15` (or lower), `flip0=3` and `flip1=3` (and `audio=0` or `1`) for the tested
+Set `sensors=2`, `fps` from 5 to 15, `flip0=3` and `flip1=3` (and `audio=0` or `1`) for the tested
 profile. With `main_only=0`, one published sensor is also permitted, but both
 physical slots are registered and enumerated because `direct_mode=2` AE visits
-both. The current `main_only=1` mode requires two published sensors. Other FPS
-settings are explicitly rejected; `audio=1` is accepted. Both installed sensors need
+both. The current `main_only=1` mode requires two published sensors. Any other
+`fps` is refused, at the API and at `--check-config` as well as at start;
+`audio=1` is accepted. Both installed sensors need
 horizontal and vertical flip for an upright scene. These bits also align manual
 PTZ controls with the displayed image; stored presets remain raw coordinates.
 
@@ -116,8 +117,9 @@ The qualified settings are `width=1920`, `height=1080`, `width1=1024`,
 peak is 20,388 KiB of 21,988 KiB, or 20,596 KiB with the timestamp on, leaving
 1,392 KiB. Both sensor drivers advertise 1920×1080 input; the fixed output is
 scaled down from it, with the same framing at any size (a corner moved 0.5 px
-between 640×360 and 1024×576). `fps` may be anything up to 15: on camera1, 10 and 5
-gave exactly that many frames on both streams.
+between 640×360 and 1024×576). `fps` may be 5 to 15: on camera1, 10 and 5 gave exactly
+that many frames on both streams. Below 5 is untested and refused. Widths must divide by
+16 and heights by 8.
 
 What each stream costs in reserved memory, measured: one NV12 frame in its pool, plus
 about 222 KiB and 642 KiB per 640×360 worth of pixels in the encoder. So beside
@@ -128,7 +130,8 @@ timestamp is on. Its URL keeps sharing the main feed: an NVR can scale that itse
 
 A release from before these limits refuses these values at its boot check, so a bundle
 that rolls back past them must also set `width1=640`, `height1=360`, `bitrate1=768` and
-`fps=15` in `config.camera_ini`. OEM evidence
+`fps=15` in `config.camera_ini`. Only `scripts/install-camera.py` applies that: a package
+for the admin UI carries no settings, so `tools/make-media-update.py` refuses such a bundle. OEM evidence
 shows 2304×1296 outputs with 1920×1080 sensor input, supporting ISP upscaling
 for that OEM mode. The full-frame native encoder still cannot fit that 3 MP
 profile with the fixed view in this reserved arena.
@@ -165,6 +168,8 @@ only for the request. Its bitstream is borrowed from the shared H.264 area, so i
 allocates no reserved memory, and the VPU takes the job between two H.264
 pictures. Measured on camera1 on 2026-11-06, with Frigate connected and both
 streams being read:
+
+Measured with the fixed lens at 640×360; at 1024×576 a still is about 87 KB.
 
 | | 1920×1080 | 640×360 |
 |---|---|---|
@@ -473,6 +478,11 @@ Either layer may be omitted. `files` maps camera paths to new contents, to
 With a media layer, `camera_ini` changes go into the staged configuration the
 appfs installer commits, so new keys meet the binary that accepts them. Bundles contain vendor-derived appfs images and backups
 holding the camera password, so keep them private.
+
+A reset is only held against a release if it failed: `local.rc` latches `native-failed` at
+once for a boot that recorded a failure, and after a second try for one that was cut short.
+A reboot the platform asked for (`reboot-requested`) counts for nothing, and no marker
+exists while a boot waits for the network, so an outage changes nothing.
 
 The appfs installer upgrades only a native boot: it refuses to run while the
 OEM application or its watchdog is running. It takes the platform maintenance

@@ -23,7 +23,7 @@ architecture. In a native boot, as observed on the verified unit:
 | Listener | Process | Purpose and policy |
 |---|---|---|
 | `0.0.0.0:80/tcp` | `joan-daemon` | `/api/v1/`; authenticated session, unencrypted (see [Plain HTTP](#plain-http)), [Host check](#host-and-origin-checks). With the media layer installed its pages redirect to `https://<host>/`; without it, the platform's own Web UI |
-| `<camera IP>:443/tcp` | `jooanipc-open` | The admin UI: public page files, the platform session relayed to `127.0.0.1:80` (cookie, CSRF token and same-origin checks), and the media API |
+| `0.0.0.0:443/tcp` | `jooanipc-open` | The admin UI: public page files, the platform session relayed to `127.0.0.1:80` (cookie, CSRF token and same-origin checks), and the media API |
 | `0.0.0.0:22/tcp`, `[::]:22/tcp` | `dropbear` | SSH; `admin` password from the start, optional Ed25519 keys |
 | `0.0.0.0:5353/udp` | `joan-daemon` | mDNS/DNS-SD; answers only peers on a directly attached IPv4 subnet |
 | `127.0.0.2:1883/tcp` | `joan-daemon` | Loopback TLS MQTT sink for the OEM application; idle in native mode |
@@ -164,7 +164,8 @@ In a native boot the OEM's stored Wi-Fi configuration is not used at all:
 supervisor adds the committed network once the control socket answers. A
 native boot without a committed network cannot reach its gateway, fails after
 300 s and latches `native-failed`; the handoff needs the committed network as
-well, so the camera then stays in OEM rescue mode. The OEM configuration stays
+well, so the camera then stays in OEM rescue mode. With a committed network, a
+router that is down only makes it wait, and restart now and then, in native boot. The OEM configuration stays
 on flash, untouched, for the fallback modes.
 
 When the OEM application runs, it owns `wpa_supplicant` and can restart it

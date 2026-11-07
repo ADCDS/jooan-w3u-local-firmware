@@ -394,13 +394,17 @@ int joan_auth_change_password(const JoanConfig *cfg, const JoanAuthz *auth,
        password is synchronized into. */
     if(!password_len||password_len>128)return-1;
     for(i=0;i<password_len;i++)if((unsigned char)new_password[i]<0x20||(unsigned char)new_password[i]==0x7f)return-1;
-    if (!auth->authenticated || !verify(cfg, old_password, &ignored) ||
-        save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
+    if (!auth->authenticated || !verify(cfg, old_password, &ignored)) return -1;
+    /* A new password signs out everywhere, remembered sign-ins included. Those go
+     * first: a power cut in between then costs a sign-in, not an old 30-day cookie
+     * that still works under the new password. */
     pthread_mutex_lock(&lock);
-    for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
-    /* A new password signs out everywhere, remembered sign-ins included. */
     remembered_load(cfg);
     memset(remembered, 0, sizeof(remembered)); remembered_save(cfg);
+    pthread_mutex_unlock(&lock);
+    if (save_record(cfg, new_password, !strcmp(new_password,DEFAULT_PASSWORD))) return -1;
+    pthread_mutex_lock(&lock);
+    for (i = 0; i < SESSIONS; ++i) memset(&sessions[i], 0, sizeof(sessions[i]));
     pthread_mutex_unlock(&lock); return 0;
 }
 

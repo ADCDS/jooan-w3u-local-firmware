@@ -61,7 +61,7 @@ contains OEM files; it is a private artifact, not a generic release.
 
 ## Published media binaries
 
-Since v0.2.33 a release also carries these, none of them vendor code:
+Since v0.2.34 a release also carries these, none of them vendor code:
 
 - `jooanipc-open`, under MIT, which includes MbedTLS under Apache-2.0;
 - `libatomic.so.1`, from GCC's runtime, under GPLv3 or later with the GCC

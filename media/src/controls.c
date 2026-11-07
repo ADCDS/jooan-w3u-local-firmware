@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 enum { NIGHT_DAY, NIGHT_NIGHT, NIGHT_AUTO, NIGHT_SCHEDULE };
 static const char *const night_names[] = {"day", "night", "auto", "schedule"};
@@ -40,6 +41,7 @@ typedef struct {
     int patrol_on, patrol_pause_s, patrol_count;
     patrol_stop stops[PATROL_STOPS];
     int privacy_on, privacy_schedule, privacy_from, privacy_until, privacy_slot;
+    int privacy_held_until; /* "on" by hand under a schedule: a wall-clock time, so it survives a restart */
     int home_set, home_x, home_y;
 } settings;
 
@@ -57,7 +59,12 @@ typedef struct {
     int ev, ev_valid;
     uint64_t ev_at, cond_since, trigger_until, strobe_until, switched_at, wl_override_until, auto_hold_us;
     uint64_t auto_settle_us, auto_settle_at;
-    int auto_settling, reapply_night;
+    int auto_settling, auto_start, reapply_night, reapply_white, hold_factor;
+    uint64_t own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
+    int clock_ok, schedules_ready, strobe_with_siren, tick_errors, engine_known;
+    pthread_t engine_self;
+    char clock_marker[256];
+    uint64_t clock_wait_us;
     int wl_override;
     int zone_valid, zone_min;
     uint64_t zone_at;
@@ -80,6 +87,13 @@ static pthread_mutex_t lifetime = PTHREAD_MUTEX_INITIALIZER;
 #define SAVE_DELAY_US UINT64_C(3000000)
 #define AUTO_HOLD_S 300 /* at least this long between automatic switches */
 #define AUTO_SETTLE_S 10 /* the exposure right after video starts is not yet the scene's */
+/* A switch that reverses soon after: the camera's own infrared is lighting something near,
+ * and each reversal is half an hour of near-black video at worst. Back off, up to an hour. */
+#define AUTO_HOLD_MAX_FACTOR 12
+/* How long schedules wait for something to confirm the clock at a start: the platform's
+ * network time retries every 30 s. Privacy stays on meanwhile, and the rest waits. */
+#define CLOCK_WAIT_US UINT64_C(120000000)
+#define RETRY_US UINT64_C(30000000)
 
 static void defaults(settings *s)
 {
@@ -312,7 +326,8 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
     if (privacy) {
         if (!cJSON_IsObject(privacy)) return snprintf(error, capacity, "privacy must be an object"), -1;
         if (get_bool(privacy, "on", &next.privacy_on, error, capacity) ||
-            get_int(privacy, "slot", 0, 16, &next.privacy_slot, error, capacity)) return -1;
+            get_int(privacy, "slot", 0, 16, &next.privacy_slot, error, capacity) ||
+            get_int(privacy, "held_until", 0, 2147483647, &next.privacy_held_until, error, capacity)) return -1;
         cJSON *schedule = cJSON_GetObjectItemCaseSensitive(privacy, "schedule");
         if (schedule && (!cJSON_IsObject(schedule) ||
                          get_bool(schedule, "enabled", &next.privacy_schedule, error, capacity) ||
@@ -335,7 +350,7 @@ static int patch(settings *s, cJSON *root, int *picture_changed, char *error, si
     if (get_bool(root, "pilot_led", &next.pilot_led, error, capacity) ||
         get_bool(root, "mic_mute", &next.mic_mute, error, capacity) ||
         get_name(root, "anti_flicker", flicker_names, 3, &next.anti_flicker, error, capacity) ||
-        get_int(root, "utc_offset_min", -720, 840, &next.utc_offset_min, error, capacity)) return -1;
+        get_int(root, "utc_offset_min", -840, 840, &next.utc_offset_min, error, capacity)) return -1;
     cJSON *pictures = cJSON_GetObjectItemCaseSensitive(root, "picture");
     if (pictures) {
         if (!cJSON_IsArray(pictures) || cJSON_GetArraySize(pictures) > 2)
@@ -435,6 +450,7 @@ static char *settings_json(const settings *s, int with_version)
         hhmm(s->privacy_from, a); hhmm(s->privacy_until, b);
         cJSON_AddBoolToObject(privacy, "on", s->privacy_on);
         cJSON_AddNumberToObject(privacy, "slot", s->privacy_slot);
+        if (s->privacy_held_until) cJSON_AddNumberToObject(privacy, "held_until", s->privacy_held_until);
         cJSON *schedule = cJSON_AddObjectToObject(privacy, "schedule");
         if (schedule) {
             cJSON_AddBoolToObject(schedule, "enabled", s->privacy_schedule);
@@ -461,21 +477,33 @@ static void load(controls_state *c)
     fclose(file);
     text[n] = 0;
     cJSON *root = cJSON_Parse(text);
-    char error[160] = {0};
-    if (!root || patch(&c->s, root, NULL, error, sizeof error))
-        jipc_log("error", "controls: ignoring %s: %s", c->path, error[0] ? error : "not valid JSON");
+    if (!root || !cJSON_IsObject(root)) {
+        jipc_log("error", "controls: ignoring %s: not valid JSON", c->path);
+        cJSON_Delete(root);
+        return;
+    }
+    /* Section by section: one value out of range must not cost the rest, least of all privacy. */
+    for (cJSON *item = root->child; item; item = item->next) {
+        char error[160] = {0};
+        settings trial = c->s;
+        cJSON *one = cJSON_CreateObject();
+        if (one && item->string && cJSON_AddItemReferenceToObject(one, item->string, item) &&
+            !patch(&trial, one, NULL, error, sizeof error)) c->s = trial;
+        else jipc_log("error", "controls: ignoring %s in %s: %s", item->string ? item->string : "?", c->path, error);
+        cJSON_Delete(one);
+    }
     cJSON_Delete(root);
 }
 
-static void save(controls_state *c)
+/* Takes the text; nonzero if it could not be written. */
+static int save_text(const char *path, char *text)
 {
-    char *text = settings_json(&c->s, 1);
-    if (!text) return;
+    if (!text) return -1;
     size_t n = strlen(text);
     text[n] = '\n'; /* cJSON leaves room for the terminator only; write without it */
-    if (jipc_atomic_file(c->path, text, n + 1, 0600))
-        snprintf(c->error, sizeof c->error, "cannot save controls: %s", strerror(errno));
+    int rc = jipc_atomic_file(path, text, n + 1, 0600);
     cJSON_free(text);
+    return rc;
 }
 
 /* /proc/jz/isp/isp-m0 has one "ISP INFO <n>" section per lens; lens 0 (the
@@ -504,6 +532,7 @@ static void set_error(controls_state *c, const char *what, const char *detail)
 {
     pthread_mutex_lock(&c->mutex);
     snprintf(c->error, sizeof c->error, "%s: %s", what, detail && *detail ? detail : "refused");
+    c->tick_errors++;
     pthread_mutex_unlock(&c->mutex);
 }
 
@@ -545,7 +574,13 @@ static void apply_picture(controls_state *c, const settings *s, int covered)
 static int privacy_wanted(const controls_state *c, const settings *s, uint64_t now)
 {
     if (c->privacy_override_until && now < c->privacy_override_until) return c->privacy_override;
-    if (s->privacy_schedule) return in_window(local_minutes(s), s->privacy_from, s->privacy_until);
+    if (s->privacy_schedule) {
+        if (s->privacy_held_until && (long long)time(NULL) < s->privacy_held_until) return 1;
+        /* A clock nothing has confirmed may be hours behind after a power cut. Until then, or
+         * until the wait runs out with network time off, a camera with a privacy window stays private. */
+        if (!c->schedules_ready) return 1;
+        return in_window(local_minutes(s), s->privacy_from, s->privacy_until);
+    }
     return s->privacy_on;
 }
 
@@ -559,19 +594,21 @@ static void patrol_tick(controls_state *c, const settings *s, int privacy, uint6
     jipc_ptz_motion motion;
     pthread_mutex_lock(&c->mutex);
     int index = c->patrol_index, phase = c->patrol_phase, skipped = c->patrol_skipped;
-    uint64_t until = c->patrol_until;
+    uint64_t until = c->patrol_until, moved = c->patrol_move_at;
     pthread_mutex_unlock(&c->mutex);
     if (!s->patrol_on || !s->patrol_count) { index = 0; phase = PATROL_GO; skipped = 0; }
     else if (privacy) { state = "privacy"; phase = PATROL_GO; }
     else if (jipc_platform_motion(c->app, &motion)) state = "unavailable";
-    else if (motion.homing) { state = "homing"; phase = PATROL_GO; }
+    else if (motion.homing || !motion.trusted) { state = "homing"; phase = PATROL_GO; } /* never drive on steps it doubts */
     else if (s->patrol_pause_s && motion.manual_age_s >= 0 && motion.manual_age_s < s->patrol_pause_s) {
         state = "paused"; left = s->patrol_pause_s - (int)motion.manual_age_s; phase = PATROL_GO;
     } else {
         if (index >= s->patrol_count) index = 0;
         if (phase == PATROL_DWELL && now >= until) { index = (index + 1) % s->patrol_count; phase = PATROL_GO; }
         if (phase == PATROL_MOVING && !motion.moving) {
-            phase = PATROL_DWELL; until = now + (uint64_t)s->stops[index].dwell_s * 1000000u;
+            /* Stopped by someone on the way, with no pause set: it is not there, so go again. */
+            if (motion.manual_age_s >= 0 && (uint64_t)motion.manual_age_s * 1000000u < now - moved) phase = PATROL_GO;
+            else { phase = PATROL_DWELL; until = now + (uint64_t)s->stops[index].dwell_s * 1000000u; }
         }
         if (phase == PATROL_GO) {
             char error[160] = {0};
@@ -580,47 +617,63 @@ static void patrol_tick(controls_state *c, const settings *s, int privacy, uint6
                 index = (index + 1) % s->patrol_count;
                 if (++skipped >= s->patrol_count) { state = "no_stops"; skipped = s->patrol_count; }
                 else state = "moving";
-            } else { skipped = 0; phase = PATROL_MOVING; state = "moving"; }
+            } else { skipped = 0; phase = PATROL_MOVING; state = "moving"; moved = now; }
         } else if (phase == PATROL_MOVING) state = "moving";
         else { state = "dwell"; left = (int)((until - now + 999999u) / 1000000u); }
     }
     pthread_mutex_lock(&c->mutex);
     c->patrol_index = index; c->patrol_phase = phase; c->patrol_skipped = skipped; c->patrol_until = until;
-    c->patrol_state = state; c->patrol_left_s = left;
+    c->patrol_state = state; c->patrol_left_s = left; c->patrol_move_at = moved;
     pthread_mutex_unlock(&c->mutex);
 }
 
 /* The timestamp, redrawn on each new second. Nothing until the clock has been set:
  * a wrong date in a recording is worse than none. */
-static void overlay_tick(controls_state *c, const settings *s)
+static int overlay_tick(controls_state *c, const settings *s, int clock_ok)
 {
     char text[64], error[160] = {0};
     long long now = (long long)time(NULL);
-    int show = s->overlay_on && now >= 1600000000LL;
-    if (!show && !c->overlay_shown) return;
-    if (show && now == c->overlay_second) return;
+    /* Not on the time a boot restores, which lags by the time without power. */
+    int show = s->overlay_on && clock_ok;
+    if (!show && !c->overlay_shown) return 0;
+    if (show && now == c->overlay_second) return 0;
     c->overlay_second = now;
     c->overlay_shown = show;
     if (show) jipc_overlay_text(text, sizeof text, now, s->utc_offset_min, s->overlay_format, s->overlay_name);
     for (unsigned lens = 0; lens < 2; ++lens)
         if (jipc_backend_overlay(c->app, lens, show ? text : NULL, s->overlay_corner, error, sizeof error) < 0)
             set_error(c, "overlay", error);
+    return 1;
 }
 
 static void *engine(void *opaque)
 {
     controls_state *c = opaque;
     jipc_app *app = c->app;
+    pthread_mutex_lock(&c->mutex);
+    c->engine_self = pthread_self();
+    c->engine_known = 1;
+    pthread_mutex_unlock(&c->mutex);
     while (!atomic_load(&c->quit) && !app->stop) {
         uint64_t now = jipc_now_us();
+        int siren_active = jipc_siren_active(app);
+        jipc_speaker_watch(app);
         pthread_mutex_lock(&c->mutex);
         if (!app->backend_ready) {
             pthread_mutex_unlock(&c->mutex);
             jipc_sleep_ms(200);
             continue;
         }
-        int first = !c->applied, do_picture = first || c->apply_picture;
+        int first = !c->applied, do_picture = first || c->apply_picture, attempted = 0;
         c->applied = 1; c->apply_picture = 0;
+        c->tick_errors = 0;
+        c->clock_ok = !access(c->clock_marker, F_OK);
+        c->schedules_ready = c->clock_ok || now - c->started_at >= c->clock_wait_us;
+        if (c->retry_night_at && now >= c->retry_night_at) { c->retry_night_at = 0; c->reapply_night = 1; }
+        if (c->retry_white_at && now >= c->retry_white_at) { c->retry_white_at = 0; c->reapply_white = 1; }
+        /* A strobe that came with the siren goes with it, however the siren ended. */
+        if (c->strobe_with_siren && c->strobe_until && !siren_active && now - c->strobe_since >= UINT64_C(1000000))
+            c->strobe_until = 0;
         if (c->oem_config[0] && (!c->zone_at || now - c->zone_at >= UINT64_C(60000000))) {
             int minutes;
             c->zone_at = now;
@@ -641,18 +694,28 @@ static void *engine(void *opaque)
             s = c->s;
         }
         int night = c->active_night, started_day = 0;
+        if (s.night_mode != NIGHT_AUTO) c->auto_start = 0;
+        /* The camera's own light is not daylight: decide without it. */
+        if (c->strobe_until || c->trigger_until) c->own_light_at = now;
+        uint64_t hold = c->auto_hold_us * (uint64_t)(c->hold_factor ? c->hold_factor : 1);
         switch (s.night_mode) {
         case NIGHT_DAY: night = 0; snprintf(c->reason, sizeof c->reason, "day (chosen)"); break;
         case NIGHT_NIGHT: night = 1; snprintf(c->reason, sizeof c->reason, "night (chosen)"); break;
         case NIGHT_SCHEDULE:
+            if (!c->schedules_ready) {
+                if (night < 0) night = 0;
+                snprintf(c->reason, sizeof c->reason, "schedule: waiting for the clock");
+                break;
+            }
             night = in_window(local_minutes(&s), s.night_from, s.night_until);
-            snprintf(c->reason, sizeof c->reason, "schedule");
+            snprintf(c->reason, sizeof c->reason, c->clock_ok ? "schedule" : "schedule, on a clock nothing has confirmed");
             break;
         default:
             if (!c->ev_valid) {
                 if (night < 0) night = 0;
+                started_day = c->auto_start; /* no reading yet: nothing started, so no hold */
                 snprintf(c->reason, sizeof c->reason, "no exposure reading; holding");
-            } else if (night < 0 || c->auto_settling) {
+            } else if (c->auto_start) {
                 /* A start: day, until the exposure has settled, which reads for the filter
                  * in that position, so the usual rule applies. A first reading was wrong in
                  * both directions. Staying in day starts no hold: dusk can still come. */
@@ -661,10 +724,14 @@ static void *engine(void *opaque)
                 if (now < c->auto_settle_at) snprintf(c->reason, sizeof c->reason, "auto: waiting for the exposure to settle");
                 else {
                     c->auto_settling = 0;
+                    c->auto_start = 0;
                     night = c->ev >= s.night_ev;
                     started_day = !night;
                     snprintf(c->reason, sizeof c->reason, "auto: started %s, level %d", night ? "dark" : "light", c->ev);
                 }
+            } else if (c->own_light_at && now - c->own_light_at < (uint64_t)s.wait_s * 1000000u) {
+                c->cond_since = 0;
+                snprintf(c->reason, sizeof c->reason, "auto: waiting, the camera's own light is on");
             } else {
                 int want = night ? c->ev <= s.day_ev : c->ev >= s.night_ev;
                 if (!want) c->cond_since = 0;
@@ -673,7 +740,12 @@ static void *engine(void *opaque)
                 else snprintf(c->reason, sizeof c->reason, "auto: day; night at level %d or above", s.night_ev);
                 /* The hold stops flapping when a switch changes the reading itself. */
                 if (want && now - c->cond_since >= (uint64_t)s.wait_s * 1000000u &&
-                    (!c->switched_at || now - c->switched_at >= c->auto_hold_us)) {
+                    (!c->switched_at || now - c->switched_at >= hold)) {
+                    /* Reversing soon after the last switch means the switch itself changed the
+                     * reading: wait longer each time, until a switch lasts. */
+                    int factor = c->hold_factor ? c->hold_factor : 1;
+                    factor = c->switched_at && now - c->switched_at < hold * 4 ? factor * 2 : 1;
+                    c->hold_factor = factor > AUTO_HOLD_MAX_FACTOR ? AUTO_HOLD_MAX_FACTOR : factor;
                     night = !night;
                     c->cond_since = 0;
                     snprintf(c->reason, sizeof c->reason, "auto: level %d %s %d for %d s", c->ev,
@@ -689,21 +761,35 @@ static void *engine(void *opaque)
         else {
             c->trigger_until = 0;
             if (s.wl_schedule && c->wl_override_until && now < c->wl_override_until) white = c->wl_override;
-            else if (s.wl_schedule) { c->wl_override_until = 0; white = in_window(local_minutes(&s), s.wl_from, s.wl_until); }
+            else if (s.wl_schedule) { c->wl_override_until = 0; white = c->schedules_ready && in_window(local_minutes(&s), s.wl_from, s.wl_until); }
             else white = s.white_light;
         }
         int privacy = privacy_wanted(c, &s, now);
         int change_privacy = privacy != c->active_privacy;
         if (change_privacy) c->active_privacy = privacy;
-        int switched = night != c->active_night, change_night = switched || c->reapply_night, change_white = white != c->active_white;
-        c->reapply_night = 0;
-        int save_now = c->dirty && now - c->dirty_since >= SAVE_DELAY_US;
-        if (save_now) c->dirty = 0;
+        int switched = night != c->active_night, change_night = switched || c->reapply_night;
+        int change_white = white != c->active_white || c->reapply_white;
+        c->reapply_night = c->reapply_white = 0;
+        int save_now = c->dirty && now - c->dirty_since >= SAVE_DELAY_US &&
+                       (!c->save_failed_at || now - c->save_failed_at >= RETRY_US);
+        char *to_save = save_now ? settings_json(&c->s, 1) : NULL;
+        if (to_save) c->dirty = 0;
         if (switched) { c->active_night = night; c->switched_at = now; }
         if (started_day) c->switched_at = 0;
         if (change_white) c->active_white = white;
-        if (save_now) save(c);
+        int clock_ok = c->clock_ok;
         pthread_mutex_unlock(&c->mutex);
+        /* A flash write can take a while, and everything that touches a control waits for this lock. */
+        if (to_save) {
+            attempted = 1;
+            if (save_text(c->path, to_save)) {
+                int saved = errno;
+                pthread_mutex_lock(&c->mutex);
+                c->dirty = 1; c->save_failed_at = now; c->tick_errors++;
+                snprintf(c->error, sizeof c->error, "cannot save controls: %s", strerror(saved));
+                pthread_mutex_unlock(&c->mutex);
+            } else c->save_failed_at = 0;
+        }
 
         char error[160];
         /* Privacy on: hold the frames, black out, wait for what was in the pipe,
@@ -711,6 +797,7 @@ static void *engine(void *opaque)
          * held, so a failure pauses video instead of showing it. Off: the picture
          * comes back first, then the head. */
         if (first || change_privacy) {
+            attempted = 1;
             if (privacy) { atomic_store(&app->privacy_hold, 1); c->covered_at = 0; }
             atomic_store(&app->privacy_on, privacy);
             atomic_store(&app->mic_muted, s.mic_mute || privacy);
@@ -728,42 +815,69 @@ static void *engine(void *opaque)
                 set_error(c, "pilot_led", error);
         }
         if (first || change_night) {
+            attempted = 1;
             error[0] = 0;
             if (jipc_platform_control(app, "ir_mode", s.ir_off, 0, error, sizeof error) < 0 ||
-                jipc_backend_night(app, night, error, sizeof error) < 0) set_error(c, "night", error);
-            else jipc_log("info", "controls: %s (%s)", night ? "night" : "day", c->reason);
+                jipc_backend_night(app, night, error, sizeof error) < 0) {
+                set_error(c, "night", error);
+                pthread_mutex_lock(&c->mutex);
+                c->retry_night_at = now + RETRY_US;
+                pthread_mutex_unlock(&c->mutex);
+            } else {
+                jipc_log("info", "controls: %s (%s)", night ? "night" : "day", c->reason);
+                /* A day/night switch changes the ISP's mode: keep the lenses black through it. */
+                if (privacy) (void)apply_cover(c);
+            }
         }
         if (first || change_white) {
+            attempted = 1;
             error[0] = 0;
-            if (jipc_platform_control(app, "white_light", white, 0, error, sizeof error) < 0)
+            int failed = jipc_platform_control(app, "white_light", white, 0, error, sizeof error) < 0;
+            pthread_mutex_lock(&c->mutex);
+            /* A manual change between deciding and this write: that one was meant to stay. */
+            int manual = !failed && c->active_white != white ? c->active_white : -1;
+            if (failed) c->retry_white_at = now + RETRY_US;
+            pthread_mutex_unlock(&c->mutex);
+            if (failed) set_error(c, "white_light", error);
+            else if (manual >= 0 && jipc_platform_control(app, "white_light", manual, 0, error, sizeof error) < 0)
                 set_error(c, "white_light", error);
         }
-        if (do_picture) apply_picture(c, &s, privacy);
+        if (do_picture) { attempted = 1; apply_picture(c, &s, privacy); }
         if (!privacy) atomic_store(&app->privacy_hold, 0);
         patrol_tick(c, &s, privacy, now);
-        overlay_tick(c, &s);
+        if (overlay_tick(c, &s, clock_ok)) attempted = 1;
         jipc_update_tick();
 
         pthread_mutex_lock(&c->mutex);
+        /* An old failure stops being reported once the same work has gone through. */
+        if (attempted && !c->tick_errors) c->error[0] = 0;
         if (!atomic_load(&c->quit) && !c->apply_picture) {
-            struct timespec until;
-            clock_gettime(CLOCK_REALTIME, &until);
-            if (c->strobe_until) { /* a flash is half a second */
-                until.tv_nsec += 250000000;
-                if (until.tv_nsec >= 1000000000) { until.tv_nsec -= 1000000000; until.tv_sec += 1; }
-            } else {
-                until.tv_sec += 1;
-                if (s.overlay_on) until.tv_nsec = 0; /* the timestamp changes on the second */
-            }
+            /* On the monotonic clock: a wait on wall-clock time would sleep through a backward
+             * step of however long, with every schedule, timer and save stopped behind it. */
+            struct timespec until, wall;
+            clock_gettime(CLOCK_MONOTONIC, &until);
+            long add = 1000000000;
+            if (c->strobe_until) add = 250000000; /* a flash is half a second */
+            else if (s.overlay_on && !clock_gettime(CLOCK_REALTIME, &wall)) add = 1000000000 - wall.tv_nsec; /* the timestamp changes on the second */
+            until.tv_nsec += add;
+            if (until.tv_nsec >= 1000000000) { until.tv_nsec -= 1000000000; until.tv_sec += 1; }
             pthread_cond_timedwait(&c->wake, &c->mutex, &until);
         }
         pthread_mutex_unlock(&c->mutex);
     }
     /* A pending change is not lost at shutdown. */
     pthread_mutex_lock(&c->mutex);
-    if (c->dirty) { c->dirty = 0; save(c); }
+    if (c->dirty) { c->dirty = 0; (void)save_text(c->path, settings_json(&c->s, 1)); }
     pthread_mutex_unlock(&c->mutex);
     return NULL;
+}
+
+/* JIPC_CLOCK_MARKER: test hook. The platform makes this file once network time or a
+ * person has confirmed the clock; a boot's restored time has not. */
+static const char *clock_marker(void)
+{
+    const char *marker = getenv("JIPC_CLOCK_MARKER");
+    return marker ? marker : "/run/jooan-local/clock-set";
 }
 
 /* Before video starts, so a camera in privacy mode never shows a frame at boot:
@@ -779,7 +893,11 @@ void jipc_controls_preload(jipc_app *app)
     int minutes;
     const char *oem = getenv("JIPC_OEM_CONFIG");
     if (!camera_zone(oem ? oem : "/opt/conf/config.json", &minutes)) c->s.utc_offset_min = minutes;
-    if (privacy_wanted(c, &c->s, 0)) {
+    c->schedules_ready = !access(clock_marker(), F_OK);
+    int privacy = privacy_wanted(c, &c->s, 0);
+    /* The microphone too: RTSP is listening before the engine's first tick. */
+    atomic_store(&app->mic_muted, c->s.mic_mute || privacy);
+    if (privacy) {
         atomic_store(&app->privacy_on, 1);
         atomic_store(&app->privacy_hold, 1);
         jipc_log("info", "controls: privacy mode at start; holding video until it is applied");
@@ -794,8 +912,18 @@ int jipc_controls_start(jipc_app *app)
     c->app = app;
     c->active_night = c->active_white = c->active_privacy = -1;
     c->patrol_state = "off";
+    c->auto_start = 1;
+    c->started_at = jipc_now_us();
+    snprintf(c->clock_marker, sizeof c->clock_marker, "%s", clock_marker());
+    /* JIPC_CLOCK_WAIT_S: test hook. */
+    const char *clock_wait = getenv("JIPC_CLOCK_WAIT_S");
+    c->clock_wait_us = clock_wait && *clock_wait ? (uint64_t)atoi(clock_wait) * UINT64_C(1000000) : CLOCK_WAIT_US;
     pthread_mutex_init(&c->mutex, NULL);
-    pthread_cond_init(&c->wake, NULL);
+    pthread_condattr_t monotonic;
+    pthread_condattr_init(&monotonic);
+    pthread_condattr_setclock(&monotonic, CLOCK_MONOTONIC);
+    pthread_cond_init(&c->wake, &monotonic);
+    pthread_condattr_destroy(&monotonic);
     jipc_config config;
     jipc_config_copy(app, &config);
     snprintf(c->path, sizeof c->path, "%s/controls.json", config.state_dir);
@@ -844,9 +972,16 @@ void jipc_controls_stop(jipc_app *app)
  * successful manual control, so it survives a restart. */
 void jipc_controls_note(jipc_app *app, const char *operation, int value, int value2)
 {
+    pthread_mutex_lock(&lifetime);
     controls_state *c = app->controls_state;
-    if (!c) return;
+    if (!c) { pthread_mutex_unlock(&lifetime); return; }
     pthread_mutex_lock(&c->mutex);
+    /* The engine re-applying what is saved is not a change, and its copy may be a moment old. */
+    if (c->engine_known && pthread_equal(c->engine_self, pthread_self())) {
+        pthread_mutex_unlock(&c->mutex);
+        pthread_mutex_unlock(&lifetime);
+        return;
+    }
     settings before = c->s;
     picture *p = value2 >= 0 && value2 < 2 ? &c->s.pic[value2] : NULL;
     if ((!strcmp(operation, "night") || !strcmp(operation, "ircut")) && (value == 0 || value == 1)) {
@@ -870,6 +1005,7 @@ void jipc_controls_note(jipc_app *app, const char *operation, int value, int val
     else if (p && !strcmp(operation, "denoise")) p->denoise = value;
     if (memcmp(&before, &c->s, sizeof before) && !c->dirty) { c->dirty = 1; c->dirty_since = jipc_now_us(); }
     pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&lifetime);
 }
 
 /* The siren with the saved sound, volume and, unless given, length; its flashing light with it. */
@@ -890,7 +1026,11 @@ int jipc_controls_siren(jipc_app *app, int on, int seconds, char *error, size_t 
     if (!rc) {
         pthread_mutex_lock(&c->mutex);
         if (!on) c->strobe_until = 0;
-        else if (s.siren_strobe) c->strobe_until = jipc_now_us() + (uint64_t)(seconds ? seconds : s.siren_seconds) * UINT64_C(1000000);
+        else if (s.siren_strobe) {
+            c->strobe_since = jipc_now_us();
+            c->strobe_until = c->strobe_since + (uint64_t)(seconds ? seconds : s.siren_seconds) * UINT64_C(1000000);
+            c->strobe_with_siren = 1;
+        }
         pthread_cond_signal(&c->wake);
         pthread_mutex_unlock(&c->mutex);
     }
@@ -908,6 +1048,7 @@ int jipc_controls_siren_test(jipc_app *app, int sound, char *error, size_t capac
     if (!c) { pthread_mutex_unlock(&lifetime); snprintf(error, capacity, "controls are not running"); return -1; }
     pthread_mutex_lock(&c->mutex);
     int volume = c->s.siren_volume;
+    if (c->strobe_with_siren) c->strobe_until = 0; /* this replaces the siren the flashing came with */
     pthread_mutex_unlock(&c->mutex);
     int rc = jipc_siren_start(app, (unsigned)sound, JIPC_SIREN_TEST_SECONDS, volume, error, capacity);
     pthread_mutex_unlock(&lifetime);
@@ -922,7 +1063,9 @@ int jipc_controls_strobe(jipc_app *app, int seconds, char *error, size_t capacit
     controls_state *c = app->controls_state;
     if (!c) { pthread_mutex_unlock(&lifetime); snprintf(error, capacity, "controls are not running"); return -1; }
     pthread_mutex_lock(&c->mutex);
-    c->strobe_until = seconds ? jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000) : 0;
+    c->strobe_since = jipc_now_us();
+    c->strobe_until = seconds ? c->strobe_since + (uint64_t)seconds * UINT64_C(1000000) : 0;
+    c->strobe_with_siren = 0; /* asked for by itself: it lasts its own time */
     pthread_cond_signal(&c->wake);
     pthread_mutex_unlock(&c->mutex);
     pthread_mutex_unlock(&lifetime);
@@ -947,7 +1090,8 @@ int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t cap
     int rc = patch(&c->s, root, &picture_changed, error, capacity);
     if (!rc) {
         cJSON *light = cJSON_GetObjectItemCaseSensitive(root, "white_light");
-        if (light && cJSON_GetObjectItemCaseSensitive(light, "on")) c->wl_override_until = 0;
+        /* Choosing on or off by hand ends whatever else is driving the light, as the control does. */
+        if (light && cJSON_GetObjectItemCaseSensitive(light, "on")) { c->wl_override_until = 0; c->strobe_until = c->trigger_until = 0; }
         if (c->s.night_mode != before.night_mode || c->s.night_ev != before.night_ev ||
             c->s.day_ev != before.day_ev) c->cond_since = 0;
         if (c->s.ir_off != before.ir_off) c->reapply_night = 1; /* the same mode, with the new IR setting */
@@ -957,11 +1101,23 @@ int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t cap
         cJSON *privacy = cJSON_GetObjectItemCaseSensitive(root, "privacy");
         cJSON *privacy_on = privacy ? cJSON_GetObjectItemCaseSensitive(privacy, "on") : NULL;
         if (privacy_on && c->s.privacy_schedule) {
+            int edge = next_boundary_s(&c->s, c->s.privacy_from, c->s.privacy_until);
             c->privacy_override = c->s.privacy_on;
-            c->privacy_override_until = jipc_now_us() +
-                (uint64_t)next_boundary_s(&c->s, c->s.privacy_from, c->s.privacy_until) * 1000000u;
+            c->privacy_override_until = jipc_now_us() + (uint64_t)edge * 1000000u;
+            /* "On" has to outlast a restart too: the owner was told it lasts until the next change. */
+            c->s.privacy_held_until = c->s.privacy_on ? (int)((long long)time(NULL) + edge) : 0;
             c->s.privacy_on = before.privacy_on;
-        } else if (privacy_on || c->s.privacy_schedule != before.privacy_schedule) c->privacy_override_until = 0;
+        } else if (c->s.privacy_schedule && !before.privacy_schedule && before.privacy_on) {
+            /* A schedule turned on during manual privacy: stays private until its next edge, not off at once. */
+            int edge = next_boundary_s(&c->s, c->s.privacy_from, c->s.privacy_until);
+            c->privacy_override = 1;
+            c->privacy_override_until = jipc_now_us() + (uint64_t)edge * 1000000u;
+            c->s.privacy_held_until = (int)((long long)time(NULL) + edge);
+            c->s.privacy_on = 0; /* or turning the schedule off later would black out with no warning */
+        } else if (privacy_on || c->s.privacy_schedule != before.privacy_schedule) {
+            c->privacy_override_until = 0;
+            c->s.privacy_held_until = 0;
+        }
         cJSON *patrol = cJSON_GetObjectItemCaseSensitive(root, "patrol");
         if (patrol && cJSON_GetObjectItemCaseSensitive(patrol, "stops")) { c->patrol_index = 0; c->patrol_phase = PATROL_GO; c->patrol_skipped = 0; }
         if (memcmp(&before, &c->s, sizeof before)) { c->dirty = 1; c->dirty_since = jipc_now_us(); }
@@ -1051,10 +1207,14 @@ int jipc_controls_json(jipc_app *app, char *out, size_t capacity)
             cJSON_AddNumberToObject(live, "pending_s",
                 c->cond_since ? (double)((now - c->cond_since) / 1000000u) : 0);
             cJSON_AddNumberToObject(live, "hold_left_s", c->s.night_mode == NIGHT_AUTO && c->switched_at &&
-                now - c->switched_at < c->auto_hold_us ? (double)((c->auto_hold_us - (now - c->switched_at)) / 1000000u) : 0);
+                now - c->switched_at < c->auto_hold_us * (uint64_t)(c->hold_factor ? c->hold_factor : 1)
+                ? (double)((c->auto_hold_us * (uint64_t)(c->hold_factor ? c->hold_factor : 1) - (now - c->switched_at)) / 1000000u) : 0);
             cJSON_AddBoolToObject(live, "white_light", c->active_white == 1);
             cJSON_AddNumberToObject(live, "trigger_left_s",
                 c->trigger_until && now < c->trigger_until ? (double)((c->trigger_until - now + 999999u) / 1000000u) : 0);
+            cJSON_AddNumberToObject(live, "strobe_left_s",
+                c->strobe_until && now < c->strobe_until ? (double)((c->strobe_until - now + 999999u) / 1000000u) : 0);
+            cJSON_AddBoolToObject(live, "clock_ok", c->clock_ok);
             cJSON_AddNumberToObject(live, "local_minutes", local_minutes(&c->s));
             cJSON_AddStringToObject(live, "zone", c->zone_valid ? "camera" : "browser");
             cJSON_AddBoolToObject(live, "privacy", atomic_load(&c->app->privacy_on)); /* true from before video starts */

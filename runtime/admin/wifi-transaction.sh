@@ -37,7 +37,7 @@ jl_wifi_rollback() {
     # the terminal journal above prevents a repeated recovery/reboot loop.
     jl_unlock
     trap - EXIT
-    reboot
+    jl_reboot_asked
 }
 
 case "$jl_action" in

@@ -184,10 +184,15 @@ static int open_socket(void)
 
 static void *mdns_loop(void *unused)
 {
+    unsigned address_seen=0;
     unsigned char query[1500],answer[1400];char asked[128],label[64],wanted[80];struct sockaddr_in group;int fd=-1,timeouts=0,announced=0;
     (void)unused;memset(&group,0,sizeof(group));group.sin_family=AF_INET;group.sin_port=htons((uint16_t)M.mdns_port);inet_pton(AF_INET,MDNS_GROUP,&group.sin_addr);
     for(;!mdns_stop_requested;){
         struct sockaddr_in peer;socklen_t peer_len=sizeof(peer);ssize_t n;if(fd<0){fd=open_socket();if(fd<0){sleep(5);continue;}pthread_mutex_lock(&hostname_lock);mdns_fd=fd;mdns_running=1;pthread_mutex_unlock(&hostname_lock);announced=0;}
+        /* A new address must not wait for 120 s of caches, or for a Wi-Fi trial's 90 s to run out: */
+        /* start over, which rejoins the group on the new address and tells everyone at once.      */
+        {struct in_addr now[8];int count=iface_addresses(fd,now,8,0),i;unsigned seen=(unsigned)count;for(i=0;i<count;i++)seen=seen*31u+(unsigned)now[i].s_addr;
+         if(announced&&seen!=address_seen){close(fd);fd=-1;timeouts=0;pthread_mutex_lock(&hostname_lock);mdns_running=0;pthread_mutex_unlock(&hostname_lock);continue;}address_seen=seen;}
         if(!announced){announce(fd,120);announced=1;}
         n=recvfrom(fd,query,sizeof(query),0,(struct sockaddr*)&peer,&peer_len);
         if(n<0){if(errno==EAGAIN||errno==EWOULDBLOCK){if(++timeouts<3)continue;}close(fd);fd=-1;timeouts=0;pthread_mutex_lock(&hostname_lock);mdns_running=0;pthread_mutex_unlock(&hostname_lock);continue;}

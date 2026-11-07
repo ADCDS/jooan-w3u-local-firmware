@@ -49,8 +49,8 @@ typedef struct {
     unsigned mute_attempts, write_errors, backoff_s;
     uint64_t retry_us;
     uint64_t sessions, played_frames, dropped_bytes, refused, faults;
-    int siren_on, siren_volume, siren_volume_applied, volume_restore;
-    uint64_t siren_until;
+    int siren_on, siren_volume, siren_volume_applied, volume_restore, watch_muted;
+    uint64_t siren_until, siren_deadline;
     jipc_siren siren;
     char error[160];
 } speaker_state;
@@ -124,7 +124,8 @@ static void end_session(speaker_state *s, int close_output)
     s->head = s->count = 0;
     s->siren_on = 0;
     s->session_end_us = jipc_now_us();
-    stop_output(s, close_output);
+    stop_output(s, close_output); /* its tail goes through the same write, so the watch stays on until here */
+    s->siren_deadline = 0; s->watch_muted = 0;
     /* The next talker gets the speaker's own volume back. */
     if (s->volume_restore) {
         int open = s->open, volume = s->volume;
@@ -186,6 +187,7 @@ static void *speaker_main(void *opaque)
             s->session = 1;
             ++s->sessions;
             int volume = s->siren_on ? siren_gain(s->siren_volume) : s->volume, need_open = !s->open;
+            if (s->siren_on) s->volume_restore = 1; /* from here, not from its first frame: a talker can come first */
             if (s->siren_on && need_open) s->siren_volume_applied = s->siren_volume;
             pthread_mutex_unlock(&s->mutex);
             char error[160] = {0};
@@ -214,6 +216,14 @@ static void *speaker_main(void *opaque)
             }
             s->volume_restore = 1;
             jipc_siren_fill(&s->siren, frame, sizeof frame);
+        } else if (s->volume_restore) {
+            /* A talker took over from the siren: at the speaker's own volume, not the siren's. */
+            int volume = s->volume;
+            s->volume_restore = 0; s->siren_deadline = 0; s->watch_muted = 0;
+            pthread_mutex_unlock(&s->mutex);
+            (void)s->sink.volume(s->sink.context, volume);
+            pthread_mutex_lock(&s->mutex);
+            continue;
         } else if (!s->count) {
             /* Underrun: give the talker 40 ms, then keep the driver fed. */
             timed_wait(s, 40);
@@ -408,7 +418,8 @@ int jipc_siren_start(jipc_app *app, unsigned sound, unsigned seconds, int percen
             s->siren_on = 1;
             s->siren_volume = percent;
             s->siren_volume_applied = 0; /* no percentage: whatever the output has now is not it */
-            s->siren_until = jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000);
+            s->siren_until = s->siren_deadline = jipc_now_us() + (uint64_t)seconds * UINT64_C(1000000);
+            s->watch_muted = 0;
             jipc_siren_init(&s->siren, sound);
             pthread_cond_signal(&s->wake);
         }
@@ -424,8 +435,43 @@ void jipc_siren_stop(jipc_app *app)
     speaker_state *s = app ? app->speaker_state : NULL;
     if (s) {
         pthread_mutex_lock(&s->mutex);
-        if (s->siren_on) { s->siren_on = 0; s->released = 1; pthread_cond_signal(&s->wake); }
+        if (s->siren_on) { s->siren_on = 0; s->released = 1; s->siren_deadline = jipc_now_us(); pthread_cond_signal(&s->wake); }
         pthread_mutex_unlock(&s->mutex);
+    }
+    pthread_mutex_unlock(&lifetime);
+}
+
+int jipc_siren_active(jipc_app *app)
+{
+    pthread_mutex_lock(&lifetime);
+    speaker_state *s = app ? app->speaker_state : NULL;
+    int active = 0;
+    if (s) {
+        pthread_mutex_lock(&s->mutex);
+        active = s->siren_on;
+        pthread_mutex_unlock(&s->mutex);
+    }
+    pthread_mutex_unlock(&lifetime);
+    return active;
+}
+
+/* The siren's time and its stop are only looked at between writes to the driver, which
+ * has no timeout of its own. From outside that thread: if the sound is overdue, cut the
+ * amplifier. A siren that never ends on a residential street is worth this. */
+void jipc_speaker_watch(jipc_app *app)
+{
+    pthread_mutex_lock(&lifetime);
+    speaker_state *s = app ? app->speaker_state : NULL;
+    if (s) {
+        pthread_mutex_lock(&s->mutex);
+        int overdue = s->siren_deadline && !s->watch_muted &&
+                      jipc_now_us() > s->siren_deadline + UINT64_C(2000000);
+        if (overdue) s->watch_muted = 1;
+        pthread_mutex_unlock(&s->mutex);
+        if (overdue) {
+            jipc_log("error", "speaker: the siren is overdue behind a blocked audio write; muting the amplifier");
+            (void)s->sink.amplifier(s->sink.context, 0);
+        }
     }
     pthread_mutex_unlock(&lifetime);
 }

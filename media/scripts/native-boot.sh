@@ -69,8 +69,14 @@ export LD_LIBRARY_PATH OPENIMP_T23_DRIVER_ABI OPENIMP_T23_ENCODER OPENIMP_T23_NA
 "$JIPC_RELEASE/jooanipc-open" --config "$root/camera.ini" --check-config || fail 'configuration rejected'
 grep -qx 'motor_home=1' "$root/camera.ini" || fail 'native boot requires motor_home=1'
 
-# The daemon binds the camera's address: wait for Wi-Fi, DHCP and the gateway.
-stage network
+# The daemon binds the camera's address: wait for Wi-Fi, DHCP and the gateway. A
+# network that is down says nothing about this release, so no trial marker stays
+# while waiting: a reset here (the ten-minute feeder limit, the network watchdog, a
+# power cut) just boots native again. Only with no committed network at all can this
+# never end, and then the handoff is the way forward.
+rm -f "$root/native-trial" "$root/native-trial.new"
+sync
+wifi_committed=${JIPC_WIFI_JSON:-/opt/custom/jooan-local/config/wifi.json}
 network_ready() {
     read -r gateway interface < /run/jooan-local/default-gateway 2>/dev/null || return 1
     [ "$interface" = wlan0 ] || return 1
@@ -79,7 +85,7 @@ network_ready() {
 }
 i=0
 until network_ready; do
-    [ "$i" -lt 300 ] || fail 'Wi-Fi/DHCP did not provide the gateway'
+    [ "$i" -lt 300 ] || [ -s "$wifi_committed" ] || fail 'no committed Wi-Fi network: nothing can provide the gateway'
     sleep 1; i=$((i + 1))
 done
 log 'network ready'
@@ -128,12 +134,8 @@ while [ "$i" -lt 185 ]; do
         fail 'pan/tilt homing failed'
 done
 [ -n "$homed" ] || fail 'pan/tilt homing did not complete'
-i=0
-until network_ready; do
-    native_ready || fail 'media daemon lost health during final network check'
-    [ "$i" -lt 60 ] || fail 'network did not stay healthy'
-    sleep 1; i=$((i + 1))
-done
+# Whether the router is up right now is not evidence about this release.
+network_ready || log 'network is down at the end of qualification; the network watchdog handles that'
 printf '%s\n' "$boot $native" > "$run/qualified"
 rm -f "$root/native-trial" "$root/native-trial.new"
 sync

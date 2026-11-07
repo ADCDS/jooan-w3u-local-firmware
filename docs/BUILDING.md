@@ -16,7 +16,7 @@ checklist. Owners installing a published release want
 | Python 3 with `cryptography` | signing and host-side verification | Yes |
 | `squashfs-tools` (`unsquashfs`, `mksquashfs`) | rebuilding the appfs image | Yes |
 | The camera's own appfs (`/dev/mtdblock4`, 3211264 bytes) | media release bundles | No: vendor files |
-| `libimp.so` and `libatomic.so.1` from the [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi) | media runtime | Published since v0.2.33, with the source of `libimp.so` beside it |
+| `libimp.so` and `libatomic.so.1` from the [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi) | media runtime | Published since v0.2.34, with the source of `libimp.so` beside it |
 
 ## Platform package
 
@@ -175,9 +175,10 @@ up for manual recovery: see [Recovery](RECOVERY.md#appfs-reflash-recovery).
 Stop the NVR during a platform update (`--nvr-stop`/`--nvr-start`).
 
 **The first media release** goes on with a bundle from `build-appfs.sh --first`,
-using the same installer. Its preflight wants a camera with the platform and the
-stock application running, the appfs its bundle was built from, a committed
-Wi-Fi network and 96 KiB free in `/opt`, and no media layer. The installer then
+using the same installer. Its preflight wants a camera with platform sequence 68
+or later and the stock application running, the CV2005 sensors, the appfs its
+bundle was built from, a committed Wi-Fi network and 96 KiB free in `/opt`, and no
+media layer. The installer then
 makes the camera's TLS certificate, stages `camera.ini` from
 [`media/config/ja-a12.example.ini`](../media/config/ja-a12.example.ini) and
 `deployment.env`, and runs `first-appfs.sh`. That script is separate from
@@ -197,7 +198,9 @@ scripts, and the image. The daemon checks the signature with the platform's
 verifier and the camera's state with the signed `apply-media-update.sh`, then
 keeps the package in RAM for 15 minutes for the owner to confirm. That script
 then runs the signed `upgrade-appfs.sh`. The package holds vendor files and is
-specific to one camera's partition, so it is private.
+specific to one camera's partition, so it is private. It carries only the release:
+a bundle that also changes `camera.ini` or files is refused, and has to go through
+the installer.
 
 ## GitHub releases
 

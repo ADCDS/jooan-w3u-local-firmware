@@ -320,7 +320,7 @@ static void ui_asset_response(connection *c,const char *name){
  * checks the Origin it drops, throttles failed sign-ins per address and adds
  * Secure to its cookie. Two relays at most, so slow platform calls never
  * starve ONVIF. */
-static atomic_int relays;
+static atomic_int relays, stills; /* stills too: each holds a worker for as long as a slow client reads it */
 static void joan_relay(connection *c,request *r){
     const char *rest=r->target+10;int get=!strcmp(r->method,"GET");
     if(!get&&strcmp(r->method,"POST")&&strcmp(r->method,"PUT")&&strcmp(r->method,"DELETE")){error_response(c,405,"Use GET, POST, PUT or DELETE");return;}
@@ -464,10 +464,11 @@ static void dispatch(connection *c,request *r){
     if(!strncmp(r->target,prefix,sizeof(prefix)-1)&&!strcmp(r->method,"GET")){recording_download(c,r->target+sizeof(prefix)-1);return;}
     if((!strcmp(r->target,"/api/v1/snapshot")||!strncmp(r->target,"/api/v1/snapshot?channel=",25))&&!strcmp(r->method,"GET")){
         unsigned channel=0;const char *q=strchr(r->target,'?');if(q){char *end;errno=0;unsigned long v=strtoul(q+9,&end,10);if(errno||end==q+9||*end||v>=JIPC_VIDEO_STREAMS){error_response(c,400,"Invalid snapshot channel");return;}channel=(unsigned)v;}
-        jipc_frame frame={0};if(jipc_backend_snapshot(app,channel,&frame,error,sizeof(error))<0){error_response(c,503,error[0]?error:"Snapshot unavailable");return;}
+        if(atomic_fetch_add(&stills,1)>=2){atomic_fetch_sub(&stills,1);error_response(c,503,"The camera is busy with other pictures; try again");return;}
+        jipc_frame frame={0};if(jipc_backend_snapshot(app,channel,&frame,error,sizeof(error))<0){atomic_fetch_sub(&stills,1);error_response(c,503,error[0]?error:"Snapshot unavailable");return;}
         if(frame.codec!=JIPC_JPEG||frame.size<2||frame.size>JIPC_MAX_FRAME||!frame.data||frame.data[0]!=0xff||frame.data[1]!=0xd8)error_response(c,503,"Backend did not return JPEG");
         else response(c,200,"image/jpeg",frame.data,frame.size);
-        jipc_frame_free(&frame);return;
+        jipc_frame_free(&frame);atomic_fetch_sub(&stills,1);return;
     }
     if(!strcmp(r->target,"/api/v1/talk")&&!strcmp(r->method,"POST")){
         if(strcasecmp(r->type,"audio/PCMA")&&strcasecmp(r->type,"audio/PCMA;rate=8000")){error_response(c,415,"Use audio/PCMA at 8000 Hz mono");return;}
@@ -622,7 +623,7 @@ int jipc_http_start(jipc_app *app){
     if(pthread_cond_init(&s->ready,NULL)){pthread_mutex_destroy(&s->mutex);free(s);return -1;}
 #ifdef JIPC_WITH_MBEDTLS
     if(pthread_mutex_init(&s->random_mutex,NULL)){pthread_cond_destroy(&s->ready);pthread_mutex_destroy(&s->mutex);free(s);return -1;}
-    if(config.tls_cert[0]&&tls_setup(s,&config)<0){jipc_log("error","Unable to load HTTPS certificate/private key or initialize TLS");destroy_server(s);return -1;}
+    if(config.tls_cert[0]&&tls_setup(s,&config)<0){jipc_log("error","Unable to load the HTTPS certificate or key, which must be RSA, P-256 or P-384 with a non-PSS signature, or to initialize TLS");destroy_server(s);return -1;}
 #else
     if(config.tls_cert[0]){jipc_log("error","Configured HTTPS requires a build with JIPC_WITH_MBEDTLS");destroy_server(s);return -1;}
 #endif

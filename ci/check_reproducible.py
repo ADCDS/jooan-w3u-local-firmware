@@ -65,6 +65,8 @@ def main() -> int:
                 sys.stderr.write(result.stderr)
                 print(f"reproducible-build: run {run} failed", file=sys.stderr)
                 return 1
+            if run == 1 and (args.artifact or os.environ.get("REPRO_ARTIFACT")):
+                print("reproducible-build: a given artifact: not checking the size of the fresh layout here")
             if run == 1 and not args.artifact and not os.environ.get("REPRO_ARTIFACT"):
                 # Size-check the layout this build just produced, never a stale
                 # one left in build/ by an older checkout.

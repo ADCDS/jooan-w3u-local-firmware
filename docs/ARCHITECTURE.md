@@ -205,9 +205,9 @@ Legend: ✓ implemented by the platform · ~ partial · ✗ not implemented ·
 | Capability (OEM app · `jooanipc`) | Retrofit |
 |---|---|
 | **Video** | |
-| Live view, dual sensor (OEM: main 2304×1296 + sub 640×360) | → RTSP for an NVR such as Frigate; the qualified profile is 1920×1080 + 1024×360. The platform Web UI is a maintenance console and plays no video |
+| Live view, dual sensor (OEM: main 2304×1296 + sub 640×360) | → RTSP for an NVR such as Frigate; the qualified profile is 1920×1080 + 1024×576. The platform Web UI is a maintenance console and plays no video |
 | Direct RTSP for NVR / VLC clients | → TCP/18554, Digest authentication |
-| JPEG snapshot | → ~ `GET /api/v1/snapshot` on TCP/18443, unavailable in the qualified `main_only=1` profile; the platform has no snapshot route |
+| JPEG snapshot | → `GET /api/v1/snapshot` on TCP/18443 and ONVIF `GetSnapshotUri`, at each lens's stream size; the platform has no snapshot route |
 | Video flip / mirror | → `flip`, `hflip`, `vflip` controls |
 | Digital zoom | ✗ |
 | OSD timestamp / logo overlay | ~ only from the OEM application (fallback modes); the media daemon draws no overlay |
@@ -294,8 +294,10 @@ the fallback modes the OEM application reconnects to the local MQTT bridge
 within about 20 seconds.
 
 Heavy memory pressure can also stall the board before any OOM kill, until the
-hardware watchdog resets it without a log. Installing an update while an NVR
-pulled both streams has reproduced this; stop the NVR during an update.
+hardware watchdog resets it without a log. Installing a platform update while an
+NVR pulled both streams has reproduced this; stop the NVR during a platform update.
+A media update stops the media daemon first, so the NVR's connections go with it,
+and it has been run with Frigate connected.
 
 `dmesg` does not survive a reboot, so the supervisor keeps two small files in
 its state directory. `reset-history` gets one line per boot (time, the reset

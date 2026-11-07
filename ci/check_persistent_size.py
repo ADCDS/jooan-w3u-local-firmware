@@ -89,8 +89,11 @@ def main() -> int:
         ["git", "rev-parse", "--show-toplevel"], text=True
     ).strip()).resolve()
     build_root = Path(os.environ.get("BUILD_ROOT", repo / "build"))
-    supplied = arguments.root or os.environ.get("PERSISTENT_ROOT")
-    root = Path(supplied).resolve() if supplied else (build_root / "persistent-layout").resolve()
+    # Named every time: a default found a layout months old in build/ and passed it.
+    if not arguments.root:
+        print("persistent-size: name the layout to check", file=sys.stderr)
+        return 2
+    root = Path(arguments.root).resolve()
     target = arguments.target
     if not target.is_absolute():
         target = repo / target

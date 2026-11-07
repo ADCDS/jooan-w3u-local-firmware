@@ -315,6 +315,35 @@ def siren_checks(request, capture, context_status):
     assert state["siren"]["sound"] == "chime" and state["siren"]["left_s"] <= 3, state
     assert op("siren", 0) == 200
     wait_for(lambda: speaker()["state"] == "idle", "the test stops")
+    # The flashing light goes with its siren, whichever way the siren ends, and says so while it lasts.
+    def strobe_left():
+        return json.loads(request("GET", "/api/v1/controls")[1])["live"]["strobe_left_s"]
+
+    def wait_strobe(check, what):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            if check(strobe_left()):
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"{what}: {strobe_left()}")
+
+    assert request("POST", "/api/v1/controls", {"siren": {"strobe": True}})[0] == 200
+    assert op("siren", 1, 20) == 200
+    wait_strobe(lambda left: left > 0, "the siren brings its flashing")
+    assert op("siren", 0) == 200
+    wait_strobe(lambda left: left == 0, "the siren's stop ends it")
+    wait_for(lambda: speaker()["state"] == "idle", "idle after stopping")
+    assert op("siren", 1, 20) == 200
+    wait_strobe(lambda left: left > 0, "the siren again")
+    assert op("siren_test", 0) == 200
+    wait_strobe(lambda left: left == 0, "a test sound replaces the siren, and ends the flashing")
+    assert op("siren", 0) == 200
+    wait_for(lambda: speaker()["state"] == "idle", "idle after the test")
+    assert op("strobe", 20) == 200
+    wait_strobe(lambda left: left > 0, "flashing by itself")
+    assert request("POST", "/api/v1/controls", {"white_light": {"on": False}})[0] == 200
+    wait_strobe(lambda left: left == 0, "choosing off ends it")
+    assert request("POST", "/api/v1/controls", {"siren": {"strobe": False}})[0] == 200
     for operation, value, value2 in (("siren", 2, 0), ("siren", 1, 301), ("siren_test", 4, 0), ("siren_test", -1, 0)):
         assert op(operation, value, value2) != 200, (operation, value, value2)
     assert request("POST", "/api/v1/controls", {"siren": defaults})[0] == 200
@@ -520,6 +549,41 @@ def controls_checks(request, root, connection=None, secret=None):
     wait_for(lambda: controls()["live"]["night"] == "night", 5, "schedule night")
     assert controls()["utc_offset_min"] == -180 and \
         controls()["live"]["local_minutes"] == (int(time.time()) // 60 - 180) % 1440, controls()["live"]
+    # A clock nothing has confirmed: schedules do not trust it, and privacy fails closed.
+    marker = root / "clock-set"
+    outside = (now.tm_hour * 60 + now.tm_min - 180 + 300) % 1440
+    window = {"enabled": True, "from": f"{outside // 60:02d}:{outside % 60:02d}",
+              "until": f"{(outside + 10) // 60 % 24:02d}:{(outside + 10) % 60:02d}"}
+    assert controls()["live"]["clock_ok"] is True
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": window}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"] is False, 5, "outside the window")
+    marker.unlink()
+    wait_for(lambda: controls()["live"]["clock_ok"] is False and controls()["live"]["privacy"] is True, 5,
+             "with no confirmed clock, a privacy window stays private")
+    assert "waiting for the clock" in controls()["live"]["reason"]
+    # An out-of-range value is refused during privacy too, not saved for later.
+    assert request("POST", "/api/v1/control", {"operation": "brightness", "value": 9999, "value2": 0})[0] != 200
+    # The microphone goes with it, and ONVIF reading the schedule back as AUTO must not end it.
+    marker.write_text("")
+    wait_for(lambda: controls()["live"]["clock_ok"] is True and controls()["live"]["privacy"] is False, 5, "clock confirmed")
+    # "On" by hand under a schedule is saved as a time, so it survives a restart, and goes with "off".
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    state = controls()
+    assert state["live"]["privacy"] is True or wait_for(lambda: controls()["live"]["privacy"] is True, 5, "on by hand") is None
+    assert controls()["privacy"]["on"] is False and controls()["privacy"]["held_until"] > time.time(), controls()["privacy"]
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    assert "held_until" not in controls()["privacy"]
+    # Turning a schedule on during manual privacy keeps it private until the next edge, then off for good.
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"] is True, 5, "manual privacy")
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": window}})[0] == 200
+    time.sleep(1.5)
+    state = controls()
+    assert state["live"]["privacy"] is True and state["privacy"]["on"] is False and state["privacy"]["held_until"] > time.time(), state["privacy"]
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"] is False, 5, "schedule off")
+    assert "held_until" not in controls()["privacy"]
     # The board's health for the admin UI, native already while the boot qualifies.
     qualified = (root / "jipc-native.log").read_text()
     (root / "jipc-native.log").write_text("53.82 jipc-native: media daemon pid=1 ready; qualifying for 185 seconds\n")
@@ -549,7 +613,7 @@ def controls_checks(request, root, connection=None, secret=None):
     stored = json.loads(saved.read_text())
     assert stored["v"] == 1 and stored["night"]["mode"] == "auto" and oct(saved.stat().st_mode & 0o777) == "0o600", stored
     request("POST", "/api/v1/controls", {"night": {"mode": "day", "ir": "night"}})
-    imaging = imaging_checks(connection, secret, controls) if connection else None
+    imaging = imaging_checks(connection, secret, controls, request) if connection else None
     return {"saved": stored["night"], "imaging": imaging}
 
 
@@ -747,7 +811,7 @@ def ptz_checks(request, connection, secret):
     return {"position": back[:2]}
 
 
-def imaging_checks(connection, secret, controls):
+def imaging_checks(connection, secret, controls, request):
     """ONVIF imaging: advertised in schema order, reads the persisted values on
     the 0..100 scale, and writes through the controls."""
     ns = {"s": "http://www.w3.org/2003/05/soap-envelope", "tt": "http://www.onvif.org/ver10/schema",
@@ -782,6 +846,14 @@ def imaging_checks(connection, secret, controls):
     assert status == 200, ET.tostring(tree)
     state = controls()
     assert state["picture"][0]["brightness"] == 204 and state["night"]["mode"] == "auto", state
+    # ONVIF has no word for a schedule and shows it as AUTO: writing that back must not end it.
+    auto_body = ('<ImagingSettings><Brightness xmlns="http://www.onvif.org/ver10/schema">80</Brightness>'
+                   '<IrCutFilter xmlns="http://www.onvif.org/ver10/schema">AUTO</IrCutFilter></ImagingSettings>')
+    assert request("POST", "/api/v1/controls", {"night": {"mode": "schedule"}})[0] == 200
+    assert controls()["night"]["mode"] == "schedule"
+    status, tree = soap("/onvif/imaging_service", img.format("SetImagingSettings", auto_body))
+    assert status == 200 and controls()["night"]["mode"] == "schedule", controls()["night"]
+    assert request("POST", "/api/v1/controls", {"night": {"mode": "auto"}})[0] == 200
     status, tree = soap("/onvif/imaging_service", img.format("GetOptions", ""))
     modes = [m.text for m in tree.findall(".//tt:IrCutFilterModes", ns)]
     assert status == 200 and modes == ["ON", "OFF", "AUTO"], modes
@@ -832,6 +904,42 @@ def wave_a_checks(request):
     for slot in (3, 4):
         assert request("POST", "/api/v1/control", {"operation": "preset_remove", "value": slot, "value2": 0})[0] == 200
     return {"tone": loud, "muted": muted["level"]}
+
+
+def tls_refusals(http_port):
+    """The daemon's TLS configuration is cut down on purpose; these prove the cut, and that
+    nothing has quietly turned a removed suite back on."""
+    def handshake(prepare):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        context.set_ciphers("ALL:@SECLEVEL=0")
+        prepare(context)
+        with socket.create_connection(("127.0.0.1", http_port), timeout=5) as raw:
+            with context.wrap_socket(raw) as secure:
+                return secure.version(), secure.cipher()[0]
+
+    def tls12(cipher):
+        def prepare(context):
+            context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
+            context.set_ciphers(cipher + ":@SECLEVEL=0")
+        return prepare
+
+    def only13(context):
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+
+    def only11(context):
+        context.minimum_version = ssl.TLSVersion.TLSv1
+        context.maximum_version = ssl.TLSVersion.TLSv1_1
+
+    assert handshake(tls12("ECDHE-RSA-AES128-GCM-SHA256")) == ("TLSv1.2", "ECDHE-RSA-AES128-GCM-SHA256")
+    for name, prepare in (("TLS 1.3 only", only13), ("TLS 1.1", only11), ("RSA key exchange", tls12("AES128-GCM-SHA256")),
+                          ("CBC", tls12("ECDHE-RSA-AES128-SHA256")), ("ChaCha20", tls12("ECDHE-RSA-CHACHA20-POLY1305"))):
+        try:
+            got = handshake(prepare)
+        except (ssl.SSLError, OSError):
+            continue
+        raise AssertionError(f"{name} should be refused, and got {got}")
 
 
 def idle_connection_checks(http_port, tls):
@@ -1053,7 +1161,9 @@ def main():
                                     "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12", "JIPC_AUTO_SETTLE_S": "4",
                                     "JIPC_UPDATE_STAGED_S": "6", "JIPC_UPDATE_DIR": str(root / "staged"), "JIPC_UPDATE_VERIFIER": str(root / "verifier.sh"),
                                     "JIPC_OEM_CONFIG": str(root / "oem-config.json"),
+                                    "JIPC_CLOCK_MARKER": str(root / "clock-set"), "JIPC_CLOCK_WAIT_S": "100000",
                                     "JIPC_BOOT_LOG_DIR": str(root)}
+        (root / "clock-set").write_text("")
         (root / "oem-config.json").write_text('{"IpcParam":{"TimeZomeCfg":{\n "GmtTz":\t"GMT-03:00"\n}}}\n')
         (root / "jipc-native.log").write_text("249.68 jipc-native: native boot qualified; OEM application never started\n")
         (root / "isp-m0").write_text(ISP_PROC.format(ev0=10000, ev1=5000))
@@ -1160,6 +1270,8 @@ def main():
                          "--username", "admin", "--password", secret]
             if args.tls:
                 http_args += ["--tls", "--ca", root / "cert.pem"]
+                tls_refusals(int(http_port))
+                result["checks"].append("TLS 1.3 only, RSA key exchange, CBC and TLS 1.1 are all refused")
             protocol = run(http_args, timeout=100)
             result["http_onvif_protocol"] = protocol.stderr.strip()
             discovery_args = ["python3", here / "test_discovery.py", "--port", discovery_port,
@@ -1240,7 +1352,14 @@ def main():
                  "-i", recording, "-f", "null", "-"], timeout=15)
             result["checks"].append("recording rotation, authenticated download and FFmpeg decode")
             new_secret = "changed-" + secrets.token_hex(12)
+            viewer = socket.create_connection(("127.0.0.1", rtsp_port), timeout=5)
+            viewer.sendall(b"OPTIONS rtsp://127.0.0.1/ RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+            assert viewer.recv(4096).startswith(b"RTSP/1.0 200")
             assert request("POST", "/api/v1/config", {"password": new_secret})[0] == 200
+            # Whoever had the old password does not keep watching: the warning in the UI is true.
+            viewer.settimeout(3)
+            assert viewer.recv(4096) == b"", "the session outlived its password"
+            viewer.close()
             assert request("GET", "/api/v1/status", password=secret)[0] == 401
             secret = new_secret
             assert request("GET", "/api/v1/status")[0] == 200
@@ -1318,6 +1437,21 @@ def main():
             assert now["night"] == "night" and "started" not in now["reason"] and now["since_s"] >= held, now
             assert request("POST", "/api/v1/controls", {"night": {"mode": "day", "ir": "night"}})[0] == 200
             result["checks"].append("auto mode at a start waits for the exposure, and only a switch to night is held")
+            # One bad value in the saved file costs that section, not the rest: least of all privacy.
+            end = time.time() + 8
+            while time.time() < end and json.loads(saved.read_text())["night"]["mode"] != "day":
+                time.sleep(0.2)
+            stored = json.loads(saved.read_text())
+            stored["privacy"]["on"] = True
+            stored["picture"] = [{"brightness": 9999}]
+            saved.write_text(json.dumps(stored))
+            process.send_signal(signal.SIGHUP)
+            time.sleep(0.5)
+            wait_ready()
+            live = json.loads(request("GET", "/api/v1/controls")[1])
+            assert live["live"]["privacy"] is True and live["picture"][0]["brightness"] == 128, live
+            assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+            result["checks"].append("a bad saved value costs its section only")
             # Last: this locks 127.0.0.1 out for a minute. Earlier negative
             # tests may already have counted, so the block can come sooner.
             statuses = [request("GET", "/api/v1/status", password="not-" + secret)[0] for _ in range(10)]

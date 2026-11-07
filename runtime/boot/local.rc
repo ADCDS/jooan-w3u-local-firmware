@@ -126,7 +126,8 @@ fi
 # OEM application: this controller brings up the watchdog, Wi-Fi and DHCP that
 # jooanipc did, and the daemon homes pan/tilt. The guarded OEM handoff remains
 # the fallback. A native boot that did not qualify leaves native-trial behind;
-# the next boot latches it as native-failed and uses the handoff.
+# the next boot latches it as native-failed and uses the handoff, at once if it
+# recorded a failure and otherwise after one more try.
 jl_media=/opt/jooanipc-open
 jl_native_media() {
     # Feed the hardware watchdog until the media daemon takes it over. If none
@@ -159,8 +160,22 @@ jl_native_media() {
     /bin/sh "$jl_media/native-boot.sh" </dev/null >/tmp/jipc-native.log 2>&1 &
 }
 if [ -f "$jl_media/enabled" ]; then
+    # A reboot the platform asked for says nothing about the boot it cut short.
+    if [ -f "$jl_media/reboot-requested" ]; then
+        rm -f "$jl_media/reboot-requested" "$jl_media/native-trial" "$jl_media/boot-trial"
+    fi
     if [ -f "$jl_media/native-trial" ]; then
-        mv -f "$jl_media/native-trial" "$jl_media/native-failed" 2>/dev/null || :
+        # A boot that recorded a failure is final. One that was only cut short, by
+        # a power cut or a hang, gets one more try: a smart plug or a bad socket
+        # must not end native boot, but a hang must not loop either.
+        if [ -f "$jl_media/native-retry" ] || grep -q '^stage=failed' "$jl_media/native-trial" 2>/dev/null; then
+            mv -f "$jl_media/native-trial" "$jl_media/native-failed" 2>/dev/null || :
+            rm -f "$jl_media/native-retry"
+        else
+            mv -f "$jl_media/native-trial" "$jl_media/native-retry" 2>/dev/null || :
+        fi
+    else
+        rm -f "$jl_media/native-retry"
     fi
     if [ -f "$jl_media/native" ] && [ ! -f "$jl_media/native-failed" ] &&
        [ -r "$jl_media/native-boot.sh" ]; then

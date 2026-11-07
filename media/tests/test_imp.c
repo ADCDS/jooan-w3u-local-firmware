@@ -402,7 +402,7 @@ static int ov_group(int g){CHECK(g==0||g==1);return 0;}
 static int ov_stop(int g){(void)g;++ov_stopped;return 0;}
 static int ov_group_destroy(int g){(void)g;++ov_destroyed;return 0;}
 static int ov_create(void *a){CHECK(!a);return ov_rgn_made++;}
-static int ov_destroy(int h){(void)h;++ov_rgn_gone;return 0;}
+static void ov_destroy(int h){(void)h;++ov_rgn_gone;}
 static int ov_register(int h,int g,void *a){(void)h;(void)g;CHECK(a);return 0;}
 static int ov_unregister(int h,int g){(void)h;(void)g;return 0;}
 static int ov_set(int h,void *a){(void)h;int32_t *w=a;CHECK(w[0]==7);for(int i=0;i<4;++i)ov_last_rect[i]=w[1+i];ov_last_fmt=w[7];++ov_rgn_set;return 0;}
@@ -485,6 +485,7 @@ static int pair_release_stream(int ch,jipc_imp_stream *stream)
 static int pair_request_idr(int ch){pair_idr=ch;return 0;}
 /* A still in main_only: encoder 2 or 3 on that lens's only group, at its main size,
  * alongside H.264, and every resource given back. */
+static int still_stop_count,still_stopped_before_get;
 static int still_created,still_registered,still_group,still_started,still_stopped,still_unregistered,still_destroyed;
 static unsigned still_width,still_height;
 static int still_pipe[2];
@@ -492,12 +493,13 @@ static jipc_imp_pack *still_pack;
 static int still_create(int ch,jipc_imp_encoder_attr *a){still_created=ch;still_width=a->words[3];still_height=a->words[4];CHECK(a->words[0]==0);return 0;}
 static int still_register(int group,int ch){still_group=group;still_registered=ch;return 0;}
 static int still_start(int ch){still_started=ch;CHECK(write(still_pipe[1],"x",1)==1);return 0;}
-static int still_stop(int ch){still_stopped=ch;return 0;}
+static int still_stop(int ch){still_stopped=ch;still_stop_count++;return 0;}
+static int still_stop_fails(int ch){still_stopped=ch;return -1;}
 static int still_unregister(int ch){still_unregistered=ch;return 0;}
 static int still_destroy(int ch){still_destroyed=ch;return 0;}
 static int still_get_fd(int ch){(void)ch;return still_pipe[0];}
 static int still_get_stream(int ch,jipc_imp_stream *stream,int block)
-{ (void)ch;CHECK(block==0);char byte;CHECK(read(still_pipe[0],&byte,1)==1);*stream=(jipc_imp_stream){(uint32_t)(uintptr_t)still_pack,1,1,0};return 0; }
+{still_stopped_before_get=still_stop_count>0; (void)ch;CHECK(block==0);char byte;CHECK(read(still_pipe[0],&byte,1)==1);*stream=(jipc_imp_stream){(uint32_t)(uintptr_t)still_pack,1,1,0};return 0; }
 static int still_release_stream(int ch,jipc_imp_stream *stream){(void)ch;(void)stream;return 0;}
 /* The picture only arrives once something else got the control lock. */
 static pthread_mutex_t still_control=PTHREAD_MUTEX_INITIALIZER;
@@ -534,6 +536,20 @@ static void test_main_only_still(void)
     pthread_mutex_unlock(&still_control);
     CHECK(!pthread_join(helper,NULL));
     jipc_frame_free(&frame);
+    /* The channel is stopped before the copy, so it cannot begin another JPEG meanwhile. */
+    CHECK(still_stopped_before_get);
+    /* A channel that will not stop is an error, and takes nothing with it. */
+    s.start=still_start;s.stop=still_stop_fails;
+    jipc_frame broken={0};still_destroyed=-1;
+    CHECK(jipc_imp_snapshot(&s,0,NULL,&broken,error,sizeof(error))<0&&!broken.data);
+    CHECK(still_destroyed==2);
+    s.stop=still_stop;
+    /* No picture at all: a timeout, and the channel is still cleaned up. */
+    char drained;CHECK(read(still_pipe[0],&drained,1)==1); /* the failed stop came before the read */
+    s.start=still_start_quiet;still_destroyed=-1;
+    jipc_frame late={0};
+    CHECK(jipc_imp_snapshot(&s,0,NULL,&late,error,sizeof(error))<0&&!late.data&&strstr(error,"timed out"));
+    CHECK(still_destroyed==2);
     free(s.frame);close(still_pipe[0]);close(still_pipe[1]);
 }
 static void test_main_only_delivery(void)
@@ -603,6 +619,19 @@ static void test_provider(void)
     CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
     config.audio = 0; config.sensors = 2;
     CHECK(!validate_provider("libimp.so T23 openimp", &config, error, sizeof error));
+    {
+        /* Whatever the open would refuse, the check refuses first: a value saved through
+         * the API and refused only at the next start takes the media layer down. */
+        jipc_config v = config;
+        v.main_only = 1; v.sensors = 2; v.width = 1920; v.height = 1080; v.width1 = 1024; v.height1 = 576; v.fps = 15;
+        CHECK(!jipc_native_video_validate(&v, error, sizeof error));
+        v.fps = 5; CHECK(!jipc_native_video_validate(&v, error, sizeof error));
+        v.fps = 20; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+        v.fps = 4; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+        v.fps = 15; v.width1 = 1000; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+        v.width1 = 1024; v.height1 = 570; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+        v.height1 = 576; v.width = 1900; CHECK(jipc_native_video_validate(&v, error, sizeof error) < 0);
+    }
     config.width=1280;config.height=720;config.width1=640;config.height1=360;
     CHECK(validate_provider("libimp.so T23 openimp", &config, error, sizeof error) == -1);
     config.width1=1280;config.height1=720;

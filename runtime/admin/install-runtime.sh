@@ -38,6 +38,15 @@ fi
 jl_slot_valid "$jl_target" || exit 2
 jl_dest=$JL_ROOT/slots/$jl_target
 mkdir -p "$JL_ROOT/slots" "$JL_STATE" "$JL_CONFIG" || exit 1
+# Refuse now if the new runtime cannot fit once the old one is gone: everything
+# below deletes the only persistent runtime first, and checks only afterwards.
+jl_size_new=$(( ($(wc -c < "$jl_stage/runtime.tar.gz") + 1023) / 1024 ))
+jl_size_old=$(( ($(jl_tree_bytes "$JL_ROOT/slots") + 1023) / 1024 ))
+jl_free_first=$(df -k "$JL_ROOT" | awk 'END {print $4}')
+case "$jl_free_first" in ''|*[!0-9]*) exit 1 ;; esac
+[ $((jl_free_first + jl_size_old)) -ge $((jl_size_new + 8 + 56)) ] || {
+    jl_log 'runtime would not fit in the 56 KiB reserve; nothing was changed'; exit 1;
+}
 # Enter controller-owned recovery before deleting the one persistent runtime.
 # The old processes already expanded in /run continue until reboot.
 jl_write_selection - - 0 || exit 1

@@ -105,6 +105,13 @@ invalid:
 }
 int jipc_native_video_validate(const jipc_config *c, char *error, size_t capacity)
 {
+    /* Everything the backend refuses when it opens has to be refused here too: at the
+     * API and at --check-config, not once the daemon has accepted it and cannot start,
+     * which takes the media layer down until someone edits camera.ini over SSH. */
+    if (c->fps < 5 || c->fps > 15)
+        return fail(error, capacity, "fps must be 5 to 15: the only rates qualified on this sensor");
+    if (c->width % 16 || c->sub_width % 16 || c->height % 8 || c->sub_height % 8 || c->width1 % 16 || c->height1 % 8)
+        return fail(error, capacity, "video widths must divide by 16 and heights by 8");
     if (c->main_only) {
         if (c->sensors != 2 || c->width > 1920 || c->height > 1080 ||
             jipc_video_width(c,2) > 1024 || jipc_video_height(c,2) > 576)
@@ -221,6 +228,8 @@ int jipc_config_patch(jipc_app *app, const char *json, char *error, size_t capac
     }
     if (jipc_config_validate(&next, error, capacity)) goto done;
     if (jipc_config_save(&next)) { fail(error, capacity, "configuration persistence failed"); goto done; }
+    if (strcmp(next.password, app->config.password) || strcmp(next.username, app->config.username))
+        atomic_fetch_add(&app->credentials_generation, 1);
     app->config = next; app->record_active = next.recording; if (restart) app->restart = 1; rc = 0; goto done;
 invalid:
     fail(error, capacity, "unknown, duplicate, invalid or local-only configuration setting");

@@ -467,6 +467,17 @@ jl_scheduled_restart() {
     IFS= read -r jl_rs_at < "$JL_ROOT/config/restart-schedule" || return 0
     case "$jl_rs_at" in [0-2][0-9]:[0-5][0-9]) ;; *) return 0 ;; esac
     [ "$(jl_uptime)" -ge 3600 ] || return 0
+    # Not into a network outage: nothing would be gained and video would be lost.
+    [ "${jl_netdog_ok:-}" = 1 ] && [ -z "${jl_netdog_down:-}" ] || return 0
+    # Without a clock anything has confirmed, "04:00" means nothing: once a day
+    # counted from the start instead.
+    if [ ! -e "$JL_RUN/clock-set" ]; then
+        [ "$(jl_uptime)" -ge 86400 ] || return 0
+        jl_rs_busy || return 0
+        jl_log 'scheduled restart, by uptime: the clock has not been confirmed'
+        jl_reboot_asked
+        return 0
+    fi
     jl_rs_now=$(date +%s 2>/dev/null) || return 0
     case "$jl_rs_now" in ''|*[!0-9]*) return 0 ;; esac
     [ "$jl_rs_now" -ge 1700000000 ] || return 0
@@ -483,10 +494,23 @@ jl_scheduled_restart() {
     jl_rs_h=${jl_rs_at%%:*} jl_rs_m=${jl_rs_at#*:}
     jl_rs_h=${jl_rs_h#0} jl_rs_m=${jl_rs_m#0}
     [ "$jl_rs_local" = $(( ${jl_rs_h:-0} * 60 + ${jl_rs_m:-0} )) ] || return 0
-    [ ! -d "$JL_RUN/state.lock" ] && [ ! -e "$JL_STATE/wifi-trial" ] || return 0
-    if [ -r "$JL_STATE/selection" ] && read -r _jl_rs_stable jl_rs_pending _jl_rs_x < "$JL_STATE/selection" &&
-       [ "${jl_rs_pending:--}" != - ]; then return 0; fi
+    jl_rs_busy || return 0
     jl_log "scheduled restart at $jl_rs_at"
+    jl_reboot_asked
+}
+jl_rs_busy() {
+    [ ! -d "$JL_RUN/state.lock" ] && [ ! -e "$JL_STATE/wifi-trial" ] || return 1
+    if [ -r "$JL_STATE/selection" ] && read -r _jl_rs_stable jl_rs_pending _jl_rs_x < "$JL_STATE/selection" &&
+       [ "${jl_rs_pending:--}" != - ]; then return 1; fi
+    return 0
+}
+# A reboot the platform decided on: keep the clock's time (only saved every half
+# hour otherwise), and tell the next boot this was no failure of the media layer.
+jl_reboot_asked() {
+    jl_save_time || :
+    jl_ra_media=${JL_MEDIA_ROOT:-/opt/jooanipc-open}
+    # printf, not ":": a failed redirection on a special builtin would end the shell before the reboot.
+    [ ! -d "$jl_ra_media" ] || printf '' 2>/dev/null > "$jl_ra_media/reboot-requested" || :
     sync
     reboot
 }
@@ -528,7 +552,17 @@ jl_apply_reset() {
     rm -f "$JL_CONFIG/auth.db" "$JL_CONFIG/sessions.db" "$JL_CONFIG/restart-schedule" \
         "$JL_CONFIG/ssh/passwd" "$JL_CONFIG/ssh/authorized_keys"
     jl_ar_media=${JL_MEDIA_ROOT:-/opt/jooanipc-open}
-    rm -f "$jl_ar_media/state/controls.json" "$jl_ar_media/state/presets.v2.json"
+    rm -f "$jl_ar_media/state/controls.json" "$jl_ar_media/state/presets.v2.json" "$jl_ar_media/state/presets.v1"
+    # Wi-Fi stays, but an address goes back to automatic: on a new router a fixed
+    # one leaves the camera on the old subnet, which a reset must be able to undo.
+    jl_ar_wifi=$JL_CONFIG/wifi.json
+    if grep -q '"address"' "$jl_ar_wifi" 2>/dev/null; then
+        sed -e 's/,[[:space:]]*"address"[[:space:]]*:[[:space:]]*"[0-9.]*"//' \
+            -e 's/,[[:space:]]*"prefix"[[:space:]]*:[[:space:]]*"[0-9.]*"//' \
+            -e 's/,[[:space:]]*"gateway"[[:space:]]*:[[:space:]]*"[0-9.]*"//' "$jl_ar_wifi" > "$jl_ar_wifi.new" &&
+            grep -q '"ssid"' "$jl_ar_wifi.new" && chmod 600 "$jl_ar_wifi.new" && mv -f "$jl_ar_wifi.new" "$jl_ar_wifi" || :
+        rm -f "$jl_ar_wifi.new"
+    fi
     if [ -f "$jl_ar_media/camera.ini" ]; then
         sed 's/^password=.*/password=admin/' "$jl_ar_media/camera.ini" > "$jl_ar_media/camera.ini.new" && # hygiene: allow-public-bootstrap
             chmod 600 "$jl_ar_media/camera.ini.new" && mv -f "$jl_ar_media/camera.ini.new" "$jl_ar_media/camera.ini" || return 0
@@ -581,6 +615,5 @@ jl_net_watchdog() {
     [ "$jl_netdog_now" -ge "$jl_netdog_wait" ] || return 0
     printf '%s\n' "$((jl_netdog_n + 1))" > "$JL_STATE/netdog-reboots" || :
     jl_record_crash netdog || :
-    sync
-    reboot
+    jl_reboot_asked
 }

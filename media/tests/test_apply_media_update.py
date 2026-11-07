@@ -47,7 +47,14 @@ def world(base, upgrade_ok=True, **fields):
 
 def run(base, action):
     environment = {"JIPC_ROOT": str(base / "opt"), "JIPC_APPFS": str(base / "appfs"), "JIPC_CANDIDATE": str(base / "candidate"),
+                   "JIPC_RUN": str(base / "run"), "JIPC_PLATFORM": str(base / "platform"), "JIPC_PLATFORM_RUN": str(base / "platform-run"),
                    "PATH": os.environ["PATH"]}
+    (base / "run").mkdir(exist_ok=True)
+    (base / "platform/state").mkdir(parents=True, exist_ok=True)
+    (base / "platform-run").mkdir(exist_ok=True)
+    marker = base / "run/qualified"
+    if not marker.exists() and not (base / "not-qualified").exists():
+        marker.write_text("boot pid\n")
     return subprocess.run(["sh", str(base / "package/apply-media-update.sh"), action], env=environment, capture_output=True, text=True, timeout=30)
 
 
@@ -112,4 +119,13 @@ for action in ("check", "apply"):
     refused("failed start", action, prepare=lambda b, r: (r / "boot-trial").write_text(""))
     refused("failed start", action, prepare=lambda b, r: (r / "native-failed").write_text("x"))
     refused("no media release", action, prepare=lambda b, r: (r / "deployment.env").write_text("JIPC_WIFI_BSSID=\n"))
+# Nothing starts while this boot is proving itself, a Wi-Fi trial is on or a platform update runs.
+def refused_now(why, prepare):
+    base, _ = case()
+    prepare(base)
+    result = run(base, "check")
+    assert result.returncode != 0 and why in result.stdout + result.stderr, (why, result.stdout, result.stderr)
+refused_now("still checking its last start", lambda base: (base / "not-qualified").write_text(""))
+refused_now("being tested", lambda base: (base / "platform/state").mkdir(parents=True) or (base / "platform/state/wifi-trial").mkdir())
+refused_now("platform update", lambda base: (base / "platform-run/firmware-apply.lock").mkdir(parents=True))
 print("apply-media-update: PASS")

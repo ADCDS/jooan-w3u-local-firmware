@@ -85,6 +85,9 @@ static int aim_load(jipc_app *app, jipc_aim *a)
     text[n] = 0;
     cJSON *root = cJSON_Parse(text);
     int rc = !root || read_calibration(root, a) ? -1 : 0;
+    /* Made with the fixed lens another way up: clicks would steer to the wrong place. */
+    cJSON *flip = root ? cJSON_GetObjectItemCaseSensitive(root, "flip1") : NULL;
+    if (!rc && cJSON_IsNumber(flip) && (unsigned)flip->valueint != app->config.flip1) rc = -1;
     cJSON_Delete(root);
     return rc;
 }
@@ -126,7 +129,7 @@ int jipc_aim_post(jipc_app *app, const char *json, char *error, size_t capacity)
         char path[600], text[256], xs[96], ys[96];
         if (read_calibration(root, &a)) { snprintf(error, capacity, "x and y must be six numbers, and each must follow its axis"); goto done; }
         list_json(xs, sizeof xs, a.x); list_json(ys, sizeof ys, a.y);
-        int n = snprintf(text, sizeof text, "{\"x\":%s,\"y\":%s}\n", xs, ys);
+        int n = snprintf(text, sizeof text, "{\"x\":%s,\"y\":%s,\"flip1\":%u}\n", xs, ys, app->config.flip1);
         aim_path(app, path, sizeof path);
         if (n < 0 || (size_t)n >= sizeof text || jipc_atomic_file(path, text, (size_t)n, 0600)) {
             snprintf(error, capacity, "Cannot save the calibration: %s", strerror(errno));

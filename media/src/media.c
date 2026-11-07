@@ -198,15 +198,19 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
     deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
     if (deadline.tv_nsec >= 1000000000L) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&stream->mutex);
-    while (stream->sequence <= *cursor && !app->stop) {
+    /* Held for privacy: what is still in the ring is the picture from before, and someone
+     * joining now gets the newest frame, which may be a whole picture. */
+#define PRIVACY_HELD (channel != JIPC_AUDIO_STREAM && (atomic_load(&app->privacy_hold) || atomic_load(&app->privacy_wait_key)))
+    while ((stream->sequence <= *cursor || PRIVACY_HELD) && !app->stop) {
         if (!timeout_ms) { pthread_mutex_unlock(&stream->mutex); return 0; }
         int rc = pthread_cond_timedwait(&stream->ready, &stream->mutex, &deadline);
         if (rc) { pthread_mutex_unlock(&stream->mutex); return rc == ETIMEDOUT ? 0 : -1; }
     }
-    if (!stream->sequence || stream->sequence <= *cursor) {
+    if (!stream->sequence || stream->sequence <= *cursor || PRIVACY_HELD) {
         pthread_mutex_unlock(&stream->mutex);
         return 0;
     }
+#undef PRIVACY_HELD
     uint64_t oldest = stream->sequence > stream->capacity ?
                       stream->sequence - stream->capacity + 1 : 1;
     uint64_t wanted = *cursor ? *cursor + 1 : stream->sequence;
@@ -682,7 +686,8 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
             rc = jipc_imp_control(state->imp, cover[i], 0, value, error, capacity);
     } else if (atomic_load(&app->privacy_on) && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation"))) {
-        rc = 0; /* kept for afterwards; the lens stays black */
+        /* kept for afterwards; the lens stays black */
+        rc = value < 0 || value > 255 ? fail(error, capacity, "brightness, contrast and saturation must be 0 to 255") : 0;
     } else if (state->imp && (!strcmp(operation, "brightness") || !strcmp(operation, "contrast") ||
                !strcmp(operation, "saturation") || !strcmp(operation, "sharpness") ||
                !strcmp(operation, "isp_night") || !strcmp(operation, "volume") ||

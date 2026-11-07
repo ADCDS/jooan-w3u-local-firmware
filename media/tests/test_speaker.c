@@ -18,10 +18,12 @@ static int opens, closes, amp_on, amp_off, amp_state, write_result, volume_set =
 
 static int fake_open(void *c, int volume, char *e, size_t n)
 { (void)c; (void)e; (void)n; pthread_mutex_lock(&fake_lock); ++opens; volume_set = volume; pthread_mutex_unlock(&fake_lock); return 0; }
+static volatile int write_blocked;
 static int fake_write(void *c, const unsigned char *pcma)
 {
     (void)c;
     jipc_sleep_ms(5);
+    while (write_blocked) jipc_sleep_ms(5);
     pthread_mutex_lock(&fake_lock);
     int rc = write_result;
     if (!rc && played_size + JIPC_SPEAKER_FRAME <= sizeof played) {
@@ -252,6 +254,44 @@ int main(void)
     /* A talker opens the output again, and the checks below start from an open one. */
     CHECK(jipc_talk_submit(app, 4, 4, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
     CHECK(wait_until(session_running, 1000) && wait_until(session_idle, 3000) && wait_until(muted, 1000));
+
+    /* A write that never returns: the deadline is only looked at between writes, so the
+     * siren's own thread cannot stop it. The controls engine's tick can. */
+    reset_fake();
+    write_blocked = 1;
+    CHECK(!jipc_siren_start(app, 0, 1, 100, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    jipc_speaker_watch(app);
+    CHECK(read_int(&amp_off) == 0); /* not overdue yet */
+    jipc_sleep_ms(3200);
+    jipc_speaker_watch(app);
+    CHECK(read_int(&amp_off) == 1 && read_int(&amp_state) == 0);
+    jipc_speaker_watch(app);
+    CHECK(read_int(&amp_off) == 1); /* once */
+    /* The same for a stop that cannot get through. */
+    write_blocked = 0;
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    jipc_sleep_ms(500); /* the output's tail goes through the same write */
+    reset_fake();
+    write_blocked = 1;
+    CHECK(!jipc_siren_start(app, 0, 60, 100, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    jipc_siren_stop(app);
+    jipc_sleep_ms(2200);
+    jipc_speaker_watch(app);
+    CHECK(read_int(&amp_off) == 1);
+    write_blocked = 0;
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    /* A talker right after a siren plays at the speaker's volume, not the siren's. */
+    CHECK(!jipc_speaker_set_volume(app, 60, error, sizeof error));
+    reset_fake();
+    CHECK(!jipc_siren_start(app, 0, 60, 10, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    jipc_siren_stop(app);
+    CHECK(jipc_talk_submit(app, 6, 6, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    CHECK(read_int(&volume_set) == 60);
+    /* Whether or not the talker got in before the session ended, no volume is left over. */
 
     /* Faults: three refused frames close the output, mute, and back off. */
     speaker_retry_unit_us = 40000; /* 5 "seconds" = 200 ms */

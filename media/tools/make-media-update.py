@@ -82,6 +82,10 @@ def main():
     args = parser.parse_args()
 
     spec = json.loads((args.bundle / "bundle.json").read_text())
+    changes = spec.get("config") or {}
+    if changes.get("camera_ini") or changes.get("files"):
+        raise SystemExit("this bundle changes camera.ini or files, and a package carries only the release: "
+                         "the changes would be skipped silently. Install it with install-camera.py instead")
     appfs = spec["jooanipc_open"]
     image = (args.bundle / appfs["image"]).read_bytes()
     if len(image) != IMAGE_BYTES:

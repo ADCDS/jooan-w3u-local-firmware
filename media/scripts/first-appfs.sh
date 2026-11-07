@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # JA-A12: the first media release, over the stock app partition, run on the camera by
-# install-camera.py --first. The stock application is running and owns the armed
+# install-camera.py with a bundle from build-appfs.sh --first. The stock application is running and owns the armed
 # watchdog; a rootfs feeder takes it over for the flash. Anything still using the
 # partition stops this before the flash, with a reboot into the untouched stock image.
 # upgrade-appfs.sh does the same from a running media daemon; it is separate so that the
@@ -20,10 +20,12 @@ backup=/tmp/jipc-appfs-rollback.bin
 root=/opt/jooanipc-open
 state=/tmp/jipc-install
 platform_lock=/run/jooan-local/state.lock
+platform_apply=/run/jooan-local/firmware-apply.lock
+wifi_trial=/opt/custom/jooan-local/state/wifi-trial
 mkdir -p "$state"
 log() { printf '%s %s\n' "$(cat /proc/uptime)" "$*"; }
 die() { log "ABORT: $*"; exit 1; }
-abort_reboot() { log "ABORT before flash: $*; rebooting into the unchanged appfs"; sync; /bin/busybox reboot -f; exit 1; }
+abort_reboot() { trap - EXIT; log "ABORT before flash: $*; rebooting into the unchanged appfs"; sync; /bin/busybox reboot -f; exit 1; }
 hash() { md5sum "$1" | awk '{print $1}'; }
 same() {
     [ "$(cat "/proc/$1/comm" 2>/dev/null)" = "$2" ] &&
@@ -73,6 +75,19 @@ restore_config() {
     sync
 }
 
+# Once the stock application is stopped, an exit of any kind must end in a reboot and
+# not in a camera with nothing running, including one set -e takes by surprise.
+phase=checking
+on_exit() {
+    case "$phase" in
+        stopped) trap - EXIT; log 'ABORT before flash: stopped unexpectedly; rebooting into the unchanged appfs'
+                 sync; /bin/busybox reboot -f ;;
+        commit) trap - EXIT; log 'ABORT before flash: could not commit the configuration; undoing it and rebooting'
+                restore_config; /bin/busybox reboot -f ;;
+    esac
+}
+trap on_exit EXIT
+
 # Preconditions: nothing below changes the camera until all of these pass.
 [ "$#" = 2 ] || die 'usage: first-appfs.sh NEW_IMAGE_MD5 CURRENT_APPFS_MD5'
 [ "$(cat /sys/class/mtd/mtd4/size)" = 3211264 ] || die 'wrong partition size'
@@ -99,11 +114,14 @@ holds_watchdog "$watch" || die 'the stock watchdog does not hold /dev/watchdog'
 os=$(awk '{print $22}' "/proc/$oem/stat")
 ws=$(awk '{print $22}' "/proc/$watch/stat")
 ss=$(awk '{print $22}' "/proc/$syslog/stat")
+[ ! -d "$platform_apply" ] || die 'a platform update is being installed'
+[ ! -e "$wifi_trial" ] || die 'a Wi-Fi change is being tested: keep it or go back first'
 [ ! -d "$platform_lock" ] || die 'platform maintenance is in progress'
 mkdir -p /run/jooan-local && mkdir "$platform_lock" || die 'cannot take the platform maintenance lock'
 log 'preconditions passed; transferring the watchdog and stopping the stock application'
 
 # The hardware timer stays armed when its owner goes, so the feeder follows at once.
+phase=stopped
 stop_owner "$watch" my_watch_dog "$ws" 5
 (trap '' HUP; exec /sbin/watchdog -F -t 2 -T 180 /dev/watchdog) </dev/null >"$state/watchdog.log" 2>&1 &
 feeder=$!
@@ -139,6 +157,7 @@ umount /mnt/mtd || abort_reboot 'ordinary appfs unmount refused'
 
 # Commit point: configuration now names the new release and the boot will use it.
 log 'appfs unmounted; committing paths and flashing verified image'
+phase=commit
 mkdir -p "$root/state"
 for name in boot-handoff.sh camera.ini deployment.env; do
     mv "$root/$name.next" "$root/$name"
@@ -149,6 +168,7 @@ chmod 600 "$root/camera.ini" "$root/deployment.env" "$root/key.pem"
 : > "$root/native"
 chmod 600 "$root/enabled" "$root/native"
 sync
+phase=flash
 if /sbin/flashcp -v "$image" /dev/mtd4 && [ "$(hash /dev/mtd4)" = "$1" ]; then
     log 'flashcp and complete partition readback passed'
 else

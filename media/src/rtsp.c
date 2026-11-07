@@ -983,8 +983,12 @@ static int stream_frames(rtsp_client *client)
 static void *client_main(void *argument)
 {
     rtsp_client *client = argument;
+    /* A changed password or user ends this session: the check only runs at the start,
+     * so otherwise whoever had the old one keeps watching. */
+    unsigned credentials = atomic_load(&client->server->app->credentials_generation);
     while (!stopped(client)) {
         if (jipc_now_us() - client->last_activity_us > RTSP_TIMEOUT_US) break;
+        if (atomic_load(&client->server->app->credentials_generation) != credentials) break;
         struct pollfd descriptors[3] = {{0}};
         for (unsigned i = 0; i < 3; ++i) {
             descriptors[i].fd = -1;

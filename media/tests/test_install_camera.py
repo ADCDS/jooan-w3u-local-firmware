@@ -52,9 +52,10 @@ assert any("changes libimp" in p for p in problems(
 assert problems(FACTS, appfs=NEW | {"imp_md5": "c" * 32, "imp_sha256": "8b374e7a" + "0" * 56}) == []
 # A first install: only a camera with the platform, its own stock partition and Wi-Fi.
 FIRST = {"appfs_size": "3211264", "appfs_name": "appfs", "appfs_md5": "a" * 32, "opt_free": "200", "native": "no",
-         "enabled": "no", "wifi_json": "yes", "oem": "1", "daemon": "0"}
+         "enabled": "no", "wifi_json": "yes", "oem": "1", "daemon": "0", "sensors": "cv2005 cv2005s1"}
+READY = {"state": "ready", "release_sequence": ic.FIRST_PLATFORM_SEQUENCE}
 def first(**facts):
-    return ic.first_problems(FIRST | facts, {"state": "ready"}, APPFS)
+    return ic.first_problems(FIRST | facts, READY, APPFS)
 assert first() == []
 assert any("another copy" in p for p in first(appfs_md5="b" * 32))
 assert any("already has a media layer" in p for p in first(native="yes"))
@@ -65,7 +66,15 @@ assert any("stock application" in p for p in first(oem="2"))
 assert any("committed Wi-Fi" in p for p in first(wifi_json="no"))
 assert any("96 KiB" in p for p in first(opt_free="90"))
 assert any("not a JA-A12" in p for p in first(appfs_size="4096"))
-assert any("install the platform" in p for p in ic.first_problems(FIRST, {"state": "setup"}, APPFS))
+assert any("install the platform" in p for p in ic.first_problems(FIRST, READY | {"state": "setup"}, APPFS))
+# A camera with other sensors would pass everything else and end up with no video at all.
+assert any("sensors" in p for p in first(sensors="sc1a4t sc1a4t"))
+assert any("sensors" in p for p in first(sensors=""))
+# v0.2.21 reports "ready" too, and its boot hook knows nothing of a media layer.
+assert any("sequence 55" in p for p in ic.first_problems(FIRST, {"state": "ready", "release_sequence": 55}, APPFS))
+assert ic.stream_password_problem("a good one") == ""
+for bad in ("", " x", "x ", "a\nb", "a\tb", "x" * 129):
+    assert ic.stream_password_problem(bad), bad
 # The whole of a first install, against a stand-in for the camera.
 import hashlib
 import json
@@ -86,8 +95,11 @@ class FakeCamera:
             return self.after_reboot + "\n"
         return ""
 
+    def boot_id(self):
+        return "b" * 36
+
     def platform(self, method, path, *_):
-        return 200, {}, json.dumps({"state": self.state}).encode()
+        return 200, {}, json.dumps(READY | {"state": self.state}).encode()
 
     def written(self, path):
         for script, data in self.calls:
@@ -109,7 +121,8 @@ with tempfile.TemporaryDirectory() as temporary:
     spec = {"jooanipc_open": APPFS | {"first": True, "release": "11111111-22222222", "image": "appfs.img", "image_md5": digest(b"image"),
                                       "installer": "first-appfs.sh", "installer_md5": digest(b"flash"), "app_md5": "1" * 32,
                                       "imp_md5": "2" * 32, "imp_sha256": "3" * 64, "atomic_md5": "4" * 32}}
-    ic.wait_reboot = lambda cam, aborted, after_boot=None, **_: (after_boot(), "native")[1]
+    real_wait_reboot = ic.wait_reboot
+    ic.wait_reboot = lambda cam, before, aborted, after_boot=None, **_: (after_boot(), "native")[1]
     os.environ["STREAM_PASSWORD"] = "stream-secret"
     camera = FakeCamera(FIRST)
     camera.after_reboot = spec["jooanipc_open"]["image_md5"]
@@ -147,6 +160,8 @@ with tempfile.TemporaryDirectory() as temporary:
     assert not any("cat >" in script for script, _ in camera.calls)
     del os.environ["STREAM_PASSWORD"]
     refused(FakeCamera(FIRST), "STREAM_PASSWORD")
+    os.environ["STREAM_PASSWORD"] = "two\nlines"
+    refused(FakeCamera(FIRST), "control character")
     os.environ["STREAM_PASSWORD"] = "stream-secret"
     (bundle / "appfs.img").write_bytes(b"other")
     refused(FakeCamera(FIRST), "checksum mismatch")
@@ -160,6 +175,50 @@ with tempfile.TemporaryDirectory() as temporary:
     except SystemExit as stop:
         assert "not installed" in str(stop) and "stock" in str(stop), stop
     assert any(script.startswith("rm -f") and "camera.ini.next" in script for script, _ in camera.calls)
+# A connection that fails while the flash script runs is not a restart. Nothing happens on
+# the old boot ID but waiting; only a new one ends the wait.
+class Polled:
+    def __init__(self, answers):
+        self.answers, self.calls = list(answers), []
+
+    def boot_id(self):
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def ssh(self, script, **_):
+        self.calls.append(script)
+        return "native boot qualified\n"
+
+    def up(self):
+        return True
+
+
+ic.time.sleep = lambda seconds: None
+ic.wait_reboot = real_wait_reboot
+seen = []
+camera = Polled(["old", RuntimeError("dropped"), OSError("no route"), "old", "new"])
+assert ic.wait_reboot(camera, "old", aborted=lambda: "", after_boot=lambda: seen.append("after")) == "native"
+assert seen == ["after"] and not camera.answers
+# ...and is not asked about the partition, or tidied, until the boot ID has changed.
+camera = Polled(["old", RuntimeError("dropped"), "old", "new"])
+order = []
+def noting():
+    order.append(len(camera.answers))
+    return ""
+ic.wait_reboot(camera, "old", aborted=noting, after_boot=lambda: order.append("flashed"))
+assert order[-1] == "flashed" and camera.answers == []
+# What the script says decides what the owner is told.
+assert "nothing was changed" in ic.stopped_message("9.1 ABORT: original appfs changed")
+message = ic.stopped_message("9.1 ABORT: rollback failed 3 times; camera kept up")
+assert "nothing was changed" not in message and "DO NOT restart" in message
+assert "nothing was changed" not in ic.stopped_message("9.1 ABORT: config space low after install; feeder retained")
+try:
+    ic.wait_reboot(Polled(["old"]), "old", aborted=lambda: "9.1 ABORT: rollback failed 3 times")
+    raise AssertionError("it kept waiting")
+except ic.InstallerStopped as stop:
+    assert "DO NOT restart" in str(stop)
 # The password for ssh is only ever in the environment, and the helper prints it.
 with tempfile.TemporaryDirectory() as temporary:
     helper = ic.askpass_helper(temporary)

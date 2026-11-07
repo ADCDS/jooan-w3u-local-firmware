@@ -49,6 +49,7 @@ RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
+FIRST_PLATFORM_SEQUENCE = 68
 
 
 def log(message):
@@ -116,6 +117,13 @@ class Camera:
 
     def ssh(self, script, data=None, timeout=120, check=True):
         return self.ssh_bytes(script, data, timeout, check).decode(errors="replace")
+
+    def boot_id(self):
+        """Changes with every boot, so it tells a reboot from a dropped connection."""
+        value = self.ssh("cat /proc/sys/kernel/random/boot_id", timeout=15).strip()
+        if len(value) != 36:
+            raise RuntimeError(f"unexpected boot ID {value!r}")
+        return value
 
     def up(self):
         try:
@@ -230,6 +238,12 @@ def preflight_problems(facts, platform, local, appfs, config):
 def first_problems(facts, platform, appfs):
     """Why a camera cannot take its first media release."""
     problems = []
+    if int(platform.get("release_sequence") or 0) < FIRST_PLATFORM_SEQUENCE:
+        problems.append(f"the platform is sequence {platform.get('release_sequence')}: a first install needs "
+                        f"{FIRST_PLATFORM_SEQUENCE} or later, because older ones cannot boot the media layer as this expects")
+    if facts.get("sensors") != "cv2005 cv2005s1":
+        problems.append(f"this camera's sensors read {facts.get('sensors')!r}, not 'cv2005 cv2005s1': the image keeps "
+                        "only those sensors' drivers, and it would have no video")
     if facts.get("appfs_size") != "3211264" or facts.get("appfs_name") != "appfs":
         problems.append("this is not a JA-A12 app partition")
     if facts.get("appfs_md5") != appfs["expected_current_appfs_md5"]:
@@ -249,6 +263,33 @@ def first_problems(facts, platform, appfs):
     return problems
 
 
+def stream_password_problem(password):
+    """The boot's configuration check refuses these, and by then the flash is done."""
+    if not password:
+        return "set STREAM_PASSWORD, the password the camera's video streams will use"
+    if len(password.encode()) > 128:
+        return "STREAM_PASSWORD is over 128 bytes"
+    if password != password.strip():
+        return "STREAM_PASSWORD starts or ends with a space, which the camera would drop"
+    if any(ord(c) < 32 or ord(c) == 127 for c in password):
+        return "STREAM_PASSWORD holds a control character"
+    return ""
+
+
+def after_commit(why):
+    """A line from the flash script about something past its point of no return."""
+    return "rollback failed" in why or "config space low" in why
+
+
+def stopped_message(why):
+    if "rollback failed" in why:
+        return (f"the flash failed and so did putting the old partition back: {why}\nDO NOT restart or unplug the "
+                "camera: it would not boot. See docs/RECOVERY.md, 'Appfs reflash recovery'")
+    if "config space low" in why:
+        return f"the new release is written, but /opt is nearly full: {why}\nFree space over SSH, then restart it"
+    return f"nothing was changed; the camera's installer stopped: {why}"
+
+
 def first_install(args, cam, bundle, spec):
     """The first media release on a camera with only the platform. Not yet run on a camera:
     first-appfs.sh and this have only been tested offline, so it needs --yes-untested."""
@@ -263,6 +304,7 @@ def first_install(args, cam, bundle, spec):
         "echo opt_free=$(df -k /opt | awk 'END {print $4}');"
         f"echo native=$([ -e {NATIVE} ] && echo yes || echo no);"
         "echo enabled=$([ -e /opt/jooanipc-open/enabled ] && echo yes || echo no);"
+        "echo sensors=$(cat /tmp/sensor1_name /tmp/sensor2_name 2>/dev/null);"
         f"echo wifi_json=$([ -s {WIFI_JSON} ] && echo yes || echo no);"
         "n=0; d=0; for f in /proc/[0-9]*/comm; do c=$(cat $f 2>/dev/null); "
         "[ \"$c\" = jooanipc ] && n=$((n+1)); [ \"$c\" = jooanipc-open ] && d=$((d+1)); done; "
@@ -274,9 +316,10 @@ def first_install(args, cam, bundle, spec):
     if problems:
         raise SystemExit("not installing:\n  " + "\n  ".join(problems))
     stream_password = os.environ.get("STREAM_PASSWORD", "")
-    if not stream_password or args.yes_untested is not True:
+    problem = stream_password_problem(stream_password)
+    if problem or args.yes_untested is not True:
         raise SystemExit("preflight passed. A first install has not yet been run on a real camera: its flash script is "
-                         "only tested offline. To go ahead, set STREAM_PASSWORD and pass --yes-untested.")
+                         f"only tested offline. To go ahead, pass --yes-untested.{' And ' + problem + '.' if problem else ''}")
     if not shutil.which("openssl"):
         raise SystemExit("a first install needs the openssl program, to make the camera's certificate")
     root = "/opt/jooanipc-open"
@@ -286,29 +329,34 @@ def first_install(args, cam, bundle, spec):
                                     "bind": "0.0.0.0", "audio": "1"}, [])
     deployment = (f"JIPC_RELEASE={release}\nJIPC_LIBIMP_SHA256={appfs['imp_sha256']}\nJIPC_APP_MD5={appfs['app_md5']}\n"
                   f"JIPC_IMP_MD5={appfs['imp_md5']}\nJIPC_ATOMIC_MD5={appfs['atomic_md5']}\nJIPC_WIFI_BSSID=\nJIPC_WIFI_FREQ=\n")
-    with tempfile.TemporaryDirectory(prefix="camera-tls-") as temporary:
-        key, cert = pathlib.Path(temporary) / "key.pem", pathlib.Path(temporary) / "cert.pem"
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "7300", "-subj", "/CN=camera",
-                        "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
-        cam.ssh(f"mkdir -p {root} && chmod 700 {root}")
-        write_remote(cam, f"{root}/key.pem", key.read_bytes())
-        write_remote(cam, f"{root}/cert.pem", cert.read_bytes(), "644")
-    write_remote(cam, f"{root}/native-boot.sh", (bundle / "native-boot.sh").read_bytes(), "700")
-    write_remote(cam, f"{root}/boot-handoff.sh.next", (bundle / "boot-handoff.sh").read_bytes(), "700")
-    write_remote(cam, f"{root}/camera.ini.next", camera_ini)
-    write_remote(cam, f"{root}/deployment.env.next", deployment)
-    cam.ssh("cat > /tmp/jipc-flash-candidate.squashfs", data=(bundle / appfs["image"]).read_bytes(), timeout=300)
-    cam.ssh("cat > /tmp/first-appfs.sh && chmod 700 /tmp/first-appfs.sh", data=(bundle / appfs["installer"]).read_bytes())
+    tidy = (f"rm -f {root}/camera.ini.next {root}/deployment.env.next {root}/boot-handoff.sh.next "
+            "/tmp/jipc-flash-candidate.squashfs /tmp/first-appfs.sh; sync")
+    try:
+        with tempfile.TemporaryDirectory(prefix="camera-tls-") as temporary:
+            key, cert = pathlib.Path(temporary) / "key.pem", pathlib.Path(temporary) / "cert.pem"
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "7300", "-subj", "/CN=camera",
+                            "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+            cam.ssh(f"mkdir -p {root} && chmod 700 {root}")
+            write_remote(cam, f"{root}/key.pem", key.read_bytes())
+            write_remote(cam, f"{root}/cert.pem", cert.read_bytes(), "644")
+        write_remote(cam, f"{root}/native-boot.sh", (bundle / "native-boot.sh").read_bytes(), "700")
+        write_remote(cam, f"{root}/boot-handoff.sh.next", (bundle / "boot-handoff.sh").read_bytes(), "700")
+        write_remote(cam, f"{root}/camera.ini.next", camera_ini)
+        write_remote(cam, f"{root}/deployment.env.next", deployment)
+        cam.ssh("cat > /tmp/jipc-flash-candidate.squashfs", data=(bundle / appfs["image"]).read_bytes(), timeout=300)
+        cam.ssh("cat > /tmp/first-appfs.sh && chmod 700 /tmp/first-appfs.sh", data=(bundle / appfs["installer"]).read_bytes())
+    except Exception:
+        cam.ssh(tidy, timeout=20, check=False)  # the staged copies take up the small settings partition
+        raise
+    before = cam.boot_id()
     log("flashing the first release (it verifies, keeps a RAM copy of the stock partition and reboots)")
     cam.ssh(f"( trap '' HUP; exec sh /tmp/first-appfs.sh {appfs['image_md5']} {facts['appfs_md5']} ) "
             "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")
 
-    tidy = f"rm -f {root}/camera.ini.next {root}/deployment.env.next {root}/boot-handoff.sh.next; sync"
-
     def aborted():
         try:
             why = cam.ssh("grep ' ABORT: ' /tmp/jipc-upgrade.log || :", timeout=10).strip()
-            if why:
+            if why and not after_commit(why):  # past that, recovery needs the images in /tmp
                 cam.ssh(tidy, timeout=20)
             return why
         except Exception:
@@ -323,7 +371,7 @@ def first_install(args, cam, bundle, spec):
                              "and the camera is on its stock application")
 
     try:
-        mode = wait_reboot(cam, aborted, after_boot=flashed)
+        mode = wait_reboot(cam, before, aborted, after_boot=flashed)
     except InstallerStopped as stopped:
         raise SystemExit(str(stopped)) from None
     if mode != "native":
@@ -342,18 +390,23 @@ class InstallerStopped(Exception):
     """The camera's installer gave up before changing anything; not worth retrying."""
 
 
-def wait_reboot(cam, aborted=None, seconds=600, after_boot=None):
+def wait_reboot(cam, before, aborted=None, seconds=600, after_boot=None):
+    """Waits for a boot other than `before`. Only a new boot ID says the camera restarted:
+    a connection can fail while it is flashing, stopping services or just on bad Wi-Fi,
+    and treating that as a restart would act on a camera that is still working."""
     # A platform apply runs its whole maintenance transaction before rebooting.
-    def down():
-        if not cam.up():
-            return True
+    def restarted():
+        try:
+            if cam.boot_id() != before:
+                return True
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            return False
         why = aborted() if aborted else ""
         if why:
-            raise InstallerStopped(f"nothing was changed; the camera's installer stopped: {why}")
+            raise InstallerStopped(stopped_message(why))
         return False
-    wait(down, 600, "the camera to go down", step=2)
-    log("camera rebooting")
-    wait(cam.up, seconds, "SSH after reboot")
+    wait(restarted, 600 + seconds, "the camera to restart", step=2)
+    log("camera restarted")
     if after_boot:
         after_boot()
     log("SSH is back; waiting for the media daemon to qualify")
@@ -512,11 +565,12 @@ def main():
                 raise RuntimeError(f"platform rejected the package: {status} {data[:300]!r}")
             staged = json.loads(data)["id"]
             log(f"platform package verified on camera ({staged[:12]}); applying")
+            before = cam.boot_id()
             status, _, data = cam.platform("PUT", "/api/v1/update", {"id": staged}, session, timeout=60)
             if status != 200:
                 raise RuntimeError(f"platform apply failed: {status} {data[:300]!r}")
             rebooted = True
-            mode = wait_reboot(cam)
+            mode = wait_reboot(cam, before)
             wait(lambda: json.loads(cam.platform("GET", "/api/v1/setup/status")[2]).get("release_sequence")
                  == local["release_sequence"], 300, "the new platform release")
             log(f"platform {local['release_version']} running")
@@ -542,6 +596,7 @@ def main():
                     data=(bundle / appfs["installer"]).read_bytes())
             current = cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip()
             log("flashing appfs (the installer verifies, keeps a RAM rollback copy and reboots)")
+            before = cam.boot_id()
             cam.ssh(f"( trap '' HUP; exec sh /tmp/upgrade-appfs.sh {appfs['image_md5']} {current} ) "
                     "</dev/null >/tmp/jipc-upgrade.log 2>&1 &")
             rebooted = True
@@ -550,12 +605,12 @@ def main():
             def aborted():
                 try:
                     why = cam.ssh("grep ' ABORT: ' /tmp/jipc-upgrade.log || :", timeout=10).strip()
-                    if why:  # the staged copies take up the small settings partition
+                    if why and not after_commit(why):  # the staged copies take up the small settings partition
                         cam.ssh(f"rm -f {INI}.next {ENV}.next {HANDOFF}.next; sync", timeout=20)
                     return why
                 except Exception:
                     return ""
-            mode = wait_reboot(cam, aborted)
+            mode = wait_reboot(cam, before, aborted)
             flashed = cam.ssh("md5sum /dev/mtdblock4 | cut -c1-32").strip()
             if flashed != appfs["image_md5"]:
                 raise RuntimeError(f"appfs is {flashed} after reboot; the installer rolled back")
@@ -563,9 +618,10 @@ def main():
 
         if config and not rebooted:
             log("rebooting to apply staged config")
+            before = cam.boot_id()
             cam.ssh("sync; (sleep 1; reboot) </dev/null >/dev/null 2>&1 &", check=False)
             rebooted = True
-            mode = wait_reboot(cam)
+            mode = wait_reboot(cam, before)
     except Exception:
         if not rebooted:
             restore()

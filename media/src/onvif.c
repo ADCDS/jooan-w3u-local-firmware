@@ -324,7 +324,10 @@ static int imaging(jipc_app *app,writer *w,const xml *d,const jipc_config *c,spa
             if(text_value(d,settings,"IrCutFilter",text,sizeof(text))<0)return fault(w,"InvalidArgVal","Invalid IrCutFilter");
             const char *mode=!strcmp(text,"ON")?"day":!strcmp(text,"OFF")?"night":!strcmp(text,"AUTO")?"auto":NULL;
             if(!mode)return fault(w,"InvalidArgVal","IrCutFilter must be ON, OFF or AUTO");
-            n=snprintf(at,left,",\"night\":{\"mode\":\"%s\"}",mode);if(n<0||(size_t)n>=left)return fault(w,"Action","Request too large");at+=n;left-=(size_t)n;
+            /* ONVIF has no word for a schedule, and reads it as AUTO: writing that back must not end it. */
+            int current[4],current_mode=-1;(void)jipc_controls_picture(app,lens,current,&current_mode);
+            if(current_mode==3&&!strcmp(mode,"auto"))mode=NULL;
+            n=mode?snprintf(at,left,",\"night\":{\"mode\":\"%s\"}",mode):0;if(n<0||(size_t)n>=left)return fault(w,"Action","Request too large");at+=n;left-=(size_t)n;
         }
         if(left<2)return fault(w,"Action","Request too large");
         strcpy(at,"}");
@@ -435,6 +438,7 @@ int jipc_onvif(jipc_app *app,const char *path,const char *body,const char *host,
         if(ch>=2)return fault(&w,"ActionNotSupported","This sensor has no motor");
         char error[256]={0};int hx,hy;
         if(named(action,"SetHomePosition")){
+            if(atomic_load(&app->privacy_on))return fault(&w,"Action","privacy mode is on"); /* the head is at the privacy pose */
             if(jipc_platform_steps(app,&hx,&hy)<0||jipc_controls_set_home(app,hx,hy,error,sizeof(error))<0)return fault(&w,"Action",error[0]?error:"The position is unavailable");
             put(&w,"<tptz:SetHomePositionResponse/>");
         }else{

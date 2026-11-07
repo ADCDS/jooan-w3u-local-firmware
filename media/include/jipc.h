@@ -75,6 +75,7 @@ typedef struct jipc_app {
     pthread_t ntp_thread;
     int ntp_started;
     pthread_mutex_t control_mutex;
+    atomic_uint credentials_generation; /* counts changes of the stream account */
     atomic_int backend_ready;
     atomic_int control_waiters;
     char backend_error[256];
@@ -98,7 +99,7 @@ typedef struct jipc_app {
     struct { uint64_t start_us, sumsq; uint32_t samples; int32_t peak; } audio_meter;
 } jipc_app;
 typedef struct { int pan, tilt, moving, night, white_light; double pan_norm, tilt_norm; uint32_t preset_mask; char preset_names[16][65]; char error[192]; } jipc_ptz_status;
-typedef struct { int moving, homing; long manual_age_s; } jipc_ptz_motion;
+typedef struct { int moving, homing, trusted; long manual_age_s; } jipc_ptz_motion;
 enum { JIPC_MOVE_ABSOLUTE, JIPC_MOVE_RELATIVE, JIPC_MOVE_RELATIVE_FOV, JIPC_MOVE_STEPS };
 /* Half the pan/tilt lens's field of view, in motor steps. */
 enum { JIPC_FOV_HALF_PAN = 405, JIPC_FOV_HALF_TILT = 220 };
@@ -236,6 +237,8 @@ void jipc_siren_init(jipc_siren *siren, unsigned sound);
 void jipc_siren_fill(jipc_siren *siren, unsigned char *pcma, size_t samples);
 int jipc_siren_start(jipc_app *app, unsigned sound, unsigned seconds, int percent, char *error, size_t capacity);
 void jipc_siren_stop(jipc_app *app);
+int jipc_siren_active(jipc_app *app);
+void jipc_speaker_watch(jipc_app *app);
 int jipc_speaker_gate_open(jipc_app *app);
 int jipc_speaker_status_json(jipc_app *app, char *out, size_t capacity);
 int jipc_platform_control(jipc_app *app, const char *operation, int value,

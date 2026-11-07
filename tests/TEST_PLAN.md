@@ -30,8 +30,9 @@ bounded execution, captured logs, and the established cold-recovery procedure.
 authentication integration tests); it needs `TOOLCHAIN_ROOT`, `OEM_ROOTFS` and
 the release signing key. `ci/check-hosted.sh` runs the subset that needs no
 private inputs, and GitHub Actions (`.github/workflows/ci.yml`) runs it on
-every push. A release CI job supplies `PERSISTENT_ROOT`, `REPRO_BUILD_CMD`, and
-`REPRO_ARTIFACT` after its build.
+every push. A release CI job supplies `REPRO_BUILD_CMD` and `REPRO_ARTIFACT`. With
+`REPRO_ARTIFACT` the gate compares that artifact and skips its own size check,
+and says so: the job has to run `ci/check_persistent_size.py` on the layout it built.
 
 ## API contract
 

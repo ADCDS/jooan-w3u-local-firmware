@@ -75,7 +75,7 @@ uint64_t jipc_audio_clock_stamp(jipc_audio_clock *clock, uint64_t now_us,
 
 int jipc_mic_silenced(jipc_app *app)
 {
-    return jipc_talk_active(app) || atomic_load(&app->mic_muted);
+    return jipc_talk_active(app) || atomic_load(&app->mic_muted) || atomic_load(&app->privacy_on);
 }
 
 static int centi_db(double amplitude)

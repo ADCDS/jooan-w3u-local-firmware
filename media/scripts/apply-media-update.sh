@@ -16,6 +16,9 @@ here=${0%/*} # the camera's busybox has no dirname
 root=${JIPC_ROOT:-/opt/jooanipc-open}
 appfs=${JIPC_APPFS:-/dev/mtdblock4}
 candidate=${JIPC_CANDIDATE:-/tmp/jipc-flash-candidate.squashfs}
+run=${JIPC_RUN:-/run/jooanipc-open}
+platform=${JIPC_PLATFORM:-/opt/custom/jooan-local}
+platform_run=${JIPC_PLATFORM_RUN:-/run/jooan-local}
 
 stop() { echo "$*"; exit 1; }
 field() { sed -n "/^files-begin\$/q; s/^$1=//p" "$here/release.manifest"; }
@@ -45,6 +48,9 @@ old=$(sed -n 's/^JIPC_RELEASE=//p' "$env")
 [ "${old##*/}" != "$release" ] || stop "Release $release is already installed"
 [ "$(md5 "$appfs")" = "$previous" ] ||
     stop 'This package was built from a different copy of this camera’s app partition'
+[ -s "$run/qualified" ] || stop 'The camera is still checking its last start. Try again in about 4 minutes'
+[ ! -e "$platform/state/wifi-trial" ] || stop 'A new Wi-Fi network or address is being tested. Keep it or go back first'
+[ ! -d "$platform_run/firmware-apply.lock" ] || stop 'A platform update is being installed. Try again when it has finished'
 [ ! -e "$root/boot-trial" ] || stop 'The camera is recovering from a failed start: fix that first'
 [ ! -e "$root/native-failed" ] || stop 'The camera is recovering from a failed start: fix that first'
 [ "$(md5 "$here/appfs.img")" = "$image" ] || stop 'The image does not match its checksum'
