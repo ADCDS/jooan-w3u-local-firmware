@@ -3661,15 +3661,37 @@
 	/* A platform install runs on behind its answer. If it stops, nothing else would say so. */
 	const FW_NOT_RESTARTED = 'Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.',
 		FW_STOPPED = 'The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).';
+	/* What a status means. Only an install that got going can have left anything half done. */
+	function fwReport(d) {
+		const stopped = d.state == 'failed' && d.reason == 'upgrade',
+			refused = d.state == 'failed' && !stopped,
+			needed = d.restart == 'needed';
+		if (!stopped && !refused && !needed) return 0;
+		installing = 0;
+		fwStopped = +stopped;
+		$('sy-mapply').disabled = !mfw || fwStopped;
+		$('sy-mstage').disabled = false;
+		fwUI(0, needed ? FW_NOT_RESTARTED : stopped ? FW_STOPPED : 'The update did not start, and nothing was changed: the camera refused this package.');
+		return 1;
+	}
 	/* When this page opens too: the tab may have closed, or reloaded, while an install ran. */
 	async function fwLast() {
 		if (installing) return;
 		const d = await api(J + 'update', { quiet: 1 });
-		if (d.state == 'failed') {
-			fwStopped = 1;
-			$('sy-mapply').disabled = true;
-			fwUI(0, FW_STOPPED);
-		} else if (d.restart == 'needed') fwUI(0, FW_NOT_RESTARTED);
+		if (d.state == 'failed' && d.reason != 'upgrade') return; /* old news, and nothing changed */
+		if (fwReport(d)) return;
+		if (fwStopped && d.state == 'idle') {
+			/* Repaired and restarted, with this page open. */
+			fwStopped = 0;
+			$('sy-mapply').disabled = !mfw;
+			fwUI(0);
+		}
+		if (d.state == 'running' || d.state == 'launching') {
+			installing = 1;
+			$('sy-mapply').disabled = $('sy-mstage').disabled = true;
+			fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
+			fwWatch();
+		}
 	}
 	async function fwWatch() {
 		let lost = 0;
@@ -3688,16 +3710,7 @@
 			}
 			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart: the buttons and the versions are a new page's */
 			lost = 0;
-			if (d.state == 'failed' || d.restart == 'needed') {
-				installing = 0;
-				fwStopped = d.state == 'failed';
-				$('sy-mapply').disabled = !mfw || fwStopped;
-				$('sy-mstage').disabled = false;
-				return fwUI(
-					0,
-					d.restart == 'needed' ? FW_NOT_RESTARTED : FW_STOPPED
-				);
-			}
+			if (fwReport(d)) return;
 		}
 		if (lost) return; /* the offline banner has it from here */
 		installing = 0;

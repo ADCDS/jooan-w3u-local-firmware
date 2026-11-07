@@ -749,7 +749,8 @@ class Mock:
                 sequence = self.args.update_status.split(",") if self.args.update_status else ["idle"]
                 self.update_polls = getattr(self, "update_polls", -1) + 1
                 said = sequence[min(self.update_polls, len(sequence) - 1)]
-                return bare(int(said), "unavailable") if said.isdigit() else ok({"state": said, "reason": "", "restart": ""})
+                state, _, reason = said.partition(":")  # failed:upgrade
+                return bare(int(said), "unavailable") if said.isdigit() else ok({"state": state, "reason": reason, "restart": ""})
             name = "firmware/stage" if m == "POST" else "firmware/apply"
         else:
             name = V1.get(rest, rest)
