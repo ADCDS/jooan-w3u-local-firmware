@@ -144,8 +144,21 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
     if (codec == JIPC_H264 && stream_parameters(stream, copy, bytes)) keyframe = 1;
     uint64_t sequence = ++stream->sequence;
     jipc_frame *frame = &stream->slots[(sequence - 1) % stream->capacity];
+    stream->held -= frame->size;
     free(frame->data);
     *frame = (jipc_frame){copy, bytes, pts_us, sequence, !!keyframe, codec};
+    stream->held += bytes;
+    if (channel != JIPC_AUDIO_STREAM) {
+        uint64_t oldest = sequence > stream->capacity ? sequence - stream->capacity + 1 : 1;
+        if (stream->kept < oldest) stream->kept = oldest;
+        while (stream->held > JIPC_VIDEO_RING_BYTES && stream->kept < sequence) {
+            jipc_frame *drop = &stream->slots[(stream->kept++ - 1) % stream->capacity];
+            stream->held -= drop->size;
+            free(drop->data);
+            drop->data = NULL;
+            drop->size = 0;
+        }
+    }
     app->produced[channel] = sequence;
     pthread_cond_broadcast(&stream->ready);
     pthread_mutex_unlock(&stream->mutex);
@@ -155,19 +168,32 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
 /* Every stream has a recent frame. Frames held for privacy stop on purpose, and
  * after a hold a stream only resumes at its next keyframe, so the check waits a
  * little longer then; a held start has no frames at all until that point. An
- * encoder that never resumes still fails here, once the grace has passed. */
-int jipc_video_healthy(jipc_app *app, unsigned streams, uint64_t now)
+ * encoder that never resumes still fails here, once the grace has passed.
+ *
+ * A stamp later than `now` is the freshest frame there is: `now` was read before
+ * the locks, and this thread can wait on one while a reader copies a large frame
+ * and the encoder thread stamps the next. Counting that as stale stopped the
+ * service on camera1 when privacy ended, with every stream running. */
+int jipc_video_stale(jipc_app *app, unsigned streams, uint64_t now, uint64_t *age_us)
 {
-    if (atomic_load(&app->privacy_hold)) { app->video_grace_until = now + UINT64_C(15000000); return 1; }
-    int fresh = 1;
+    if (atomic_load(&app->privacy_hold)) { app->video_grace_until = now + UINT64_C(15000000); return -1; }
+    int stale = -1;
     for (unsigned i = 0; i < streams; ++i) {
         pthread_mutex_lock(&app->streams[i].mutex);
         uint64_t sequence = app->streams[i].sequence;
         uint64_t stamp = sequence ? app->streams[i].slots[(sequence - 1) % app->streams[i].capacity].pts_us : 0;
         pthread_mutex_unlock(&app->streams[i].mutex);
-        if (!stamp || now < stamp || now - stamp > UINT64_C(15000000)) fresh = 0;
+        if ((!stamp || (now > stamp && now - stamp > UINT64_C(15000000))) && stale < 0) {
+            stale = (int)i;
+            if (age_us) *age_us = stamp ? now - stamp : 0;
+        }
     }
-    return fresh || now < app->video_grace_until;
+    return now < app->video_grace_until ? -1 : stale;
+}
+
+int jipc_video_healthy(jipc_app *app, unsigned streams, uint64_t now)
+{
+    return jipc_video_stale(app, streams, now, NULL) < 0;
 }
 
 int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
@@ -225,6 +251,7 @@ int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,
 #undef PRIVACY_HELD
     uint64_t oldest = stream->sequence > stream->capacity ?
                       stream->sequence - stream->capacity + 1 : 1;
+    if (oldest < stream->kept) oldest = stream->kept;
     uint64_t wanted = *cursor ? *cursor + 1 : stream->sequence;
     if (wanted < oldest) wanted = oldest;
     if (wanted <= stream->floor) wanted = stream->floor + 1;

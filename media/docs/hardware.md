@@ -471,7 +471,8 @@ self-signed and the camera is addressed by IP.
                     "image": "appfs.img", "image_md5": "…",
                     "expected_current_appfs_md5": "…", "app_md5": "…",
                     "imp_md5": "… (only when libimp changes)", "imp_sha256": "…",
-                    "installer": "upgrade-appfs.sh", "installer_md5": "…"},
+                    "installer": "upgrade-appfs.sh", "installer_md5": "…",
+                    "native_boot": "native-boot.sh", "native_boot_md5": "…"},
   "config": {"camera_ini": {"set": {}, "unset": ["ntp_server"]},
              "files": {"/opt/custom/jooan-local/config/ntp-server": "gateway\n",
                        "/opt/jooanipc-open/state/presets.v1": null},
@@ -531,7 +532,8 @@ the first release on a camera with only the platform, with
 The admin UI can also install a release, from a package made by
 `tools/make-media-update.py`. The daemon verifies its signature with the platform's
 verifier, then has the signed `scripts/apply-media-update.sh` check the camera
-and run the signed `scripts/upgrade-appfs.sh`. Nothing is flashed until the owner
+and run the signed `scripts/upgrade-appfs.sh`, which also replaces
+`native-boot.sh`. Nothing is flashed until the owner
 confirms, and a package not confirmed in 15 minutes is forgotten. On camera1 an
 install with Frigate connected took about 5 s to upload and check, video kept its 15 fps
 meanwhile, and the page was back about 90 s after confirming.

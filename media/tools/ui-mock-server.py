@@ -1045,7 +1045,7 @@ class Mock:
             return mok({"state": "staged" if self.staged else "idle", "release": self.staged, "error": ""})
         if t == "/api/v1/update/media" and m == "POST":
             data = h.body or b""
-            if not data.startswith(b"JIPCMEDIA1 "): return merr(400, "This is not a media package")
+            if not data.startswith(b"JIPCMEDIA2 "): return merr(400, "This is not a media package")
             self.staged = "cafe0123-8b374e7a"
             return mok({"release": self.staged})
         if t == "/api/v1/update/media/apply" and m == "POST":

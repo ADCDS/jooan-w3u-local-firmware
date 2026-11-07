@@ -45,6 +45,7 @@ import time
 INI = "/opt/jooanipc-open/camera.ini"
 ENV = "/opt/jooanipc-open/deployment.env"
 HANDOFF = "/opt/jooanipc-open/boot-handoff.sh"
+NATIVE_BOOT = "/opt/jooanipc-open/native-boot.sh"
 RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
@@ -419,6 +420,19 @@ def wait_reboot(cam, before, aborted=None, seconds=600, after_boot=None):
     return mode
 
 
+def check_appfs_artifacts(bundle, appfs):
+    """What an update needs on this host. The boot script goes with its release: updates that
+    left it behind kept every fix to it from reaching the camera."""
+    if not appfs.get("native_boot"):
+        raise SystemExit("this bundle has no native-boot.sh; rebuild it")
+    for name, field in ((appfs["image"], "image_md5"), (appfs["installer"], "installer_md5"),
+                        (appfs["native_boot"], "native_boot_md5")):
+        if md5(bundle / name) != appfs[field]:
+            raise SystemExit(f"{name} checksum mismatch")
+    if (bundle / appfs["image"]).stat().st_size != 3211264:
+        raise SystemExit("appfs image must be exactly the 3211264-byte partition")
+
+
 def ini_edit(text, settings, unset):
     """Set or remove key=value lines, keeping every other line as it is."""
     lines, seen = [], set()
@@ -466,11 +480,7 @@ def main():
         if sha256(bundle / local["package"]) != local["package_sha256"]:
             raise SystemExit("jooan_local package checksum mismatch")
     if appfs:
-        for name, field in ((appfs["image"], "image_md5"), (appfs["installer"], "installer_md5")):
-            if md5(bundle / name) != appfs[field]:
-                raise SystemExit(f"{name} checksum mismatch")
-        if (bundle / appfs["image"]).stat().st_size != 3211264:
-            raise SystemExit("appfs image must be exactly the 3211264-byte partition")
+        check_appfs_artifacts(bundle, appfs)
     log(f"bundle {spec['name']}: artifacts verified")
 
     # ---- preflight on the camera
@@ -591,6 +601,7 @@ def main():
             write_remote(cam, INI + ".next", next_ini)
             write_remote(cam, ENV + ".next", next_env)
             cam.ssh(f"cp {HANDOFF} {HANDOFF}.next && chmod 700 {HANDOFF}.next")
+            write_remote(cam, NATIVE_BOOT + ".next", (bundle / appfs["native_boot"]).read_bytes(), "700")
             cam.ssh("cat > /tmp/jipc-flash-candidate.squashfs", data=(bundle / appfs["image"]).read_bytes(), timeout=300)
             cam.ssh("cat > /tmp/upgrade-appfs.sh && chmod 700 /tmp/upgrade-appfs.sh",
                     data=(bundle / appfs["installer"]).read_bytes())
@@ -606,7 +617,7 @@ def main():
                 try:
                     why = cam.ssh("grep ' ABORT: ' /tmp/jipc-upgrade.log || :", timeout=10).strip()
                     if why and not after_commit(why):  # the staged copies take up the small settings partition
-                        cam.ssh(f"rm -f {INI}.next {ENV}.next {HANDOFF}.next; sync", timeout=20)
+                        cam.ssh(f"rm -f {INI}.next {ENV}.next {HANDOFF}.next {NATIVE_BOOT}.next; sync", timeout=20)
                     return why
                 except Exception:
                     return ""

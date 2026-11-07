@@ -33,10 +33,46 @@ static void privacy_hold(void)
     v->privacy_hold=1;assert(jipc_video_healthy(v,2,t+UINT64_C(40000000)));v->privacy_hold=0;
     assert(jipc_video_healthy(v,2,t+UINT64_C(41000000)));
     assert(!jipc_video_healthy(v,2,t+UINT64_C(60000000)));
+    /* The clock was read before the locks and a frame was stamped after it: the freshest there is,
+     * and no grace to hide behind. On camera1 this stopped the service when privacy ended. */
+    uint64_t late=t+UINT64_C(70000000),age=99;
+    assert(!jipc_publish_video(v,0,1,p,sizeof(p),late,0));
+    assert(jipc_video_healthy(v,2,late-UINT64_C(1000)));
+    assert(jipc_video_stale(v,2,late+UINT64_C(16000000),&age)==0&&age>UINT64_C(15000000));
+}
+/* Twelve frames of a megabyte would be a third of this camera's memory, on one stream. */
+static void ring_bytes(void)
+{
+    static unsigned char big[JIPC_MAX_FRAME];
+    memcpy(big,"\0\0\0\1\x41",5);
+    jipc_app *v=calloc(1,sizeof(*v));assert(v);jipc_config_defaults(&v->config);v->config.sensors=1;
+    pthread_mutex_init(&v->config_mutex,NULL);
+    assert(!jipc_streams_init(v));
+    jipc_stream *s=&v->streams[0];
+    const size_t mib=1024u*1024u;
+    for(uint64_t i=1;i<=5;++i)assert(!jipc_publish(v,0,big,mib,i,0,JIPC_H264));
+    assert(s->sequence==5&&s->held==2*mib&&s->kept==4);
+    uint64_t cursor=1;jipc_frame frame;
+    assert(jipc_read(v,0,&cursor,&frame,0)==1);      /* behind: the oldest left, seen as a gap */
+    assert(frame.sequence==4&&frame.size==mib&&cursor==4);jipc_frame_free(&frame);
+    cursor=0;assert(jipc_read(v,0,&cursor,&frame,0)==1);
+    assert(frame.sequence==5);jipc_frame_free(&frame);
+    /* Small frames fill all twelve again, and what the limit freed is not freed twice. */
+    for(uint64_t i=6;i<=30;++i)assert(!jipc_publish(v,0,big,1024,i,0,JIPC_H264));
+    assert(s->held==12*1024u&&s->kept==19);
+    cursor=1;assert(jipc_read(v,0,&cursor,&frame,0)==1);
+    assert(frame.sequence==19&&frame.size==1024);jipc_frame_free(&frame);
+    /* The newest frame stays, however large. */
+    assert(!jipc_publish(v,0,big,sizeof big,31,0,JIPC_H264));
+    assert(s->kept==31&&s->held==sizeof big);
+    cursor=0;assert(jipc_read(v,0,&cursor,&frame,0)==1);
+    assert(frame.sequence==31&&frame.size==sizeof big);jipc_frame_free(&frame);
+    jipc_streams_destroy(v);free(v);
 }
 int main(void)
 {
     privacy_hold();
+    ring_bytes();
     char temporary[]="/tmp/jipc-flip-XXXXXX",error[256];
     assert(mkdtemp(temporary));
     jipc_app app={0};jipc_config_defaults(&app.config);

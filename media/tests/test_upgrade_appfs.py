@@ -22,4 +22,10 @@ after = text[commit:]
 assert "until /sbin/flashcp -v \"$backup\" /dev/mtd4 && [ \"$(hash /dev/mtd4)\" = \"$2\" ]" in after
 assert after.index("restore_config") < after.index("/bin/busybox reboot -f")
 assert "OEM->native installer" not in text
+# The boot script goes with its release, staged, checked, committed and restored like the rest:
+# an update that left it behind kept every fix to it from reaching the camera.
+names = "for name in boot-handoff.sh native-boot.sh camera.ini deployment.env; do"
+assert text.count(names) == 3 and "for name in boot-handoff.sh camera.ini" not in text
+assert 'sh -n "$root/native-boot.sh.next"' in text[:commit]
+assert text.count('chmod 700 "$root/boot-handoff.sh" "$root/native-boot.sh"') == 2
 print("appfs upgrade script: PASS")

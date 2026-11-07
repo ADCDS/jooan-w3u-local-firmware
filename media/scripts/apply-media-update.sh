@@ -43,6 +43,7 @@ done
 env=$root/deployment.env
 ini=$root/camera.ini
 handoff=$root/boot-handoff.sh
+boot=$root/native-boot.sh
 old=$(sed -n 's/^JIPC_RELEASE=//p' "$env")
 [ -n "$old" ] || stop 'The camera has no media release to update'
 [ "${old##*/}" != "$release" ] || stop "Release $release is already installed"
@@ -59,7 +60,7 @@ old=$(sed -n 's/^JIPC_RELEASE=//p' "$env")
 
 sleep 1 # lets the daemon finish answering the request that started this
 new=${old%/*}/$release
-tidy() { rm -f "$env.next" "$ini.next" "$handoff.next"; [ ! -e "$candidate" ] || mv "$candidate" "$here/appfs.img"; sync; }
+tidy() { rm -f "$env.next" "$ini.next" "$handoff.next" "$boot.next"; [ ! -e "$candidate" ] || mv "$candidate" "$here/appfs.img"; sync; }
 sed -e "s#^JIPC_RELEASE=.*#JIPC_RELEASE=$new#" \
     -e "s#^JIPC_APP_MD5=.*#JIPC_APP_MD5=$app#" \
     -e "s#^JIPC_IMP_MD5=.*#JIPC_IMP_MD5=$imp#" \
@@ -67,7 +68,8 @@ sed -e "s#^JIPC_RELEASE=.*#JIPC_RELEASE=$new#" \
     -e "s#^JIPC_LIBIMP_SHA256=.*#JIPC_LIBIMP_SHA256=$imp_sha256#" "$env" > "$env.next"
 sed -e "s#$old/#$new/#g" "$ini" > "$ini.next"
 cp "$handoff" "$handoff.next"
-chmod 700 "$handoff.next"
+cp "$here/native-boot.sh" "$boot.next"
+chmod 700 "$handoff.next" "$boot.next"
 chmod 600 "$env.next" "$ini.next"
 mv "$here/appfs.img" "$candidate"
 sync

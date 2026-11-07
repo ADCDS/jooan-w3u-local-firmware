@@ -18,6 +18,9 @@
 /* Close to a second at 15 fps. A reader further behind than this loses frames until the next
  * keyframe, and a short stall on Wi-Fi should not cost half a second of video. */
 #define JIPC_VIDEO_RING 12
+/* And at most this much of it: a frame can be 40 times its usual size when the scene changes
+ * or the head moves, and the camera has 38 MiB. The newest frame always stays. */
+#define JIPC_VIDEO_RING_BYTES (2u * 1024u * 1024u)
 #define JIPC_AUDIO_RING 32
 /* The encoder's window for 1080p. A frame above it is dropped, never fatal. */
 #define JIPC_MAX_FRAME (2u * 1024u * 1024u + 64u * 1024u)
@@ -39,6 +42,8 @@ typedef struct {
     jipc_frame slots[JIPC_RING_MAX];
     unsigned capacity;
     uint64_t sequence, floor; /* floor: nothing at or below this may be read again */
+    uint64_t kept;            /* video: the oldest frame the byte limit has left */
+    size_t held;
     unsigned char sps[512], pps[512];
     size_t sps_size, pps_size;
     unsigned width, height, fps;
@@ -158,6 +163,8 @@ int jipc_publish(jipc_app *app, unsigned channel, const void *data, size_t bytes
  * main_only accepts only even source slots; each logical ring owns its copy. */
 /* The watchdog's question: is every stream getting frames? */
 int jipc_video_healthy(jipc_app *app, unsigned streams, uint64_t now);
+/* The first stream without a recent frame, or -1; age_us is 0 if it never had one. */
+int jipc_video_stale(jipc_app *app, unsigned streams, uint64_t now, uint64_t *age_us);
 int jipc_publish_video(jipc_app *app, unsigned source, int main_only,
                        const void *data, size_t bytes, uint64_t pts_us, int keyframe);
 int jipc_read(jipc_app *app, unsigned channel, uint64_t *cursor,

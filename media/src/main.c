@@ -202,8 +202,15 @@ int main(int argc, char **argv)
                 if (!ready) { jipc_log("error", "media backend stopped; shutting down services"); result = 1; break; }
                 if(watchdog_fd>=0&&jipc_now_us()-watchdog_last>=1000000){
                     uint64_t now=jipc_now_us();
-                    if(!jipc_video_healthy(app,config.sensors*2,now)||jipc_watchdog_feed(watchdog_fd)){
-                        jipc_log("error","watchdog health check failed; stopping service");result=1;break;
+                    uint64_t age=0;
+                    int stale=jipc_video_stale(app,config.sensors*2,now,&age);
+                    if(stale>=0){
+                        jipc_log("error","watchdog health check failed: stream %d %s; stopping service",stale,age?"has had no frame for over 15 seconds":"never had a frame");
+                        result=1;break;
+                    }
+                    if(jipc_watchdog_feed(watchdog_fd)){
+                        jipc_log("error","watchdog health check failed: cannot feed it: %s; stopping service",strerror(errno));
+                        result=1;break;
                     }
                     watchdog_last=now;
                 }

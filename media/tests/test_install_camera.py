@@ -237,6 +237,23 @@ with tempfile.TemporaryDirectory() as temporary:
     out = subprocess.run([str(helper)], env={"CAMERA_ASKPASS": "pass word"}, capture_output=True, text=True, check=True).stdout
     assert out == "pass word\n" and "pass word" not in helper.read_text()
 camera = ic.Camera("example", "secret", "")
+# An update brings the boot script its release goes with, and a bundle without one is refused.
+with tempfile.TemporaryDirectory() as temporary:
+    bundle = pathlib.Path(temporary)
+    image, flash, boot = b"i" * 3211264, b"flash", b"boot"
+    for name, data in (("appfs.img", image), ("upgrade-appfs.sh", flash), ("native-boot.sh", boot)):
+        (bundle / name).write_bytes(data)
+    digest = lambda data: hashlib.md5(data).hexdigest()
+    update = {"image": "appfs.img", "image_md5": digest(image), "installer": "upgrade-appfs.sh", "installer_md5": digest(flash),
+              "native_boot": "native-boot.sh", "native_boot_md5": digest(boot)}
+    ic.check_appfs_artifacts(bundle, update)
+    for bad in ({k: v for k, v in update.items() if k != "native_boot"}, update | {"native_boot_md5": "0" * 32}):
+        try:
+            ic.check_appfs_artifacts(bundle, bad)
+        except SystemExit as stopped:
+            assert "native-boot" in str(stopped), stopped
+        else:
+            raise AssertionError(f"accepted {bad}")
 camera.prefix = []
 environment = camera.ssh_environment()
 assert environment["CAMERA_ASKPASS"] == "secret" and environment["SSH_ASKPASS_REQUIRE"] == "force"

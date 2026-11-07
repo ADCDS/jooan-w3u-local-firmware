@@ -168,9 +168,10 @@ The appfs installer (`upgrade-appfs.sh`) runs only from a qualified native
 boot. It takes the platform maintenance lock, which pauses the supervisor's
 runtime restarts and network-watchdog reboot. It then stops the media daemon,
 hands the armed watchdog to a rootfs feeder, keeps a RAM copy of the current
-appfs, and flashes the new image with full readback. Any failure before the
-commit point reboots into the untouched appfs. A failed flash after it is
-rolled back from the RAM copy. If even the rollback fails, the camera stays
+appfs, and flashes the new image with full readback. `native-boot.sh` is replaced
+at the same commit point, so a release always boots with the script it was tested
+with. Any failure before the commit point reboots into the untouched appfs. A
+failed flash after it is rolled back from the RAM copy, along with the boot script. If even the rollback fails, the camera stays
 up for manual recovery: see [Recovery](RECOVERY.md#appfs-reflash-recovery).
 Stop the NVR during a platform update (`--nvr-stop`/`--nvr-start`).
 
@@ -193,8 +194,8 @@ instead of `--yes`. The checks that have been done are listed in
 
 **From the browser,** System → Media takes a package from
 `media/tools/make-media-update.py BUNDLE_DIR`, signed with the release key: a
-manifest with the sums of the image, the libraries and the scripts, the two
-scripts, and the image. The daemon checks the signature with the platform's
+manifest with the sums of the image, the libraries and the scripts, the three
+scripts (`native-boot.sh` is the third), and the image. The daemon checks the signature with the platform's
 verifier and the camera's state with the signed `apply-media-update.sh`, then
 keeps the package in RAM for 15 minutes for the owner to confirm. That script
 then runs the signed `upgrade-appfs.sh`. The package holds vendor files and is

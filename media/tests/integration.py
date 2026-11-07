@@ -171,12 +171,12 @@ def media_update_checks(call, ui_post, secret, update_root):
                     f'[ ! -e "{update_root}/apply-fails" ] || {{ echo "1.00 ABORT: platform maintenance is in progress"; exit 1; }}\n'
                     f'echo "$1" > "{marker}"\n').encode()
 
-    def package(kind=b"media", release=b"cafe0123-8b374e7a", image=3211264, listed=b"  appfs.img\n  upgrade-appfs.sh\n  apply-media-update.sh\n"):
+    def package(kind=b"media", release=b"cafe0123-8b374e7a", image=3211264, listed=b"  appfs.img\n  upgrade-appfs.sh\n  apply-media-update.sh\n  native-boot.sh\n"):
         manifest = (b"JOOAN-SIGNED-RELEASE-V1\ntarget_id=jooan-ja-a12-t23n-dual-cv2005-skw6316\ndevice_model=JA-A12\n"
                     b"release_version=" + release + b"\nartifact_kind=" + kind + b"\nfiles-begin\n" + listed + b"files-end\n")
-        signature, upgrade = b"signature", b"#!/bin/sh\n"
-        header = f"JIPCMEDIA1 {len(manifest)} {len(signature)} {len(upgrade)} {len(apply_script)} {image}".encode()
-        return header.ljust(95) + b"\n" + manifest + signature + upgrade + apply_script + b"\xff" * image
+        signature, upgrade, boot = b"signature", b"#!/bin/sh\n", b"#!/bin/sh\n"
+        header = f"JIPCMEDIA2 {len(manifest)} {len(signature)} {len(upgrade)} {len(apply_script)} {len(boot)} {image}".encode()
+        return header.ljust(95) + b"\n" + manifest + signature + upgrade + apply_script + boot + b"\xff" * image
 
     def state():
         status, _, body = call("GET", "/api/v1/update/media", headers=ui_post)
@@ -540,6 +540,22 @@ def controls_checks(request, root, connection=None, secret=None):
     assert controls()["live"]["night"] == "night"
     set_ev(9000)
     wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 20, "auto to day")
+    # Leaving privacy: its time in day mode counts as a start's settling. A dark scene goes to
+    # night at once, and only the rest of the wait is left after a short privacy.
+    set_ev(40000)
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"], 3, "privacy on")
+    time.sleep(4.5)
+    assert platform()["night"] == 0
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: controls()["live"]["night"] == "night" and platform()["night"] == 1, 1.5, "night at once after privacy")
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    wait_for(lambda: controls()["live"]["privacy"], 3, "privacy on again")
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: not controls()["live"]["privacy"], 3, "privacy off")
+    assert controls()["live"]["night"] == "day" and "settle" in controls()["live"]["reason"], controls()["live"]
+    wait_for(lambda: controls()["live"]["night"] == "night", 6, "night after the rest of the wait")
+    set_ev(10000)
     # Validation leaves everything as it was.
     for bad in ({"night": {"night_ev": 100, "day_ev": 200}}, {"night": {"from": "25:00"}},
                 {"night": {"mode": "dusk"}}, {"picture": [{"denoise": 300}]}, {"anti_flicker": "40"}, [1]):

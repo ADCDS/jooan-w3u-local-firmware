@@ -71,10 +71,10 @@ holds_watchdog() {
     ls -l "/proc/$1/fd" 2>/dev/null | grep -q ' -> /dev/watchdog$'
 }
 restore_config() {
-    for name in boot-handoff.sh camera.ini deployment.env; do
+    for name in boot-handoff.sh native-boot.sh camera.ini deployment.env; do
         cp "$state/$name.before" "$root/$name"
     done
-    chmod 700 "$root/boot-handoff.sh"
+    chmod 700 "$root/boot-handoff.sh" "$root/native-boot.sh"
     chmod 600 "$root/camera.ini" "$root/deployment.env"
     sync
 }
@@ -98,11 +98,12 @@ until [ "$(df -k /opt | awk 'END {print $4}')" -ge 64 ]; do
     sync
     sleep 2
 done
-for name in boot-handoff.sh camera.ini deployment.env; do
+for name in boot-handoff.sh native-boot.sh camera.ini deployment.env; do
     [ -s "$root/$name.next" ] || die "missing staged $name"
     cp "$root/$name" "$state/$name.before"
 done
 sh -n "$root/boot-handoff.sh.next"
+sh -n "$root/native-boot.sh.next"
 absent jooanipc || die 'OEM media owner is running; this installer upgrades a qualified native boot only'
 absent my_watch_dog || die 'OEM watchdog is running; this installer upgrades a qualified native boot only'
 native=$(owner jooanipc-open) || die 'native owner missing or ambiguous'
@@ -145,10 +146,10 @@ umount /mnt/mtd || abort_reboot 'ordinary appfs unmount refused'
 
 # Commit point: configuration now names the new release.
 log 'appfs unmounted; committing paths and flashing verified image'
-for name in boot-handoff.sh camera.ini deployment.env; do
+for name in boot-handoff.sh native-boot.sh camera.ini deployment.env; do
     mv "$root/$name.next" "$root/$name"
 done
-chmod 700 "$root/boot-handoff.sh"
+chmod 700 "$root/boot-handoff.sh" "$root/native-boot.sh"
 chmod 600 "$root/camera.ini" "$root/deployment.env"
 sync
 if /sbin/flashcp -v "$image" /dev/mtd4 && [ "$(hash /dev/mtd4)" = "$1" ]; then

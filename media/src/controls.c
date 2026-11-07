@@ -61,7 +61,7 @@ typedef struct {
     uint64_t ev_at, cond_since, trigger_until, strobe_until, switched_at, wl_override_until, auto_hold_us;
     uint64_t auto_settle_us, auto_settle_at;
     int auto_settling, auto_start, reapply_night, reapply_white, hold_factor;
-    uint64_t own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
+    uint64_t privacy_since, own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
     int clock_ok, schedules_ready, strobe_with_siren, engine_known, night_ok, network_time;
     const char *error_what; /* which work c->error is about: only that work clears it */
     uint64_t retry_picture_at;
@@ -741,8 +741,16 @@ static void *engine(void *opaque)
         int change_privacy = privacy != c->active_privacy;
         if (change_privacy) c->active_privacy = privacy;
         /* Coming out of privacy is a start: the hold and the wait are for a switch, and this
-         * was none, so a dark scene does not sit in near-black video for minutes. */
-        if (change_privacy && !privacy) { c->auto_start = 1; c->auto_settling = 0; c->cond_since = 0; }
+         * was none, so a dark scene does not sit in near-black video for minutes. Privacy ran
+         * in day mode with the infrared off, which is what a start settles for, so its time
+         * counts: day mode in the dark makes frames up to 40 times their usual size (measured
+         * on camera1), and video should not spend longer there than the reading needs. */
+        if (change_privacy && privacy) c->privacy_since = now;
+        if (change_privacy && !privacy) {
+            c->auto_start = 1; c->cond_since = 0;
+            c->auto_settling = c->privacy_since != 0; /* the first tick is no privacy ending */
+            c->auto_settle_at = c->privacy_since + c->auto_settle_us;
+        }
         /* Going in: day mode again whatever this engine believes, as something outside it may
          * have changed the ISP's mode. And if the output says the black-out is not working. */
         if (change_privacy && privacy) c->reapply_night = 1;
@@ -884,7 +892,6 @@ static void *engine(void *opaque)
                 pthread_mutex_unlock(&c->mutex);
             }
         }
-        if ((first || change_privacy) && !privacy) release_video(app);
         if (first) {
             error[0] = 0;
             if (jipc_platform_control(app, "pilot_led", s.pilot_led, 0, error, sizeof error) < 0)
@@ -911,6 +918,8 @@ static void *engine(void *opaque)
                 }
             }
         }
+        /* After the mode: a keyframe of the picture that stays, not of the one before the switch. */
+        if ((first || change_privacy) && !privacy) release_video(app);
         if (privacy && !c->covered_at) { if (c->night_ok && !apply_cover(c)) c->covered_at = now; }
         else if (privacy && atomic_load(&app->privacy_hold) && now - c->covered_at >= PRIVACY_SETTLE_US) {
             atomic_store(&app->privacy_hold, 0);

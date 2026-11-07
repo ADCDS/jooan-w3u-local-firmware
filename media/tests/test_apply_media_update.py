@@ -5,6 +5,7 @@ are in upgrade-appfs.sh, which here is a fixture that only records its arguments
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,8 @@ def world(base, upgrade_ok=True, **fields):
     (root / "deployment.env").write_text(ENV)
     (root / "camera.ini").write_text(INI)
     (root / "boot-handoff.sh").write_text("#!/bin/sh\necho handoff\n")
+    (root / "native-boot.sh").write_text("#!/bin/sh\necho the old boot\n")
+    (package / "native-boot.sh").write_text("#!/bin/sh\necho the new boot\n")
     (base / "appfs").write_bytes(CURRENT)
     (package / "apply-media-update.sh").write_bytes(script)
     (package / "appfs.img").write_bytes(IMAGE)
@@ -81,7 +84,7 @@ def refused(why, action="check", prepare=None, **fields):
 base, (root, package) = case()
 result = run(base, "check")
 assert result.returncode == 0, result.stdout + result.stderr
-assert sorted(p.name for p in root.iterdir()) == ["boot-handoff.sh", "camera.ini", "deployment.env"]
+assert sorted(p.name for p in root.iterdir()) == ["boot-handoff.sh", "camera.ini", "deployment.env", "native-boot.sh"]
 assert not (base / "upgrade-args").exists() and (package / "appfs.img").exists()
 
 # apply stages what the boot checks against, moves the image, and hands over.
@@ -94,6 +97,9 @@ assert f"JIPC_LIBIMP_SHA256={'6' * 64}\n" in env and f"JIPC_ATOMIC_MD5={'7' * 32
 ini = (root / "camera.ini.next").read_text()
 assert f"libimp={NEW}/libimp.so\n" in ini and "audio=1\n" in ini and OLD not in ini
 assert (root / "boot-handoff.sh.next").read_text() == (root / "boot-handoff.sh").read_text()
+# The boot script comes with the release: an update that kept the old one left every fix to it undelivered.
+assert "the new boot" in (root / "native-boot.sh.next").read_text() and "the old boot" in (root / "native-boot.sh").read_text()
+assert stat.S_IMODE((root / "native-boot.sh.next").stat().st_mode) == 0o700
 assert (base / "candidate").read_bytes() == IMAGE and (base / "candidate-then").exists()
 assert "deployment.env.next" in (base / "staged-then").read_text()
 assert (root / "deployment.env").read_text() == ENV, "the live files are upgrade-appfs.sh's to commit"
@@ -103,7 +109,7 @@ shutil.rmtree(base)
 base, (root, package) = case(upgrade_ok=False)
 result = run(base, "apply")
 assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
-assert sorted(p.name for p in root.iterdir()) == ["boot-handoff.sh", "camera.ini", "deployment.env"]
+assert sorted(p.name for p in root.iterdir()) == ["boot-handoff.sh", "camera.ini", "deployment.env", "native-boot.sh"]
 assert (package / "appfs.img").read_bytes() == IMAGE and not (base / "candidate").exists()
 shutil.rmtree(base)
 

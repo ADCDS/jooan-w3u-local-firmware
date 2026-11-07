@@ -5,8 +5,9 @@
  * arrives, checked by the platform's own verifier, and flashed only when asked.
  * Nothing in a package runs before its signature has been checked.
  *
- * The package: a 96-byte header "JIPCMEDIA1 <manifest> <signature> <upgrade script>
- * <apply script> <image>" padded with spaces and ending in a newline, then those parts.
+ * The package: a 96-byte header "JIPCMEDIA2 <manifest> <signature> <upgrade script>
+ * <apply script> <boot script> <image>" padded with spaces and ending in a newline, then
+ * those parts. The boot script is the native-boot.sh this release goes with.
  */
 #define _GNU_SOURCE
 #include "jipc.h"
@@ -28,8 +29,8 @@
 #define STAGED_US (UINT64_C(15) * 60 * 1000000) /* an abandoned upload does not stay in RAM */
 
 static const char *const parts[] = {"release.manifest", "release.manifest.sig", "upgrade-appfs.sh",
-                                    "apply-media-update.sh", "appfs.img"};
-enum { MANIFEST, SIGNATURE, UPGRADE, APPLY, IMAGE, PARTS };
+                                    "apply-media-update.sh", "native-boot.sh", "appfs.img"};
+enum { MANIFEST, SIGNATURE, UPGRADE, APPLY, BOOT, IMAGE, PARTS };
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int receiving;
@@ -194,15 +195,16 @@ static int receive_package(const char *first, size_t first_size, size_t total, j
     }
     header[HEADER] = 0;
     unsigned sizes[PARTS];
-    if (sscanf(header, "JIPCMEDIA1 %u %u %u %u %u", &sizes[MANIFEST], &sizes[SIGNATURE], &sizes[UPGRADE], &sizes[APPLY], &sizes[IMAGE]) != 5 ||
+    if (sscanf(header, "JIPCMEDIA2 %u %u %u %u %u %u", &sizes[MANIFEST], &sizes[SIGNATURE], &sizes[UPGRADE], &sizes[APPLY], &sizes[BOOT], &sizes[IMAGE]) != 6 ||
         header[HEADER - 1] != '\n') {
         snprintf(error, capacity, "This is not a media package");
         return 400;
     }
     if (!sizes[MANIFEST] || sizes[MANIFEST] > MANIFEST_MAX || !sizes[SIGNATURE] || sizes[SIGNATURE] > SIGNATURE_MAX ||
         !sizes[UPGRADE] || sizes[UPGRADE] > SCRIPT_MAX || !sizes[APPLY] || sizes[APPLY] > SCRIPT_MAX ||
+        !sizes[BOOT] || sizes[BOOT] > SCRIPT_MAX ||
         sizes[IMAGE] != IMAGE_BYTES ||
-        total != (size_t)HEADER + sizes[MANIFEST] + sizes[SIGNATURE] + sizes[UPGRADE] + sizes[APPLY] + sizes[IMAGE]) {
+        total != (size_t)HEADER + sizes[MANIFEST] + sizes[SIGNATURE] + sizes[UPGRADE] + sizes[APPLY] + sizes[BOOT] + sizes[IMAGE]) {
         snprintf(error, capacity, "This is not a media package for this camera");
         return 400;
     }

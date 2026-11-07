@@ -42,7 +42,7 @@ def release_files(image, release):
         return {name: (folder / name).read_bytes() for name in ("jooanipc-open", "libimp.so", "libatomic.so.1")}
 
 
-def manifest_for(target, spec, image, upgrade, apply_script, files):
+def manifest_for(target, spec, image, upgrade, apply_script, boot_script, files):
     authenticity, appfs = target["release_authenticity"], spec["jooanipc_open"]
     lines = [
         MAGIC,
@@ -64,14 +64,15 @@ def manifest_for(target, spec, image, upgrade, apply_script, files):
         f"{digest(image)}  appfs.img",
         f"{digest(upgrade)}  upgrade-appfs.sh",
         f"{digest(apply_script)}  apply-media-update.sh",
+        f"{digest(boot_script)}  native-boot.sh",
         "files-end",
     ]
     return ("\n".join(lines) + "\n").encode()
 
 
-def package(manifest, signature, upgrade, apply_script, image):
-    header = f"JIPCMEDIA1 {len(manifest)} {len(signature)} {len(upgrade)} {len(apply_script)} {len(image)}".encode()
-    return header.ljust(HEADER - 1) + b"\n" + manifest + signature + upgrade + apply_script + image
+def package(manifest, signature, upgrade, apply_script, boot_script, image):
+    header = f"JIPCMEDIA2 {len(manifest)} {len(signature)} {len(upgrade)} {len(apply_script)} {len(boot_script)} {len(image)}".encode()
+    return header.ljust(HEADER - 1) + b"\n" + manifest + signature + upgrade + apply_script + boot_script + image
 
 
 def main():
@@ -97,12 +98,13 @@ def main():
     require_matching_key(args.key, public_key)
     upgrade = (MEDIA / "scripts/upgrade-appfs.sh").read_bytes()
     apply_script = (MEDIA / "scripts/apply-media-update.sh").read_bytes()
+    boot_script = (MEDIA / "scripts/native-boot.sh").read_bytes()
     files = release_files(args.bundle / appfs["image"], appfs["release"])
-    manifest = manifest_for(target, spec, image, upgrade, apply_script, files)
+    manifest = manifest_for(target, spec, image, upgrade, apply_script, boot_script, files)
     signature = sign_bytes(manifest, args.key)
     verify_bytes(manifest, signature, public_key)
     out = args.out or args.bundle / f"media-{appfs['release']}.pkg"
-    out.write_bytes(package(manifest, signature, upgrade, apply_script, image))
+    out.write_bytes(package(manifest, signature, upgrade, apply_script, boot_script, image))
     out.chmod(0o600)
     print(f"{out}: release {appfs['release']}, for an app partition with md5 {appfs['expected_current_appfs_md5']}")
 
