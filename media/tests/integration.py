@@ -926,7 +926,7 @@ def main():
                 handle.write(f"tls_cert={cert}\ntls_key={key}\n")
             context = ssl.create_default_context(cafile=str(cert))
         command = prefix + [str(binary), "--config", str(config), "--input", str(fixture),
-                            "--http-port", str(http_port), "--rtsp-port", str(rtsp_port), "--duration", "180"]
+                            "--http-port", str(http_port), "--rtsp-port", str(rtsp_port), "--duration", "600"]
         log = (root / "daemon.log").open("w")
         capture = root / "speaker.alaw"
         # No boot gate on a workstation; capture what the speaker would play;
@@ -937,7 +937,7 @@ def main():
                                     "JIPC_REPLAY_TONE": "1",
                                     "JIPC_JOAN_PORT": str(platform_server.server_address[1]),
                                     "JIPC_HTTPS_UI_PORT": str(ui_port),
-                                    "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12",
+                                    "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12", "JIPC_AUTO_SETTLE_S": "4",
                                     "JIPC_OEM_CONFIG": str(root / "oem-config.json"),
                                     "JIPC_BOOT_LOG_DIR": str(root)}
         (root / "oem-config.json").write_text('{"IpcParam":{"TimeZomeCfg":{\n "GmtTz":\t"GMT-03:00"\n}}}\n')
@@ -1163,6 +1163,47 @@ def main():
                 "frames resume once the black-out is applied"
             assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
             result["checks"].append("a start with privacy mode on comes up and resumes frames at a keyframe")
+            # A start in auto mode. In the dark: day first, then night once the exposure
+            # has settled, whatever the first reading said. In the light: day, with no
+            # hold, so that dusk is not kept waiting.
+            def live_night():
+                return json.loads(request("GET", "/api/v1/controls")[1])["live"]
+            def until(check, seconds, what):
+                end = time.time() + seconds
+                while time.time() < end:
+                    if check(live_night()):
+                        return
+                    time.sleep(0.1)
+                raise AssertionError(f"{what}: {live_night()}")
+            isp = root / "isp-m0"
+            isp.write_text(ISP_PROC.format(ev0=45000, ev1=20000))
+            assert request("POST", "/api/v1/controls", {"night": {"mode": "auto", "night_ev": 30000, "day_ev": 5000, "wait_s": 1}})[0] == 200
+            end = time.time() + 8
+            while time.time() < end and json.loads(saved.read_text())["night"]["mode"] != "auto":
+                time.sleep(0.2)
+            assert json.loads(saved.read_text())["night"]["mode"] == "auto"
+            process.send_signal(signal.SIGHUP)
+            time.sleep(0.5)
+            wait_ready()
+            until(lambda v: v["night"] == "day" and "settle" in v["reason"], 3, "a start waits in day")
+            until(lambda v: v["night"] == "night" and v["reason"].startswith("auto: started dark, level 45000"), 7, "dark at a start")
+            assert live_night()["hold_left_s"] > 0, "a switch to night is held like any other"
+            isp.write_text(ISP_PROC.format(ev0=8000, ev1=4000))  # between the two levels
+            process.send_signal(signal.SIGHUP)
+            time.sleep(0.5)
+            wait_ready()
+            until(lambda v: v["night"] == "day" and v["reason"].startswith("auto: started light, level 8000"), 8, "light at a start")
+            assert live_night()["hold_left_s"] == 0, "staying in day starts no hold"
+            isp.write_text(ISP_PROC.format(ev0=45000, ev1=20000))
+            until(lambda v: v["night"] == "night", 9, "dusk after a light start")
+            # A change of the infrared setting keeps the mode, and takes no new start.
+            held = live_night()["since_s"]
+            assert request("POST", "/api/v1/controls", {"night": {"ir": "off"}})[0] == 200
+            time.sleep(1.5)
+            now = live_night()
+            assert now["night"] == "night" and "started" not in now["reason"] and now["since_s"] >= held, now
+            assert request("POST", "/api/v1/controls", {"night": {"mode": "day", "ir": "night"}})[0] == 200
+            result["checks"].append("auto mode at a start waits for the exposure, and only a switch to night is held")
             # Last: this locks 127.0.0.1 out for a minute. Earlier negative
             # tests may already have counted, so the block can come sooner.
             statuses = [request("GET", "/api/v1/status", password="not-" + secret)[0] for _ in range(10)]

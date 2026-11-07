@@ -514,8 +514,8 @@ class Mock:
         elif e["ev"] is None:
             night, e["reason"] = max(night, 0), "no exposure reading; holding"
         elif night < 0:
-            night = int(e["ev"] >= (n["night_ev"] + n["day_ev"]) // 2)
-            e["reason"] = "auto: started %s" % ("dark" if night else "light")
+            night = int(e["ev"] >= n["night_ev"])
+            e["reason"] = "auto: started %s, level %d" % ("dark" if night else "light", e["ev"])
         else:
             want = e["ev"] <= n["day_ev"] if night else e["ev"] >= n["night_ev"]
             e["cond"] = (e["cond"] or now) if want else 0.0
