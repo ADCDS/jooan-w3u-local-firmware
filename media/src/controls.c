@@ -683,8 +683,10 @@ static int has_content(const char *path)
 static void release_video(jipc_app *app)
 {
     char error[64];
-    for (unsigned lens = 0; lens < app->config.sensors && lens < 2; ++lens)
-        (void)jipc_backend_control(app, "idr", (int)(lens * 2), 0, error, sizeof error);
+    /* Every encoder: with main_only=0 the substreams have their own, and a long GOP would outlast
+     * the health check's grace. Where two streams share an encoder the limit of one a second applies. */
+    for (unsigned ch = 0; ch < app->config.sensors * 2 && ch < JIPC_VIDEO_STREAMS; ++ch)
+        (void)jipc_backend_control(app, "idr", (int)ch, 0, error, sizeof error);
 }
 
 static void *engine(void *opaque)
