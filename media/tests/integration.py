@@ -560,10 +560,13 @@ def controls_checks(request, root, connection=None, secret=None):
     marker.unlink()
     wait_for(lambda: controls()["live"]["clock_ok"] is False and controls()["live"]["privacy"] is True, 5,
              "with no confirmed clock, a privacy window stays private")
-    assert "waiting for the clock" in controls()["live"]["reason"]
+    assert "privacy" in controls()["live"]["reason"]
     # An out-of-range value is refused during privacy too, not saved for later.
     assert request("POST", "/api/v1/control", {"operation": "brightness", "value": 9999, "value2": 0})[0] != 200
-    # The microphone goes with it, and ONVIF reading the schedule back as AUTO must not end it.
+    # The other schedules wait too.
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
+    wait_for(lambda: "waiting for the clock" in controls()["live"]["reason"], 5, "night schedule waits")
+    assert request("POST", "/api/v1/controls", {"privacy": {"schedule": window}})[0] == 200
     marker.write_text("")
     wait_for(lambda: controls()["live"]["clock_ok"] is True and controls()["live"]["privacy"] is False, 5, "clock confirmed")
     # "On" by hand under a schedule is saved as a time, so it survives a restart, and goes with "off".
@@ -584,6 +587,20 @@ def controls_checks(request, root, connection=None, secret=None):
     assert request("POST", "/api/v1/controls", {"privacy": {"schedule": {"enabled": False}}})[0] == 200
     wait_for(lambda: controls()["live"]["privacy"] is False, 5, "schedule off")
     assert "held_until" not in controls()["privacy"]
+    # Privacy runs in day mode, whatever is chosen: the ISP's night mode undoes the black-out.
+    assert request("POST", "/api/v1/controls", {"night": {"mode": "night"}})[0] == 200
+    wait_for(lambda: platform()["night"] == 1, 5, "night chosen")
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
+    wait_for(lambda: platform()["night"] == 0 and controls()["live"]["privacy"] is True, 5, "day mode for privacy")
+    assert "privacy" in controls()["live"]["reason"] and controls()["night"]["mode"] == "night"
+    # Nothing goes around that meanwhile, and what was asked for still counts afterwards.
+    for operation in ("night", "isp_night", "ircut"):
+        assert request("POST", "/api/v1/control", {"operation": operation, "value": 1, "value2": 0})[0] == 200
+    time.sleep(1.5)
+    assert platform()["night"] == 0, platform()
+    assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
+    wait_for(lambda: platform()["night"] == 1 and controls()["live"]["privacy"] is False, 5, "night again after privacy")
+    assert request("POST", "/api/v1/controls", {"night": {"mode": "day"}})[0] == 200
     # The board's health for the admin UI, native already while the boot qualifies.
     qualified = (root / "jipc-native.log").read_text()
     (root / "jipc-native.log").write_text("53.82 jipc-native: media daemon pid=1 ready; qualifying for 185 seconds\n")

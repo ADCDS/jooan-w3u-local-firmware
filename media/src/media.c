@@ -637,6 +637,9 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
     } else if (!strcmp(operation, "night") && (value == 2 || value == 3)) {
         rc = jipc_controls_patch(app, value == 2 ? "{\"night\":{\"mode\":\"auto\"}}" : "{\"night\":{\"mode\":\"schedule\"}}",
                                  error, capacity);
+    } else if (atomic_load(&app->privacy_on) && (!strcmp(operation, "night") || !strcmp(operation, "ircut") || !strcmp(operation, "isp_night"))) {
+        /* Night mode undoes the black-out. Kept for afterwards, like the picture settings. */
+        rc = value != 0 && value != 1 ? fail(error, capacity, "this takes 0 (day) or 1 (night)") : 0;
     } else if (!strcmp(operation, "night")) {
         rc = value != 0 && value != 1 ? fail(error, capacity, "night requires 0 (day), 1 (night), 2 (auto) or 3 (schedule)")
                                       : night_apply(app, state, value, error, capacity);

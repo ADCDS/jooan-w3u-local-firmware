@@ -61,7 +61,7 @@ typedef struct {
     uint64_t auto_settle_us, auto_settle_at;
     int auto_settling, auto_start, reapply_night, reapply_white, hold_factor;
     uint64_t own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
-    int clock_ok, schedules_ready, strobe_with_siren, tick_errors, engine_known;
+    int clock_ok, schedules_ready, strobe_with_siren, tick_errors, engine_known, night_ok;
     pthread_t engine_self;
     char clock_marker[256];
     uint64_t clock_wait_us;
@@ -94,6 +94,8 @@ static pthread_mutex_t lifetime = PTHREAD_MUTEX_INITIALIZER;
  * network time retries every 30 s. Privacy stays on meanwhile, and the rest waits. */
 #define CLOCK_WAIT_US UINT64_C(120000000)
 #define RETRY_US UINT64_C(30000000)
+/* From the black-out to letting frames through: what was in the pipe, and the switch to day. */
+#define PRIVACY_SETTLE_US UINT64_C(2000000)
 
 static void defaults(settings *s)
 {
@@ -694,11 +696,23 @@ static void *engine(void *opaque)
             s = c->s;
         }
         int night = c->active_night, started_day = 0;
+        int privacy = privacy_wanted(c, &s, now);
+        int change_privacy = privacy != c->active_privacy;
+        if (change_privacy) c->active_privacy = privacy;
+        /* Coming out of privacy is a start: the hold and the wait are for a switch, and this
+         * was none, so a dark scene does not sit in near-black video for minutes. */
+        if (change_privacy && !privacy) { c->auto_start = 1; c->auto_settling = 0; c->cond_since = 0; }
         if (s.night_mode != NIGHT_AUTO) c->auto_start = 0;
         /* The camera's own light is not daylight: decide without it. */
         if (c->strobe_until || c->trigger_until) c->own_light_at = now;
         uint64_t hold = c->auto_hold_us * (uint64_t)(c->hold_factor ? c->hold_factor : 1);
-        switch (s.night_mode) {
+        /* The black-out only works in the ISP's day mode. In night mode it ignores the picture
+         * settings that make it: measured on camera1, the whole street shows. So privacy runs in
+         * day mode with the infrared off, whatever the chosen mode says, which comes back after. */
+        if (privacy) {
+            night = 0;
+            snprintf(c->reason, sizeof c->reason, "privacy mode: day mode, which the black-out needs");
+        } else switch (s.night_mode) {
         case NIGHT_DAY: night = 0; snprintf(c->reason, sizeof c->reason, "day (chosen)"); break;
         case NIGHT_NIGHT: night = 1; snprintf(c->reason, sizeof c->reason, "night (chosen)"); break;
         case NIGHT_SCHEDULE:
@@ -764,9 +778,6 @@ static void *engine(void *opaque)
             else if (s.wl_schedule) { c->wl_override_until = 0; white = c->schedules_ready && in_window(local_minutes(&s), s.wl_from, s.wl_until); }
             else white = s.white_light;
         }
-        int privacy = privacy_wanted(c, &s, now);
-        int change_privacy = privacy != c->active_privacy;
-        if (change_privacy) c->active_privacy = privacy;
         int switched = night != c->active_night, change_night = switched || c->reapply_night;
         int change_white = white != c->active_white || c->reapply_white;
         c->reapply_night = c->reapply_white = 0;
@@ -792,9 +803,9 @@ static void *engine(void *opaque)
         }
 
         char error[160];
-        /* Privacy on: hold the frames, black out, wait for what was in the pipe,
-         * and only then let frames through. If the black-out fails the frames stay
-         * held, so a failure pauses video instead of showing it. Off: the picture
+        /* Privacy on: hold the frames, go to day mode, black out, wait for what was in the
+         * pipe, and only then let frames through. If day mode or the black-out fails the
+         * frames stay held, so a failure pauses video instead of showing it. Off: the picture
          * comes back first, then the head. */
         if (first || change_privacy) {
             attempted = 1;
@@ -806,9 +817,6 @@ static void *engine(void *opaque)
             if (jipc_platform_privacy(app, privacy, s.privacy_slot, error, sizeof error) < 0) set_error(c, "privacy", error);
             jipc_log("info", "controls: privacy %s", privacy ? "on" : "off");
         }
-        if (privacy && !c->covered_at) { if (!apply_cover(c)) c->covered_at = now; }
-        else if (privacy && atomic_load(&app->privacy_hold) && now - c->covered_at >= UINT64_C(1000000))
-            atomic_store(&app->privacy_hold, 0);
         if (first) {
             error[0] = 0;
             if (jipc_platform_control(app, "pilot_led", s.pilot_led, 0, error, sizeof error) < 0)
@@ -820,15 +828,23 @@ static void *engine(void *opaque)
             if (jipc_platform_control(app, "ir_mode", s.ir_off, 0, error, sizeof error) < 0 ||
                 jipc_backend_night(app, night, error, sizeof error) < 0) {
                 set_error(c, "night", error);
+                c->night_ok = 0;
                 pthread_mutex_lock(&c->mutex);
                 c->retry_night_at = now + RETRY_US;
                 pthread_mutex_unlock(&c->mutex);
             } else {
                 jipc_log("info", "controls: %s (%s)", night ? "night" : "day", c->reason);
-                /* A day/night switch changes the ISP's mode: keep the lenses black through it. */
-                if (privacy) (void)apply_cover(c);
+                c->night_ok = 1;
+                /* The mode has changed: whatever was blacked out before is to be done again. */
+                if (privacy) {
+                    atomic_store(&app->privacy_hold, 1);
+                    c->covered_at = 0;
+                }
             }
         }
+        if (privacy && !c->covered_at) { if (c->night_ok && !apply_cover(c)) c->covered_at = now; }
+        else if (privacy && atomic_load(&app->privacy_hold) && now - c->covered_at >= PRIVACY_SETTLE_US)
+            atomic_store(&app->privacy_hold, 0);
         if (first || change_white) {
             attempted = 1;
             error[0] = 0;
