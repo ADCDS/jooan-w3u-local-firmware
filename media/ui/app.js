@@ -368,6 +368,7 @@
 		run($('si-go'), () => signIn(c), $('si-pass'));
 	};
 	function out(m) {
+		if (reloadOn) return location.reload(); // a restart ends a session too: sign in on the new page
 		++ep;
 		csrf = '';
 		off = 0;

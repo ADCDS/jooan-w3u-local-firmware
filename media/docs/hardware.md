@@ -498,5 +498,5 @@ The admin UI can also install a release, from a package made by
 verifier, then has the signed `scripts/apply-media-update.sh` check the camera
 and run the signed `scripts/upgrade-appfs.sh`. Nothing is flashed until the owner
 confirms, and a package not confirmed in 15 minutes is forgotten. On camera1 an
-install with Frigate connected took 4 s to upload and check, video kept its 15 fps
+install with Frigate connected took about 5 s to upload and check, video kept its 15 fps
 meanwhile, and the page was back about 90 s after confirming.
