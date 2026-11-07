@@ -53,7 +53,8 @@ target_link_options(jooanipc-open PRIVATE -Wl,--gc-sections -Wl,--export-dynamic
 target_link_libraries(jooanipc-open PRIVATE jipc_core)
 if(JIPC_SANITIZERS)
   foreach(target jipc_core jipc_json jooanipc-open)
-    target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    # -O1: at -O3 the instrumented RTSP input handler alone is larger than its thread's 256 KB stack.
+    target_compile_options(${target} PRIVATE -O1 -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(${target} PUBLIC -fsanitize=address,undefined)
   endforeach()
 endif()

@@ -249,11 +249,19 @@ jl_ensure_wifi() {
         printf '%s\n' "$(( $(jl_uptime) + 300 ))" > "$JL_RUN/wifi-next" || :
     fi
     printf '%s:%s\n' "$jl_wpa" "$((jl_wifi_tries + 1))" > "$JL_RUN/wifi-attempts" || :
-    if jl_bounded_hook 60 "$jl_wifi_hook" "$JL_CONFIG/wifi.json"; then
-        printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
-    else
-        jl_log 'committed Wi-Fi network could not be applied'
-    fi
+    jl_wifi_rc=0
+    jl_bounded_hook 60 "$jl_wifi_hook" "$JL_CONFIG/wifi.json" || jl_wifi_rc=$?
+    case "$jl_wifi_rc" in
+        0) printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || : ;;
+        3)
+            # Nothing was tried. So nothing is trying to join, which is what a native boot
+            # asks before it waits: the fallback gets its turn. Not retried either.
+            rm -f "$JL_RUN/wifi-attempts"
+            printf '%s\n' "$jl_wpa" > "$JL_RUN/wifi-applied" || :
+            jl_log 'committed Wi-Fi network cannot be tried: its file or tools are broken'
+            ;;
+        *) jl_log 'committed Wi-Fi network could not be applied' ;;
+    esac
 }
 
 jl_local_network_policy() {
@@ -304,15 +312,19 @@ jl_make_accounts() {
 # JFFS2 may report old erase blocks as occupied briefly after a large removal.
 # Bound the wait: a genuinely full partition must still fail closed.
 jl_wait_free_kb() {
-    jl_free_path=$1 jl_free_min=$2 jl_free_tries=${3:-15}
+    jl_free_path=$1 jl_free_min=$2 jl_free_tries=${3:-15} jl_free_waited=0
     while [ "$jl_free_tries" -gt 0 ]; do
         sync
         jl_free_now=$(df -k "$jl_free_path" | awk 'END {print $4}')
         case "$jl_free_now" in ''|*[!0-9]*) return 1 ;; esac
-        [ "$jl_free_now" -ge "$jl_free_min" ] && return 0
+        if [ "$jl_free_now" -ge "$jl_free_min" ]; then
+            [ "$jl_free_waited" = 0 ] || jl_log "$jl_free_min KiB free after $jl_free_waited s"
+            return 0
+        fi
         jl_free_tries=$((jl_free_tries - 1))
-        [ "$jl_free_tries" -gt 0 ] && sleep 1
+        if [ "$jl_free_tries" -gt 0 ]; then sleep 1; jl_free_waited=$((jl_free_waited + 1)); fi
     done
+    jl_log "$jl_free_min KiB not free after $jl_free_waited s: $jl_free_now KiB"
     return 1
 }
 
@@ -508,10 +520,17 @@ jl_scheduled_restart() {
     jl_reboot_asked
 }
 jl_rs_busy() {
-    [ ! -d "$JL_RUN/state.lock" ] && [ ! -e "$JL_STATE/wifi-trial" ] || return 1
+    [ ! -d "$JL_RUN/state.lock" ] && [ ! -d "$JL_RUN/firmware-apply.lock" ] && [ ! -e "$JL_STATE/wifi-trial" ] || return 1
     if [ -r "$JL_STATE/selection" ] && read -r _jl_rs_stable jl_rs_pending _jl_rs_x < "$JL_STATE/selection" &&
        [ "${jl_rs_pending:--}" != - ]; then return 1; fi
+    jl_no_runtime && return 1
     return 0
+}
+# A platform update stopped half way (docs/RECOVERY.md): this runtime runs from RAM and none is on
+# flash, so the next boot would have no network. Nothing but a person should restart this camera.
+jl_no_runtime() {
+    [ -r "$JL_STATE/selection" ] && read -r jl_nr_stable jl_nr_pending _jl_nr_x < "$JL_STATE/selection" &&
+        [ "${jl_nr_stable:--}" = - ] && [ "${jl_nr_pending:--}" = - ]
 }
 # A reboot the platform decided on: keep the clock's time (only saved every half
 # hour otherwise), and tell the next boot this was no failure of the media layer.
@@ -594,7 +613,7 @@ jl_note_net_loss() {
 }
 
 jl_net_watchdog() {
-    if [ -d "$JL_RUN/state.lock" ] || [ -e "$JL_STATE/wifi-trial" ] ||
+    if [ -d "$JL_RUN/state.lock" ] || [ -d "$JL_RUN/firmware-apply.lock" ] || [ -e "$JL_STATE/wifi-trial" ] ||
        [ ! -r "$JL_RUN/default-gateway" ] ||
        ! read -r jl_netdog_gw jl_netdog_dev < "$JL_RUN/default-gateway"; then
         jl_netdog_down=
@@ -623,6 +642,10 @@ jl_net_watchdog() {
         jl_netdog_wait=$((900 << jl_netdog_shift))
     fi
     [ "$jl_netdog_now" -ge "$jl_netdog_wait" ] || return 0
+    if jl_no_runtime; then
+        jl_log 'network watchdog: no reboot, there is no runtime on flash (docs/RECOVERY.md)'
+        return 0
+    fi
     printf '%s\n' "$((jl_netdog_n + 1))" > "$JL_STATE/netdog-reboots" || :
     jl_record_crash netdog || :
     jl_reboot_asked

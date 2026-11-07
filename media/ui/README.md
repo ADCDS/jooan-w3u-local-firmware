@@ -44,7 +44,7 @@ xz, which keeps at least 48 KiB of the partition free.
   `live.hold_left_s` is the least wait before the next automatic switch.
 - Media controls are `POST /api/v1/control {"operation","value","value2"[,"name"]}`:
   pan/tilt `ptz` at ±30/60/100 (Slow/Normal/Fast), `preset_set` into any slot
-  1–16, `preset_rename` (name only; 409 for a duplicate name or an empty slot),
+  1–16, `preset_rename` (name only; 409 for a duplicate name, an empty slot, or while steering),
   `flip` per lens (1 mirror, 2 vertical flip; "Upside down" is 3),
   `mic_mute` 1/0 (the RTSP audio track stays up and carries silence).
 - Status `audio.muted` and `audio.level` (`{"peak_dbfs","rms_dbfs"}` or `null`)

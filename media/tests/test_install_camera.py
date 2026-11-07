@@ -237,6 +237,25 @@ with tempfile.TemporaryDirectory() as temporary:
     out = subprocess.run([str(helper)], env={"CAMERA_ASKPASS": "pass word"}, capture_output=True, text=True, check=True).stdout
     assert out == "pass word\n" and "pass word" not in helper.read_text()
 camera = ic.Camera("example", "secret", "")
+# A platform update that stopped says so at once, and says not to restart.
+class Answers:
+    def __init__(self, *said):
+        self.said = list(said)
+
+    def platform(self, *args, **kwargs):
+        said = self.said.pop(0)
+        if isinstance(said, Exception):
+            raise said
+        return said
+
+
+assert ic.platform_stopped(Answers((200, {}, b'{"state":"running"}')), None) == ""
+assert ic.platform_stopped(Answers(OSError("no route")), None) == ""
+assert ic.platform_stopped(Answers((500, {}, b"")), None) == ""
+assert ic.platform_stopped(Answers((200, {}, b"not json")), None) == ""
+assert "stopped (mount)" in ic.platform_stopped(Answers((200, {}, b'{"state":"failed","reason":"mount"}')), None)
+assert "not restarted" in ic.platform_stopped(Answers((200, {}, b'{"state":"complete","restart":"needed"}')), None)
+assert "DO NOT restart" in ic.stopped_message(ic.platform_stopped(Answers((200, {}, b'{"state":"failed"}')), None))
 # An update brings the boot script its release goes with, and a bundle without one is refused.
 with tempfile.TemporaryDirectory() as temporary:
     bundle = pathlib.Path(temporary)

@@ -11,9 +11,8 @@
 #define JIPC_VIDEO_STREAMS 4
 #define JIPC_AUDIO_STREAM 4
 #define JIPC_STREAMS 5
-/* Ring depth per stream: video keeps four frames (a slow reader then waits
- * for an IDR); audio keeps 1.28 s of 40 ms frames so jittery readers do not
- * drop sound. */
+/* Ring depth per stream: a slow video reader waits for an IDR; audio keeps 1.28 s of
+ * 40 ms frames so jittery readers do not drop sound. */
 #define JIPC_RING_MAX 32
 /* Close to a second at 15 fps. A reader further behind than this loses frames until the next
  * keyframe, and a short stall on Wi-Fi should not cost half a second of video. */
@@ -26,7 +25,7 @@
 #define JIPC_MAX_FRAME (2u * 1024u * 1024u + 64u * 1024u)
 /* Measured on camera1: a black IDR is under 1 KB, under 7 KB with the timestamp, and a picture
  * 120 to 220 KB at night. Above this, privacy mode is not black, whatever the SDK said. */
-#define JIPC_PRIVACY_MAX_FRAME 32768u
+#define JIPC_PRIVACY_MAX_FRAME 16384u
 #define JIPC_MAX_JSON 16384
 enum jipc_codec { JIPC_H264 = 1, JIPC_PCMA = 2, JIPC_JPEG = 3 };
 typedef struct {

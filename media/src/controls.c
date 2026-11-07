@@ -60,9 +60,9 @@ typedef struct {
     int ev, ev_valid;
     uint64_t ev_at, cond_since, trigger_until, strobe_until, switched_at, wl_override_until, auto_hold_us;
     uint64_t auto_settle_us, auto_settle_at;
-    int auto_settling, auto_start, reapply_night, reapply_white, hold_factor;
-    uint64_t privacy_since, own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
-    int clock_ok, schedules_ready, strobe_with_siren, engine_known, night_ok, network_time;
+    int auto_settling, auto_start, reapply_night, reapply_white, hold_factor, night_before_privacy;
+    uint64_t own_light_at, retry_night_at, retry_white_at, save_failed_at, started_at, strobe_since, patrol_move_at;
+    int clock_ok, schedules_ready, privacy_ready, strobe_with_siren, engine_known, night_ok, network_time;
     const char *error_what; /* which work c->error is about: only that work clears it */
     uint64_t retry_picture_at;
     pthread_t engine_self;
@@ -601,7 +601,7 @@ static int privacy_wanted(const controls_state *c, const settings *s, uint64_t n
         if (s->privacy_held_until && (long long)time(NULL) < s->privacy_held_until) return 1;
         /* A clock nothing has confirmed may be hours behind after a power cut. Until then, or
          * until the wait runs out with network time off, a camera with a privacy window stays private. */
-        if (!c->schedules_ready) return 1;
+        if (!c->privacy_ready) return 1;
         return in_window(local_minutes(s), s->privacy_from, s->privacy_until);
     }
     return s->privacy_on;
@@ -683,10 +683,12 @@ static int has_content(const char *path)
 static void release_video(jipc_app *app)
 {
     char error[64];
-    /* Every encoder: with main_only=0 the substreams have their own, and a long GOP would outlast
-     * the health check's grace. Where two streams share an encoder the limit of one a second applies. */
+    /* Every encoder once: with main_only=0 the substreams have their own, and a long GOP would
+     * outlast the health check's grace. value2=1 passes the limit of one a second: a viewer's
+     * request a moment ago must not cancel this one. */
     for (unsigned ch = 0; ch < app->config.sensors * 2 && ch < JIPC_VIDEO_STREAMS; ++ch)
-        (void)jipc_backend_control(app, "idr", (int)ch, 0, error, sizeof error);
+        if (jipc_video_owner(&app->config, ch) == ch)
+            (void)jipc_backend_control(app, "idr", (int)ch, 1, error, sizeof error);
 }
 
 static void *engine(void *opaque)
@@ -712,7 +714,10 @@ static void *engine(void *opaque)
         if (c->retry_picture_at && now >= c->retry_picture_at) { c->retry_picture_at = 0; do_picture = 1; }
         c->clock_ok = !access(c->clock_marker, F_OK) || (atomic_load(&app->clock_confirmed) && !getenv("JIPC_CLOCK_IGNORE_SNTP"));
         c->network_time = has_content(c->ntp_config);
-        c->schedules_ready = c->clock_ok || now - c->started_at >=
+        /* Privacy fails closed, so it can wait for a router back from the same power cut. A slightly
+         * wrong clock is much better than no night vision, so the other schedules do not wait as long. */
+        c->schedules_ready = c->clock_ok || now - c->started_at >= (c->clock_wait_us ? c->clock_wait_us : CLOCK_WAIT_US);
+        c->privacy_ready = c->clock_ok || now - c->started_at >=
             (c->clock_wait_us ? c->clock_wait_us : c->network_time ? CLOCK_WAIT_NTP_US : CLOCK_WAIT_US);
         if (c->retry_night_at && now >= c->retry_night_at) { c->retry_night_at = 0; c->reapply_night = 1; }
         if (c->retry_white_at && now >= c->retry_white_at) { c->retry_white_at = 0; c->reapply_white = 1; }
@@ -742,16 +747,22 @@ static void *engine(void *opaque)
         int privacy = privacy_wanted(c, &s, now);
         int change_privacy = privacy != c->active_privacy;
         if (change_privacy) c->active_privacy = privacy;
-        /* Coming out of privacy is a start: the hold and the wait are for a switch, and this
-         * was none, so a dark scene does not sit in near-black video for minutes. Privacy ran
-         * in day mode with the infrared off, which is what a start settles for, so its time
-         * counts: day mode in the dark makes frames up to 40 times their usual size (measured
-         * on camera1), and video should not spend longer there than the reading needs. */
-        if (change_privacy && privacy) c->privacy_since = now;
+        /* Coming out of privacy: straight back to the mode it interrupted. Day mode in the dark
+         * makes frames up to 40 times their size (measured on camera1), and the reading now is of
+         * the privacy pose, not the view, so it decides nothing: the usual rule corrects a stale
+         * choice within its wait. That is no switch, so no hold. A start with privacy already on
+         * knows no mode, and starts as usual once the head is back. */
+        int back_from_privacy = 0;
+        if (change_privacy && privacy) c->night_before_privacy = c->active_night;
         if (change_privacy && !privacy) {
-            c->auto_start = 1; c->cond_since = 0;
-            c->auto_settling = c->privacy_since != 0; /* the first tick is no privacy ending */
-            c->auto_settle_at = c->privacy_since + c->auto_settle_us;
+            c->cond_since = 0;
+            c->auto_settling = 0;
+            if (c->night_before_privacy >= 0) {
+                night = c->night_before_privacy;
+                back_from_privacy = 1;
+                c->auto_start = 0;
+            } else c->auto_start = 1;
+            c->night_before_privacy = -1;
         }
         /* Going in: day mode again whatever this engine believes, as something outside it may
          * have changed the ISP's mode. And if the output says the black-out is not working. */
@@ -848,7 +859,7 @@ static void *engine(void *opaque)
         int to_day = switched && !night;
         if (to_save) c->dirty = 0;
         if (switched) { c->active_night = night; c->switched_at = now; }
-        if (started_day) c->switched_at = 0;
+        if (started_day || back_from_privacy) c->switched_at = 0;
         /* The white light going off: what the last switch saw is gone, so no hold over it. */
         if (change_white && !white && c->active_white == 1 && !switched) c->switched_at = 0;
         if (change_white) c->active_white = white;
@@ -875,8 +886,10 @@ static void *engine(void *opaque)
             if (privacy) {
                 atomic_store(&app->privacy_hold, 1);
                 c->covered_at = 0;
-                jipc_streams_forget_video(app);
+                /* This first: it waits for the control lock, which the poll thread holds across a
+                 * publish, so a frame already on its way is in the ring before the floor is set. */
                 jipc_backend_qp_floor(app, 1);
+                jipc_streams_forget_video(app);
             } else if (!first) jipc_backend_qp_floor(app, 0);
             atomic_store(&app->privacy_on, privacy);
             atomic_store(&app->mic_muted, s.mic_mute || privacy);
@@ -884,6 +897,7 @@ static void *engine(void *opaque)
             error[0] = 0;
             if (jipc_platform_privacy(app, privacy, s.privacy_slot, error, sizeof error) < 0) set_error(c, "privacy head", error);
             else clear_error(c, "privacy head");
+            if (!privacy) clear_error(c, "privacy leak");
             jipc_log("info", "controls: privacy %s", privacy ? "on" : "off");
         }
         /* Off: the picture first, in day mode, then whatever mode was chosen. */
@@ -899,6 +913,7 @@ static void *engine(void *opaque)
             error[0] = 0;
             if (jipc_platform_control(app, "pilot_led", s.pilot_led, 0, error, sizeof error) < 0)
                 set_error(c, "pilot_led", error);
+            else clear_error(c, "pilot_led");
         }
         if (first || change_night) {
             error[0] = 0;
@@ -906,6 +921,7 @@ static void *engine(void *opaque)
                 jipc_backend_night(app, night, error, sizeof error) < 0) {
                 set_error(c, "night", error);
                 c->night_ok = 0;
+                c->covered_at = 0; /* the frames stay held: a failure pauses video, it does not show it */
                 pthread_mutex_lock(&c->mutex);
                 c->retry_night_at = now + RETRY_US;
                 pthread_mutex_unlock(&c->mutex);
@@ -921,11 +937,16 @@ static void *engine(void *opaque)
                 }
             }
         }
-        /* After the mode: a keyframe of the picture that stays, not of the one before the switch. */
+        /* After the mode: a keyframe of the picture that stays, not of the one before the switch.
+         * And after the hold: one asked for while frames are still dropped would be lost. */
+        if (!privacy) atomic_store(&app->privacy_hold, 0);
         if ((first || change_privacy) && !privacy) release_video(app);
         if (privacy && !c->covered_at) { if (c->night_ok && !apply_cover(c)) c->covered_at = now; }
         else if (privacy && atomic_load(&app->privacy_hold) && now - c->covered_at >= PRIVACY_SETTLE_US) {
+            /* Again: a frame already past the publisher's check when the hold began lands above the first floor. */
+            jipc_streams_forget_video(app);
             atomic_store(&app->privacy_hold, 0);
+            clear_error(c, "privacy leak");
             release_video(app);
         }
         if (first || change_white) {
@@ -944,7 +965,6 @@ static void *engine(void *opaque)
             c->retry_picture_at = now + RETRY_US;
             pthread_mutex_unlock(&c->mutex);
         }
-        if (!privacy) atomic_store(&app->privacy_hold, 0);
         patrol_tick(c, &s, privacy, now);
         overlay_tick(c, &s, clock_ok);
         jipc_update_tick();
@@ -992,7 +1012,7 @@ void jipc_controls_preload(jipc_app *app)
     int minutes;
     const char *oem = getenv("JIPC_OEM_CONFIG");
     if (!camera_zone(oem ? oem : "/opt/conf/config.json", &minutes)) c->s.utc_offset_min = minutes;
-    c->schedules_ready = !access(clock_marker(), F_OK) || atomic_load(&app->clock_confirmed);
+    c->schedules_ready = c->privacy_ready = !access(clock_marker(), F_OK) || atomic_load(&app->clock_confirmed);
     int privacy = privacy_wanted(c, &c->s, 0);
     /* The microphone too: RTSP is listening before the engine's first tick. */
     atomic_store(&app->mic_muted, c->s.mic_mute || privacy);
@@ -1012,6 +1032,7 @@ int jipc_controls_start(jipc_app *app)
     c->active_night = c->active_white = c->active_privacy = -1;
     c->patrol_state = "off";
     c->auto_start = 1;
+    c->night_before_privacy = -1;
     c->started_at = jipc_now_us();
     snprintf(c->clock_marker, sizeof c->clock_marker, "%s", clock_marker());
     /* JIPC_CLOCK_WAIT_S and JIPC_NTP_CONFIG: test hooks. */
@@ -1095,6 +1116,8 @@ void jipc_controls_note(jipc_app *app, const char *operation, int value, int val
                 (uint64_t)next_boundary_s(&c->s, c->s.wl_from, c->s.wl_until) * 1000000u;
         } else c->s.white_light = value;
         c->trigger_until = c->strobe_until = 0;
+        /* As in the engine: what the last switch saw is gone with the light, so no hold over it. */
+        if (!value && c->active_white == 1) c->switched_at = 0;
         c->active_white = value;
         c->reapply_white = 1; /* the engine may have been about to write the opposite: its tick settles it */
     } else if (!strcmp(operation, "pilot_led")) c->s.pilot_led = value;
@@ -1193,7 +1216,7 @@ int jipc_controls_patch(jipc_app *app, const char *json, char *error, size_t cap
     if (!rc) {
         cJSON *light = cJSON_GetObjectItemCaseSensitive(root, "white_light");
         /* Choosing on or off by hand ends whatever else is driving the light, as the control does. */
-        if (light && (cJSON_GetObjectItemCaseSensitive(light, "on") || cJSON_GetObjectItemCaseSensitive(light, "schedule"))) {
+        if (light && (cJSON_GetObjectItemCaseSensitive(light, "on") || c->s.wl_schedule != before.wl_schedule)) {
             if (cJSON_GetObjectItemCaseSensitive(light, "on")) c->wl_override_until = 0;
             c->strobe_until = c->trigger_until = 0;
         }

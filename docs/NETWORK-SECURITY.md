@@ -165,7 +165,8 @@ supervisor adds the committed network once the control socket answers. A
 native boot without a committed network cannot reach its gateway, fails after
 300 s and latches `native-failed`; the handoff needs the committed network as
 well, so the camera then stays in OEM rescue mode. With a committed network, a
-router that is down only makes it wait, and restart now and then, in native boot. The OEM configuration stays
+router that is down only makes it wait in native boot, and restart every 25 minutes at first and
+every 4 hours or so later on, which is what a crashed radio needs. The OEM configuration stays
 on flash, untouched, for the fallback modes.
 
 When the OEM application runs, it owns `wpa_supplicant` and can restart it

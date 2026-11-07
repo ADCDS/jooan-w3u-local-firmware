@@ -29,6 +29,14 @@ assert 'if [ "$i" -ge 300 ] && ! worth_waiting; then' in text
 # The feeder limit waits with it, and a failure clears that first.
 assert text.index('> "$network_wait"') < text.index("until network_ready")
 assert text.index('rm -f "$network_wait"') < text.index("fail 'no gateway")
+# The wait has an end: the file goes after a bound that grows with each boot spent waiting, and
+# sooner if the radio crashed, while the script goes on waiting. The count clears on qualifying.
+give_up = text[text.index("give_up_waiting() {"):text.index("i=0\nuntil network_ready")]
+assert 'rm -f "$network_wait"' in give_up and '> "$root/net-wait-boots"' in give_up
+limit = text.index('[ "$i" -lt "$wait_limit" ] || give_up_waiting')
+assert text.index("until network_ready") < limit < text.index("log 'network ready'") < text.index('rm -f "$root/net-wait-boots"')
+assert "DUMPDONE" in text[limit:text.index("log 'network ready'")]
+assert "$((900 << waits))" in text and '[ "$waits" -le 4 ] || waits=4' in text
 # Only a qualified boot earns the wait; a lost network counts on three boots, not one.
 assert text.rindex('"$root/ever-qualified"') > text.index("[ -n \"$homed\" ]")
 assert '"$lost" -ge 3' in text and "three boots in a row" in text

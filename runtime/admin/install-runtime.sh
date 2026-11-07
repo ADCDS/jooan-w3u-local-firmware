@@ -47,11 +47,14 @@ jl_bytes_old=$(jl_tree_bytes "$JL_ROOT/slots")
 jl_size_new=$(( (jl_bytes_new + 1023) / 1024 ))
 jl_size_old=$(( jl_bytes_old / 1024 ))
 [ "$jl_size_new" -le "$jl_size_old" ] && jl_short=$((8 + 56)) || jl_short=$((jl_size_new - jl_size_old + 8 + 56))
+# With nothing left to protect there is nothing to refuse for: the steps after the delete decide.
+[ "$JL_STABLE" = - ] && [ "$jl_bytes_old" = 0 ] || {
 jl_wait_free_kb "$JL_ROOT" "$jl_short" 20 || {
     jl_log 'runtime would not fit in the 56 KiB reserve; nothing was changed'; exit 1;
 }
 [ $(( $(jl_tree_bytes "$JL_ROOT") - jl_bytes_old + jl_bytes_new + 4096)) -le 200704 ] || {
     jl_log 'runtime maintenance would exceed 196 KiB persistent tree; nothing was changed'; exit 1;
+}
 }
 # Enter controller-owned recovery before deleting the one persistent runtime.
 # The old processes already expanded in /run continue until reboot.
@@ -62,20 +65,21 @@ rm -rf "$JL_ROOT/slots/A" "$JL_ROOT/slots/B" \
     "$JL_ROOT/slots/A.previous" "$JL_ROOT/slots/B.previous" || exit 1
 sync
 [ "${JOOAN_FAIL_AT:-}" != after-runtime-delete ] || exit 99
-jl_wait_free_kb "$JL_ROOT" 56 20 || exit 1
 
 jl_archive_bytes=$(wc -c < "$jl_stage/runtime.tar.gz")
 jl_size=$(( (jl_archive_bytes + 1023) / 1024 ))
 case "$jl_archive_bytes:$jl_size" in *[!0-9:]*|:*|*:) exit 1 ;; esac
 jl_need=$((jl_size + 8))
-[ $(( $(jl_tree_bytes "$JL_ROOT") + jl_archive_bytes + 4096)) -le 200704 ] || {
-    jl_log 'runtime maintenance would exceed 196 KiB persistent tree'; exit 1;
-}
-# Runtime replacement happens only after the old persistent runtime is removed.
-# Preserve 56 KiB through maintenance; health promotion restores the 64 KiB gate.
-jl_wait_free_kb "$JL_ROOT" $((jl_need + 56)) 20 || {
-    jl_log 'runtime maintenance would violate 56 KiB free-space reserve'; exit 1;
-}
+# The only runtime is gone now, and from here a refusal is the worst outcome: the next boot would
+# have no network. So wait for the freed space as long as it takes, and if the 56 KiB reserve will
+# not hold (health promotion restores the 64 KiB gate), use it: no runtime is worse.
+if ! jl_wait_free_kb "$JL_ROOT" $((jl_need + 56)) 120; then
+    jl_log 'going on inside the 56 KiB reserve: no runtime on flash would be worse'
+    jl_wait_free_kb "$JL_ROOT" "$jl_need" 60 || {
+        jl_log 'NO RUNTIME ON FLASH, and the new one does not fit. Do not restart this camera: see docs/RECOVERY.md'
+        exit 1
+    }
+fi
 mkdir "$jl_dest.new" || exit 1
 cp "$jl_stage/runtime.tar.gz" "$jl_stage/runtime.md5" "$jl_dest.new/" || exit 1
 jl_verify_archive "$jl_dest.new/runtime.tar.gz" "$jl_dest.new/runtime.md5" || exit 1
@@ -83,11 +87,10 @@ sync
 mv "$jl_dest.new" "$jl_dest" || exit 1
 sync
 [ "${JOOAN_FAIL_AT:-}" != after-runtime-dir-rename ] || exit 99
-jl_check_maintenance_storage || exit 1
 jl_write_selection - "$jl_target" 0 || exit 1
 sync
 [ "${JOOAN_FAIL_AT:-}" != after-pending-selection-rename ] || exit 99
-jl_check_maintenance_storage || exit 1
+jl_check_maintenance_storage || jl_log 'the runtime is in place, with less room than the reserve'
 jl_unlock
 trap - EXIT
 jl_log "single runtime $jl_target staged; health trial begins on the next boot"

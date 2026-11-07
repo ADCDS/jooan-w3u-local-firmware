@@ -677,7 +677,7 @@ int jipc_backend_control(jipc_app *app, const char *operation, int value,
              * viewer that keeps falling behind must not make it worse for everyone. */
             unsigned owner = jipc_video_owner(&state->config, (unsigned)value);
             uint64_t idr_now = jipc_now_us();
-            if (state->idr_at[owner] && idr_now - state->idr_at[owner] < UINT64_C(1000000)) rc = 0;
+            if (value2 != 1 && state->idr_at[owner] && idr_now - state->idr_at[owner] < UINT64_C(1000000)) rc = 0;
             else {
                 state->idr_at[owner] = idr_now;
                 if (state->imp) rc = jipc_imp_control(state->imp, operation, value, value2, error, capacity);

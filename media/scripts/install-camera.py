@@ -50,7 +50,7 @@ RELEASES = "/mnt/mtd/jooanipc-open/releases"
 MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
-FIRST_PLATFORM_SEQUENCE = 69
+FIRST_PLATFORM_SEQUENCE = 70
 
 
 def log(message):
@@ -282,7 +282,24 @@ def after_commit(why):
     return "rollback failed" in why or "config space low" in why
 
 
+def platform_stopped(cam, session):
+    """Why a platform update stopped, if it did: otherwise the wait would just run out, 20 minutes on."""
+    try:
+        status, _, data = cam.platform("GET", "/api/v1/update", None, session, timeout=10)
+        update = json.loads(data) if status == 200 else {}
+    except (OSError, ValueError, http.client.HTTPException):
+        return ""
+    if update.get("state") == "failed":
+        return f"the platform update stopped ({update.get('reason') or 'no reason given'})"
+    if update.get("restart") == "needed":
+        return "the platform update finished, but the camera has not restarted"
+    return ""
+
+
 def stopped_message(why):
+    if why.startswith("the platform update"):
+        return (f"{why}.\nDO NOT restart or unplug the camera until you have looked at it: docs/RECOVERY.md, "
+                "'An update stopped'")
     if "rollback failed" in why:
         return (f"the flash failed and so did putting the old partition back: {why}\nDO NOT restart or unplug the "
                 "camera: it would not boot. See docs/RECOVERY.md, 'Appfs reflash recovery'")
@@ -580,7 +597,7 @@ def main():
             if status != 200:
                 raise RuntimeError(f"platform apply failed: {status} {data[:300]!r}")
             rebooted = True
-            mode = wait_reboot(cam, before)
+            mode = wait_reboot(cam, before, aborted=lambda: platform_stopped(cam, session))
             wait(lambda: json.loads(cam.platform("GET", "/api/v1/setup/status")[2]).get("release_sequence")
                  == local["release_sequence"], 300, "the new platform release")
             log(f"platform {local['release_version']} running")

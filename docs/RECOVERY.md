@@ -85,6 +85,46 @@ network. On the verified unit that is the vendor bench network `JOOANTEST`
    applies the committed network, and the native boot qualifies.
 4. Remove the temporary network.
 
+## An update stopped
+
+A platform update on a camera short of room deletes the only runtime on flash before writing
+the new one. If it stops in between, the camera keeps working from RAM with nothing on flash to
+start next time: System says the update stopped, and a restart is refused with `no-runtime`.
+
+**Do not restart or unplug the camera yet.** The next boot would have no network, and you would
+be at the steps above. Over SSH:
+
+```sh
+cat /opt/custom/jooan-local/state/selection
+ls /opt/custom/jooan-local/slots/
+```
+
+If the selection names a slot (`A - 0`) and that slot is there, nothing is lost. If it reads
+`- - 0`, put a runtime back. Stop any installer still waiting on this camera first: it would carry
+on when it saw a restart.
+
+1. Find the package that failed, which stays in RAM until a restart:
+   ```sh
+   ls /run/jooan-local/firmware.*.sqfs
+   mkdir /tmp/fw && mount -t squashfs -o ro,loop /run/jooan-local/firmware.<id>.sqfs /tmp/fw
+   ```
+   If it is gone, the same two files are in the release's `JOOAN_FW_PKG`. On your computer,
+   `dd if=JOOAN_FW_PKG bs=96 skip=1 of=p.sqfs && unsquashfs p.sqfs runtime.tar.gz runtime.md5`, then copy
+   them to `/tmp/fw` on the camera with `ssh admin@CAMERA 'cat > /tmp/fw/runtime.tar.gz' < squashfs-root/runtime.tar.gz`.
+2. Copy it into a slot, and let the checksum decide:
+   ```sh
+   cd /opt/custom/jooan-local/slots
+   mkdir A.new && cp /tmp/fw/runtime.tar.gz /tmp/fw/runtime.md5 A.new/
+   [ "$(md5sum A.new/runtime.tar.gz | cut -c1-32)" = "$(cat A.new/runtime.md5)" ] && sync && mv A.new A && sync
+   ```
+3. Select it, with the running controller's own functions:
+   ```sh
+   . /run/jooan-local/controller/boot/common.sh; jl_lock; jl_write_selection A - 0; jl_unlock
+   ```
+
+The supervisor reads the selection only at boot, so this disturbs nothing. The camera can now restart
+safely, and the update can be tried again. This was done for real on camera1 on 2026-11-07, from RAM.
+
 ## A media change that stops native boot
 
 If the media daemon exits during a native boot, its armed watchdog resets the board.
@@ -145,8 +185,8 @@ configuration, so the camera returns to stock with only the platform.
 - **Before the commit point** (the configuration switch just before
   `flashcp`) every failure reboots into the untouched appfs.
 - **After it**, a flash that fails verification is rolled back from a RAM copy
-  of the original appfs, up to three attempts, then the three configuration
-  files are restored and the camera reboots.
+  of the original appfs, up to three attempts, then the configuration files and
+  `native-boot.sh` are restored and the camera reboots.
 - **If the rollback fails as well**, the installer does not reboot. The camera
   stays up with the rootfs feeder running, the lock held, and both images in
   `/tmp`: `/tmp/jipc-appfs-rollback.bin` (the original appfs) and

@@ -149,7 +149,7 @@ shows.
 `tools/aim-calibrate.py` (a host tool, once per camera, about 5 minutes) measures
 which motor steps centre each point of that picture and stores six numbers per axis
 in `state/aim.json`. A reset to defaults keeps the file, since it describes how the
-lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.35 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
+lenses are mounted; a change of the fixed lens's orientation needs a new calibration, and a calibration saved since 0.2.36 records it and stops being used if it changes. Pan/tilt steps do not depend on the other lens's flip.
 Without one the Aim card is hidden and `POST /api/v1/aim` answers 409. On camera1,
 with 20 stops matched, points of the street land a median of 1.2% of the frame's
 width and 1.1% of its height from the centre, at worst 3% and 3.9%. Something beside
@@ -194,7 +194,7 @@ for afterwards and does not reach the lens.
 So that no frame can leak, video frames are dropped from before video starts until
 the lenses are black and 2 s have passed for what was in the pipe, at every
 turn-on and every start of the daemon. Frames that were already in the ring stay out too.
-After that the output is checked: during privacy, a frame over 32 KB is not black (a black
+After that the output is checked: during privacy, a frame over 16 KB is not black (a black
 keyframe is under 7 KB, a picture over 100 KB), so it is dropped, the hold comes back, and
 `live.error` says so. Only H.264 parameter sets get through while
 frames are held, because RTSP and the startup check need them and they show
@@ -205,9 +205,12 @@ showing it. The hardware watchdog's stream check allows for this.
 Leaving privacy should not cost video either. A black picture costs no bits, so rate
 control would sit at its lowest quantiser and the first real frames would be huge: up to
 640 KB and 1 to 4 frames a second for 15 to 25 s on camera1. So the encoders' floor goes
-from 15 to 30 while the picture is black and back afterwards. In three runs that kept
-15 fps but for one dip to 7 fps for a second, largest frame 189 KB. In auto mode, privacy's time in day mode counts as a start's
-settling, so a dark scene goes back to night at once instead of spending 10 s in day mode.
+from 15 to 30 while the picture is black and back afterwards. In three runs by day that
+kept 15 fps but for one dip to 7 fps for a second, largest frame 189 KB. On the way out, day or night goes straight back to what privacy
+interrupted, since what the exposure reads at the privacy pose says nothing about the view,
+and the usual rule corrects it within its wait if the light changed meanwhile. That has run
+with night mode chosen (back in night in 0.7 s) and on the host, not yet in real darkness on
+camera1.
 
 The black-out only works in the ISP's day mode: in night mode it ignores the picture
 settings that make it, as it does the Image page's sliders (brightness 40 changed nothing, measured
@@ -222,14 +225,14 @@ The microphone is muted, and moves from anyone else are refused (`privacy mode i
 on`), as is setting a home position; a stop or a preset's removal leaves the head going
 to its pose. The head goes to `privacy.slot` if that preset exists, and otherwise looks
 down at the end of its tilt travel that means down for this mount, on the same pan; it
-comes back afterwards, to where it was going if it was moving, and to the saved view if a
-daemon restart found it already at the pose.
+comes back afterwards, to where it was going if it was moving, and to the saved view if
+privacy was already on when the daemon started.
 
 With a schedule, the clock may be hours behind after a power cut, so privacy stays on after
 a start until network time or a person has confirmed the clock, or for 2 minutes if nothing
 can (30 with network time configured: a router back from the same power cut may need that long
-for its own time); the other schedules wait that long too, and the page warns while the clock is
-unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
+for its own time). The night and white light schedules wait the 2 minutes only, as a slightly wrong
+clock is much better than no night vision, and the page warns while the clock is unconfirmed. "On" by hand under a schedule lasts until the next edge, across a restart, as
 `privacy.held_until`. Turning a schedule on during manual privacy works the same way, and
 turning it off while that holds leaves privacy on, by hand. A new pose applies at the next turn-on. On
 camera1's mounting no end stop hides the lens: down shows the wall and the ledge
@@ -238,7 +241,7 @@ below it, up the street.
 ## Presets and status
 
 `preset_set`, `preset_goto`, `preset_remove` and `preset_rename` accept slots 1 through 16.
-`preset_rename` takes a `name` and changes only the name (409 for a name already in use or an empty slot): the saved position stays,
+`preset_rename` takes a `name` and changes only the name (409 for a name already in use, an empty slot, or while the head is being steered): the saved position stays,
 the motor does not move, and a name another slot already uses (ignoring ASCII case)
 or an empty slot is refused.
 Setting a slot stops current movement and reads the driver position first.

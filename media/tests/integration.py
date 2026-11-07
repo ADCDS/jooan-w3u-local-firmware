@@ -540,21 +540,28 @@ def controls_checks(request, root, connection=None, secret=None):
     assert controls()["live"]["night"] == "night"
     set_ev(9000)
     wait_for(lambda: controls()["live"]["night"] == "day" and platform()["night"] == 0, 20, "auto to day")
-    # Leaving privacy: its time in day mode counts as a start's settling. A dark scene goes to
-    # night at once, and only the rest of the wait is left after a short privacy.
+    # Leaving privacy: straight back to the mode it interrupted, with no hold, whatever the privacy
+    # pose reads. The usual rule then corrects it, and privacy started in day mode comes back to day.
     set_ev(40000)
+    wait_for(lambda: controls()["live"]["night"] == "night", 25, "night before privacy")
     assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
-    wait_for(lambda: controls()["live"]["privacy"], 3, "privacy on")
-    time.sleep(4.5)
-    assert platform()["night"] == 0
+    wait_for(lambda: controls()["live"]["privacy"] and platform()["night"] == 0, 3, "privacy forces day")
+    set_ev(8000)  # a lit wall at the pose
+    time.sleep(1.5)
+    set_ev(40000)  # the view, once the head is back
     assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
     wait_for(lambda: controls()["live"]["night"] == "night" and platform()["night"] == 1, 1.5, "night at once after privacy")
+    assert controls()["live"]["hold_left_s"] == 0, controls()["live"]
+    set_ev(9000)
+    wait_for(lambda: controls()["live"]["night"] == "day", 12, "the usual rule corrects it, with no hold")
     assert request("POST", "/api/v1/controls", {"privacy": {"on": True}})[0] == 200
     wait_for(lambda: controls()["live"]["privacy"], 3, "privacy on again")
+    set_ev(40000)  # a dark corner at the pose: no reason to go to night
+    time.sleep(1.5)
+    set_ev(9000)
     assert request("POST", "/api/v1/controls", {"privacy": {"on": False}})[0] == 200
     wait_for(lambda: not controls()["live"]["privacy"], 3, "privacy off")
-    assert controls()["live"]["night"] == "day" and "settle" in controls()["live"]["reason"], controls()["live"]
-    wait_for(lambda: controls()["live"]["night"] == "night", 6, "night after the rest of the wait")
+    assert controls()["live"]["night"] == "day" and platform()["night"] == 0, controls()["live"]
     set_ev(10000)
     # Validation leaves everything as it was.
     for bad in ({"night": {"night_ev": 100, "day_ev": 200}}, {"night": {"from": "25:00"}},
@@ -1521,14 +1528,22 @@ def main():
             process.send_signal(signal.SIGHUP)
             time.sleep(0.5)
             assert wait_ready()["audio"]["muted"] is True
+            # Silent from the first window, not only once the engine has ticked.
+            level = None
+            end = time.time() + 4
+            while level is None and time.time() < end:
+                level = json.loads(request("GET", "/api/v1/status")[1])["audio"].get("level")
+                time.sleep(0.05)
+            assert level and level["peak_dbfs"] < -70, level
             assert request("POST", "/api/v1/control", {"operation": "mic_mute", "value": 0, "value2": 0})[0] == 200
             assert json.loads(request("GET", "/api/v1/status")[1])["audio"]["muted"] is False
             result["checks"].append("the microphone's mute is kept across a start")
-            # Audio off and on again: the daemon restarts each way and comes back with it.
-            for wanted in (False, True):
+            # Audio off and on again: the daemon restarts each way, and what it does follows.
+            for wanted, state in ((False, "off"), (True, "replay")):
                 assert request("POST", "/api/v1/config", {"audio": wanted})[0] == 200
                 time.sleep(1)
-                assert wait_ready()["audio"]["enabled"] is wanted
+                audio = wait_ready()["audio"]
+                assert audio["enabled"] is wanted and audio["microphone"]["state"] == state, audio
             result["checks"].append("audio can be turned off and on again")
             # Last: this locks 127.0.0.1 out for a minute. Earlier negative
             # tests may already have counted, so the block can come sooner.

@@ -113,7 +113,7 @@ def read_release(bundle: Path) -> tuple[str, dict[str, bytes]]:
 def readme(release: str, commit: str, library: str) -> str:
     return f"""\
 jooanipc-open media release {release}, from {commit}.
-For the JOOAN W3-U (JA-A12) only, with platform 0.2.35 or later already installed.
+For the JOOAN W3-U (JA-A12) only, with platform 0.2.36 or later already installed.
 
 A FIRST INSTALL HAS NOT YET BEEN RUN ON A REAL CAMERA. Read "The media layer" in docs/INSTALL.md
 first. Power lost while it writes can only be recovered with a flash programmer and a backup.

@@ -934,8 +934,13 @@ int jipc_imp_poll(jipc_app *app, void *state, unsigned timeout_ms,
                 s->last_video[i] = now;
                 continue;
             }
-            if (jipc_publish_video(app, i, s->main_only, frame.data, frame.size, frame.pts_us, 0))
-                return failure(error, capacity, "cannot publish hardware video stream %u", i);
+            /* No memory for this frame is a lost frame: its size comes from the scene, and the
+             * health check stops the service if frames stay lost. */
+            if (jipc_publish_video(app, i, s->main_only, frame.data, frame.size, frame.pts_us, 0)) {
+                static uint64_t complained;
+                if (now - complained >= 5000000) { complained = now; jipc_log("error", "cannot keep a frame of %zu bytes on stream %u", frame.size, i); }
+                (void)s->idr(enc_channels[i]);
+            }
             s->last_video[i] = now;
         }
         if (now - s->last_video[i] > 15000000)

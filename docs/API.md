@@ -14,7 +14,7 @@ use the API only from the trusted network the camera is isolated on.
 Implemented software is not the same as hardware qualification. Routes backed
 by MQTT, Wi-Fi, the clock, or the updater may return a
 stable 4xx/5xx error until their helper is healthy, and no release (the
-current one is 0.2.35, release sequence 69) has a supported tag until the
+current one is 0.2.36, release sequence 70) has a supported tag until the
 physical-camera gates pass.
 
 Every request, sign-in and static files included, must carry a `Host` that is
@@ -162,9 +162,10 @@ use a server on the camera's own network (see
 
 `POST /api/v1/system/restart` answers `200 {"ok":true}` and restarts the camera
 about 2 seconds later. It refuses with `409 {"ok":false,"reason":"..."}` while
-a restart would do harm: `update` (an update or a media install holds the state
-lock), `wifi-trial` (a Wi-Fi change is waiting to be kept), `boot-trial` (a
-new runtime is being qualified) or `starting` (this boot is still qualifying).
+a restart would do harm: `update` (an update or a media install is running),
+`wifi-trial` (a Wi-Fi change is waiting to be kept), `boot-trial` (a new runtime
+is being qualified), `no-runtime` (a platform update stopped half way and none is
+on flash: see [Recovery](RECOVERY.md)) or `starting` (this boot is still qualifying).
 
 `GET /api/v1/system/restart-schedule` returns `{"enabled":true,"time":"04:00"}`
 or `{"enabled":false,"time":null}`. `PUT` with `{"time":"04:00"}` sets a daily

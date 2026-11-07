@@ -1,23 +1,25 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 set -eu
+# Exit 3: nothing could be tried, because the tools or the file are broken. That will not mend
+# itself, and a native boot should not wait for it.
 [ "$#" = 1 ] && [ -f "$1" ] || exit 2
 candidate=$1
 json_tool=${JOAN_JSON_TOOL:-/mnt/mtd/run/json_debug}
-[ -x "$json_tool" ] || exit 1
+[ -x "$json_tool" ] || exit 3
 ssid=$("$json_tool" -c r -k /ssid "$candidate" 2>/dev/null |
     sed 's/^[^ ]* [^ ]* //')
 password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null |
     sed 's/^[^ ]* [^ ]* //')
-[ -n "$ssid" ] && [ -n "$password" ] || exit 1
+[ -n "$ssid" ] && [ -n "$password" ] || exit 3
 # Values are passed as one argv element to wpa_cli; they are never evaluated as
 # shell.  Accept ordinary printable passphrases and SSIDs (including spaces),
 # but reject the two characters that would alter wpa_supplicant's quoted-string
 # grammar and reject control/non-ASCII bytes.
 LC_ALL=C
 export LC_ALL
-case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 1 ;; esac
-[ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 1
+case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 3 ;; esac
+[ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 3
 
 # A static address, when the candidate has one: address, prefix and gateway
 # together or not at all. The daemon checked them before they were committed.
@@ -25,9 +27,9 @@ field() { "$json_tool" -c r -k "/$1" "$candidate" 2>/dev/null | sed 's/^[^ ]* [^
 address=$(field address)
 prefix=$(field prefix)
 gateway=$(field gateway)
-case "$address$prefix$gateway" in *[!0-9.]*) exit 1 ;; esac
+case "$address$prefix$gateway" in *[!0-9.]*) exit 3 ;; esac
 if [ -n "$address$prefix$gateway" ]; then
-    [ -n "$address" ] && [ -n "$prefix" ] && [ -n "$gateway" ] || exit 1
+    [ -n "$address" ] && [ -n "$prefix" ] && [ -n "$gateway" ] || exit 3
     netmask=$(awk -v p="$prefix" 'BEGIN { p += 0; for (i = 1; i <= 4; i++) {
         b = p >= 8 ? 8 : (p > 0 ? p : 0); p -= b; printf "%s%d", (i > 1 ? "." : ""), 256 - 2 ^ (8 - b) } }')
 fi

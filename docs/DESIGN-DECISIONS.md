@@ -21,17 +21,18 @@ or were built another way. Each is here with its reason.
 | Privacy cover by OSD | By the ISP's picture settings | The OSD path does not reach the encoder channels, and the settings give every pixel black, measured |
 | Media installer on Windows through Paramiko | The `ssh` program with `SSH_ASKPASS` | The camera offers only `chacha20-poly1305@openssh.com`, and Paramiko 5.1.0 fails with "no acceptable ciphers" |
 | `install-camera.py --first` | The bundle says it is a first one; going ahead takes `--yes-untested` | A flag could be passed with the wrong bundle, and the extra consent says what is at stake |
-| HTTPS interop with browsers, go2rtc and zeep in the integration tests | Python's TLS with refusals tested; a Go client and browsers checked by hand; go2rtc and Frigate on camera1 | The hosted CI has none of them, and this keeps the gate the same in both places |
+| HTTPS interop with browsers, go2rtc and zeep in the integration tests | Python's TLS with refusals tested; a Go client and browsers checked by hand; go2rtc and Frigate on camera1 | go2rtc and zeep are not on the hosted runner, and a Go client or a driven browser would be new dependencies of the gate; this keeps the gate the same in both places |
 | RTSPS | Left out, by the owner's decision | TLS on every video frame on a busy CPU, for a stream that stays on a trusted network |
 | Visual comparison with the design in the repository | The tool is, in `media/tools/ui-compare/`; the design is not | The design files and its canvas runtime stay private, so the tool takes their pictures as an argument |
 
 ## Known limits
 
 - A fixed address whose address step fails can come up on a DHCP address, while `network/ip` still
-  says `static`, until the next attempt: within 5 minutes while a native boot is waiting, and otherwise
-  until a restart. A camera that can be reached is better here than a strict one.
+  says `static`, until a restart, unless a native boot is still waiting and a later attempt gets there
+  first. A camera that can be reached is better here than a strict one.
 - The reset button also works in the handoff once the vendor's program has stopped, not only in a
   native boot. It is useful there, and its reboot counts for nothing against that boot.
 - The system clock, with no battery and with network time off, lags by the time without power after
-  each power cut. Schedules then run on it after 2 minutes, or 30 with network time configured, in
-  case the router is back from the same cut and has no time yet; the page says so.
+  each power cut. Schedules then run on it after 2 minutes. A privacy schedule fails closed, and with
+  network time configured waits 30, in case the router is back from the same cut and has no time yet.
+  The page says so.

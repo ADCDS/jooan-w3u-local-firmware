@@ -412,8 +412,10 @@ installed as `/opt/jooanipc-open/native-boot.sh`. The platform supervisor then
 applies the committed Wi-Fi network (`/opt/custom/jooan-local/config/wifi.json`);
 the OEM's stored network is not used, so native boot requires a committed one.
 
-`native-boot.sh` verifies the release as the handoff does, waits up to 300 s
-for a gateway on `wlan0`, stops the feeder, launches the daemon (which
+`native-boot.sh` verifies the release as the handoff does, waits for a gateway on
+`wlan0` (300 s; on a camera with a committed network that has qualified before, as long
+as it takes, with a reset after 15 minutes that doubles each boot to 4 hours, and after 5
+if the radio firmware crashed; nothing latches), stops the feeder, launches the daemon (which
 requires `motor_home=1`, homes pan/tilt and arms its own watchdog) and
 qualifies once the daemon has stayed healthy for 185 s, one watchdog period,
 with homing complete and the network still up. Its stages are kept in

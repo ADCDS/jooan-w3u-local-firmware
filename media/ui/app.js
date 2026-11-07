@@ -1556,7 +1556,8 @@
 		},
 		clockNote = () =>
 			S.x?.live?.clock_ok === false
-				? ' Nothing has confirmed this clock since the camera started, so this can be off by as long as it had no power. Turn on network time, or set the clock under System.'
+				? ' Nothing has confirmed this clock since the camera started, so this can be off by as long as it had no power. ' +
+					(S.x.live.network_time ? 'Network time has not answered yet; you can also set the clock under System.' : 'Turn on network time, or set the clock under System.')
 				: S.x?.live?.network_time === false
 					? ' Network time is off, so after a power cut this runs late by the time without power until the clock is set again.'
 					: '';
@@ -1696,7 +1697,11 @@
 	/* Desktop shows all 16 slots (free ones offer "Save here"); a phone lists the used ones. */
 	function presets() {
 		const L = P(),
-			k = JSON.stringify(L);
+			k = JSON.stringify(L),
+			noPlat = !!S.m && !S.m.platform;
+		/* Before the check below: a repaired catalog can be the same empty list as before. */
+		$('pt-empty').hidden = !!L.length || noPlat;
+		$('pt-save').disabled = noPlat;
 		if (k == lastP) return;
 		lastP = k;
 		closeMenu();
@@ -1755,10 +1760,7 @@
 			...[...Array(16)].map((_, i) => (by.has(i + 1) ? used(by.get(i + 1)) : free(i + 1)))
 		);
 		$('pt-list').hidden = !L.length;
-		const noPlat = !!S.m && !S.m.platform;
-		$('pt-empty').hidden = !!L.length || noPlat;
 		$('pt-free').hidden = !L.length;
-		$('pt-save').disabled = noPlat;
 		tx('pt-count', L.length ? `${L.length} of 16 slots used` : '');
 		tx(
 			'pt-free',
@@ -2014,17 +2016,38 @@
 			ok: on ? 'Turn on' : 'Turn off',
 			icon: 'audio',
 			run: async () => {
+				let lost = 0;
 				try {
 					await api(M + 'config', { method: 'POST', json: { audio: on }, quiet: 1 });
 				} catch (x) {
-					/* The restart can take the answer with it. Whether it was saved shows below. */
+					/* The restart can take the answer with it, or the request never got there. */
 					if (x.kind != 'off') throw x;
+					lost = 1;
 				}
 				holdOff = Date.now() + 8e3;
 				S.c && (S.c.audio = on);
 				audio();
-				toast(on ? 'Audio on: video is restarting' : 'Audio off: video is restarting');
-				setTimeout(() => config().catch(noop), 5e3);
+				toast(
+					lost
+						? 'The camera did not answer. Checking whether it took the change.'
+						: on
+							? 'Audio on: video is restarting'
+							: 'Audio off: video is restarting'
+				);
+				setTimeout(
+					() =>
+						config()
+							.then(() => {
+								if (!lost || !S.c) return;
+								toast(
+									S.c.audio == on
+										? 'It did: audio is ' + (on ? 'on' : 'off') + '.'
+										: 'It did not: audio is still ' + (on ? 'off' : 'on') + '.'
+								);
+							})
+							.catch(noop),
+					6e3
+				);
 			}
 		});
 	};
@@ -2991,6 +3014,7 @@
 		update: 'An update is being installed. Try again when it has finished.',
 		'wifi-trial': 'A network change is already being tested. Keep it or go back first.',
 		'boot-trial': 'A new release is still being tried out after an update. Try again in a few minutes.',
+		'no-runtime': 'A platform update stopped half way. Look at the camera over SSH first (see Recovery in the docs).',
 		starting: 'The camera is still checking its start. Try again in about 4 minutes.'
 	};
 	function ipShow(mode) {
@@ -3266,6 +3290,7 @@
 		update: 'An update is being installed. Try again when it has finished.',
 		'wifi-trial': 'A new Wi-Fi network is being tested. Keep it or go back first.',
 		'boot-trial': 'A new release is still being tried out after an update. Try again in a few minutes.',
+		'no-runtime': 'A platform update stopped half way, and the camera would not come back from a restart. Look at it over SSH first (see Recovery in the docs).',
 		starting: 'The camera is still checking its start, and a restart now would count against it. Try again in about 4 minutes.'
 	};
 	$('sy-rs').onclick = () =>
@@ -3653,10 +3678,15 @@
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
 				/* It runs on behind the answer. If it stops, nothing else would say so. */
-				for (let i = 0; i < 90; i++) {
+				for (let i = 0, silent = 0; i < 240; i++) {
 					await new Promise(z => setTimeout(z, 2e3));
 					const d = await api(J + 'update', { quiet: 1 }).catch(() => null);
-					if (!d) return;
+					/* One lost answer on Wi-Fi says nothing. Several mean it is restarting. */
+					if (!d) {
+						if (++silent >= 5) return;
+						continue;
+					}
+					silent = 0;
 					if (d.state == 'failed' || d.restart == 'needed') {
 						installing = 0;
 						$('sy-mapply').disabled = !mfw;
@@ -3669,6 +3699,10 @@
 						);
 					}
 				}
+				installing = 0;
+				$('sy-mapply').disabled = !mfw;
+				$('sy-mstage').disabled = false;
+				fwUI(0, 'Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see Recovery in the docs).');
 			}
 		});
 	/* A media package: the same three steps. A failure before the flash leaves the camera up

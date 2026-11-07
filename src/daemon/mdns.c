@@ -92,7 +92,9 @@ const char *joan_mdns_status(void)
 /* Answer only peers on a directly attached IPv4 subnet. A unicast query to
  * 5353 can arrive from a routed network; mDNS is link-local by design, and the
  * gateway publishes this name to other networks when they need it. */
-static int peer_on_link(int fd,struct in_addr peer)
+/* Whether the asker shares a subnet with us, and our address on it: eth0 is up too, on a network
+   of its own, and a unicast answer carries one address. */
+static int peer_on_link(int fd,struct in_addr peer,struct in_addr *near)
 {
     struct ifconf ifc;struct ifreq reqs[16];size_t i;
     memset(&ifc,0,sizeof(ifc));ifc.ifc_len=sizeof(reqs);ifc.ifc_req=reqs;
@@ -101,7 +103,7 @@ static int peer_on_link(int fd,struct in_addr peer)
         struct ifreq mask=reqs[i];struct sockaddr_in*a=(struct sockaddr_in*)&reqs[i].ifr_addr;uint32_t m;
         if(a->sin_family!=AF_INET||a->sin_addr.s_addr==0||ioctl(fd,SIOCGIFNETMASK,&mask))continue;
         m=((struct sockaddr_in*)&mask.ifr_netmask)->sin_addr.s_addr;
-        if(m&&((a->sin_addr.s_addr^peer.s_addr)&m)==0)return 1;
+        if(m&&((a->sin_addr.s_addr^peer.s_addr)&m)==0){*near=a->sin_addr;return 1;}
     }
     return 0;
 }
@@ -197,10 +199,10 @@ static void *mdns_loop(void *unused)
         n=recvfrom(fd,query,sizeof(query),0,(struct sockaddr*)&peer,&peer_len);
         if(n<0){if(errno==EAGAIN||errno==EWOULDBLOCK){if(++timeouts<3)continue;}close(fd);fd=-1;timeouts=0;pthread_mutex_lock(&hostname_lock);mdns_running=0;pthread_mutex_unlock(&hostname_lock);continue;}
         timeouts=0;if(n<12||(query[2]&0x80)||(!query[4]&&!query[5])||decode_question(query,(size_t)n,asked,sizeof(asked)))continue;
-        if(!peer_on_link(fd,peer.sin_addr))continue;
+        struct in_addr near;if(!peer_on_link(fd,peer.sin_addr,&near))continue;
         joan_mdns_get_hostname(&M,label);snprintf(wanted,sizeof(wanted),"%s.local",label);
         if(strcmp(asked,wanted)&&strcmp(asked,"_http._tcp.local")&&strcmp(asked,"_ssh._tcp.local")&&strcmp(asked,"_jooan-camera._tcp.local")&&!strstr(asked,"._http._tcp.local")&&!strstr(asked,"._ssh._tcp.local")&&!strstr(asked,"._jooan-camera._tcp.local"))continue;
-        if(ntohs(peer.sin_port)!=M.mdns_port){struct in_addr addresses[8];int count=iface_addresses(fd,addresses,8,0);if(count>0){size_t z=build_discovery(answer,sizeof(answer),label,addresses[0],120);if(z)sendto(fd,answer,z,0,(const struct sockaddr*)&peer,sizeof(peer));}}
+        if(ntohs(peer.sin_port)!=M.mdns_port){size_t z=build_discovery(answer,sizeof(answer),label,near,120);if(z)sendto(fd,answer,z,0,(const struct sockaddr*)&peer,sizeof(peer));}
         else {struct in_addr addresses[8];int count=iface_addresses(fd,addresses,8,0),i;for(i=0;i<count;i++){size_t z=build_discovery(answer,sizeof(answer),label,addresses[i],120);if(!z)continue;setsockopt(fd,IPPROTO_IP,IP_MULTICAST_IF,&addresses[i],sizeof(addresses[i]));sendto(fd,answer,z,0,(const struct sockaddr*)&group,sizeof(group));}}
     }
     if(fd>=0){announce(fd,0);close(fd);}pthread_mutex_lock(&hostname_lock);mdns_fd=-1;mdns_running=0;pthread_mutex_unlock(&hostname_lock);

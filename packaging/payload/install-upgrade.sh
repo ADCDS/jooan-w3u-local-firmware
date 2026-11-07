@@ -112,15 +112,18 @@ stage_trial_runtime() {
     fail_at after-pending-selection-rename
     write_state runtime-staged
 }
+# JFFS2 shows freed space late, and how late nobody has measured. Once the runtime has been
+# deleted a refusal is the worst outcome, so the waits are long from then on.
+free_tries=20
 require_boot_reserve() {
-    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control /bin/sh -c \
-        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" 56 20'
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control FREE_TRIES=$free_tries /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" 56 "$FREE_TRIES"'
 }
 require_copy_headroom() {
     copy_bytes=$1
     copy_kb=$(( (copy_bytes + 1023) / 1024 ))
-    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control COPY_KB=$copy_kb /bin/sh -c \
-        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" $((COPY_KB + 56)) 20'
+    JL_ROOT=$root JL_RUN=$run JL_CONTROL=$control COPY_KB=$copy_kb FREE_TRIES=$free_tries /bin/sh -c \
+        '. "$JL_CONTROL/boot/common.sh" && jl_wait_free_kb "$JL_ROOT" $((COPY_KB + 56)) "$FREE_TRIES"'
 }
 # Everything an update replaces, against the room it will have. The steps below delete
 # the only persistent runtime as soon as they run short, so this has to be asked before
@@ -142,11 +145,13 @@ transaction_fits() {
     fit_old=$((fit_old + $(tree_bytes "$root/recovery") + $(tree_bytes "$root/slots")))
     fit_free=$(df -k "$root" | awk 'END {print $4}')
     case "$fit_free" in ''|*[!0-9]*) return 1 ;; esac
-    [ $((fit_free + fit_old / 1024)) -ge $((fit_new / 1024 + 8 + 56)) ] || return 1
+    # 4 KiB more than the steps below will want, so this cannot pass and they refuse.
+    [ $((fit_free + fit_old / 1024)) -ge $((fit_new / 1024 + 8 + 56 + 4)) ] || return 1
     # The logical budget too: a tree over it is refused later, with the runtime gone by then.
     [ $(( $(tree_bytes "$root") - fit_old + fit_new + 4096 )) -le 200704 ]
 }
 enter_runtime_recovery() {
+    free_tries=120
     mkdir -p "$root/state" "$root/slots" || return 1
     printf '%s\n' '- - 0' > "$root/state/selection.new" || return 1
     chmod 600 "$root/state/selection.new" || return 1

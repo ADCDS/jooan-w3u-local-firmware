@@ -198,13 +198,17 @@ reboot_asked() {
     reboot
 }
 # Refuse a restart while anything must not be interrupted: maintenance (an
-# update or a media install holds the state lock), a Wi-Fi trial, or a boot
-# trial of a new runtime. Prints the reason, or nothing when it is safe.
+# update or a media install holds the state lock, and a platform update does not
+# hold it throughout), a Wi-Fi trial, a boot trial of a new runtime, or no runtime
+# on flash at all: this one runs from RAM, and the next boot would have no network.
+# Prints the reason, or nothing when it is safe.
 busy_blocker() {
-    [ ! -d "$run/state.lock" ] || { echo update; return; }
+    [ ! -d "$run/state.lock" ] && [ ! -d "$run/firmware-apply.lock" ] || { echo update; return; }
     [ ! -e "$root/state/wifi-trial" ] || { echo wifi-trial; return; }
-    if [ -r "$root/state/selection" ] && read -r _stable sel_pending _x < "$root/state/selection" &&
-       [ "${sel_pending:--}" != - ]; then echo boot-trial; return; fi
+    if [ -r "$root/state/selection" ] && read -r sel_stable sel_pending _x < "$root/state/selection"; then
+        [ "${sel_pending:--}" = - ] || { echo boot-trial; return; }
+        [ "${sel_stable:--}" != - ] || { echo no-runtime; return; }
+    fi
 }
 # ...and while this boot is still proving itself. The page is up well before that
 # ends. Bounded by the uptime, because a failed trial's marker can stay for good.

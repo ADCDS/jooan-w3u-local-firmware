@@ -108,7 +108,16 @@ class SystemOpsTests(unittest.TestCase):
         (self.root / "state/wifi-trial").rmdir()
         (self.root / "state/selection").write_text("A B 1\n")
         refused("boot-trial")
+        # A platform update does not hold the state lock throughout, and one that stopped half way
+        # leaves no runtime on flash: the next boot would have no network.
+        (self.root / "state/selection").write_text("- - 0\n")
+        refused("no-runtime")
+        self.assertEqual(json.loads(self.helper("factory-reset").stdout), {"ok": False, "reason": "no-runtime"})
+        self.assertEqual(json.loads(self.helper("restart-check").stdout), {"ok": False, "reason": "no-runtime"})
         (self.root / "state/selection").write_text("A - 0\n")
+        (self.run / "firmware-apply.lock").mkdir()
+        refused("update")
+        (self.run / "firmware-apply.lock").rmdir()
         self.assertFalse(self.rebooted.exists())
         # While this boot is proving itself, a restart would latch the fallback.
         media = Path(self.temporary.name) / "media"
@@ -182,7 +191,7 @@ class SystemOpsTests(unittest.TestCase):
                                     capture_output=True, text=True)
             return result.returncode == 0
         self.assertTrue(fits(free=96, new_kb=90))           # camera1's figures: replacing like for like
-        self.assertTrue(fits(free=64, new_kb=90))           # just enough, once the old one is gone
+        self.assertTrue(fits(free=68, new_kb=90))           # just enough, once the old one is gone
         self.assertFalse(fits(free=60, new_kb=90))          # a little short: nothing is touched
         self.assertFalse(fits(free=96, new_kb=130))         # a release that grew too much
         self.assertFalse(fits(free=500, new_kb=300, old_kb=90))  # room on flash, but over the logical budget
@@ -242,6 +251,20 @@ sync() {{ :; }}
         self.assertIn("nothing was changed", result.stdout + result.stderr)
         self.assertEqual((persistent / "state/selection").read_text().strip(), "A - 0")
         self.assertEqual((persistent / "slots/A/runtime.tar.gz").stat().st_size, 20 * 1024)
+
+    def test_runtime_install_goes_on_once_the_old_one_is_gone(self) -> None:
+        """With no runtime on flash a refusal is the worst outcome: the reserve gives way first."""
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [60])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("inside the 56 KiB reserve", result.stderr)
+        selection = (persistent / "state/selection").read_text().split()
+        self.assertTrue((persistent / "slots" / selection[1] / "runtime.tar.gz").exists())
+        # And when it truly cannot fit, it says so and does not claim otherwise.
+        result, persistent = self._install_runtime("- - 0", 0, 50 * 1024, [10])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NO RUNTIME ON FLASH", result.stderr)
+        self.assertNotIn("nothing was changed", result.stderr)
+        self.assertEqual((persistent / "state/selection").read_text().strip(), "- - 0")
 
     def test_clock_confirmed(self) -> None:
         self.assertFalse((self.run / "clock-set").exists())
@@ -342,8 +365,8 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
         self.assertIn("udhcpc -a", seen)
         self.assertNotIn("route add", seen)
         # All three or none, and nothing but numbers.
-        self.assertEqual(run(',"address":"192.168.20.50"')[0].returncode, 1)
-        self.assertEqual(run(',"address":"1;reboot","prefix":"24","gateway":"192.168.20.1"')[0].returncode, 1)
+        self.assertEqual(run(',"address":"192.168.20.50"')[0].returncode, 3)
+        self.assertEqual(run(',"address":"1;reboot","prefix":"24","gateway":"192.168.20.1"')[0].returncode, 3)
 
     def test_address_stage(self) -> None:
         env, base = self.address_fakes(), Path(self.temporary.name)
@@ -476,6 +499,56 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
                                 env=self.env | extra, text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 99, "reboot is not faked: refusing to run")
         return result
+
+    def test_network_watchdog_never_reboots_into_no_runtime(self) -> None:
+        """It waits for no one otherwise. The next boot of a camera with nothing on flash has no network."""
+        (self.run / "default-gateway").write_text("192.0.2.1 wlan0\n")
+        (self.root / "state/selection").write_text("A - 0\n")
+        lost = 'arping() { return 1; }; jl_netdog_ok=1; jl_netdog_down=1; jl_net_watchdog'
+        self.assertEqual(self.common(lost).returncode, 0)
+        self.assertTrue(self.rebooted.exists(), "the control: this is what makes it reboot")
+        self.rebooted.unlink()
+        (self.root / "state/selection").write_text("- - 0\n")
+        result = self.common(lost)
+        self.assertFalse(self.rebooted.exists())
+        self.assertIn("no runtime on flash", result.stderr)
+        (self.root / "state/selection").write_text("A - 0\n")
+        (self.run / "firmware-apply.lock").mkdir()
+        self.common(lost)
+        self.assertFalse(self.rebooted.exists())
+        (self.run / "firmware-apply.lock").rmdir()
+        # And the daily restart, for the same two reasons.
+        for mark in ("selection", "lock"):
+            if mark == "selection":
+                (self.root / "state/selection").write_text("- - 0\n")
+            else:
+                (self.root / "state/selection").write_text("A - 0\n")
+                (self.run / "firmware-apply.lock").mkdir()
+            self.assertEqual(self.common("jl_rs_busy").returncode, 1, mark)
+        (self.run / "firmware-apply.lock").rmdir()
+        self.assertEqual(self.common("jl_rs_busy").returncode, 0)
+
+    def test_committed_network_that_cannot_even_be_tried(self) -> None:
+        """A broken tool or file: nothing is trying to join, so a native boot must not wait for it."""
+        hook = self.run / "slot-A/hooks/wifi-apply.sh"
+        hook.parent.mkdir(parents=True)
+        (self.root / "config/wifi.json").write_text("{}\n")
+        ensure = 'jl_wpa_pid() { echo 77; }; wpa_cli() { echo PONG; }; jl_ensure_wifi A'
+        attempts, applied = self.run / "wifi-attempts", self.run / "wifi-applied"
+        hook.write_text("#!/bin/sh\nexit 3\n")
+        hook.chmod(0o755)
+        result = self.common(ensure)
+        self.assertFalse(attempts.exists(), result.stderr)
+        self.assertEqual(applied.read_text().strip(), "77", "and it is not retried until wpa_supplicant changes")
+        # A real attempt that failed counts, and is retried: the router may just be away.
+        applied.unlink()
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        self.common(ensure)
+        self.assertEqual(attempts.read_text().strip(), "77:1")
+        self.assertFalse(applied.exists())
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        self.common(ensure)
+        self.assertEqual(applied.read_text().strip(), "77")
 
     def schedule_now(self, offset_minutes: int = -180) -> None:
         minute = (int(time.time()) // 60 + offset_minutes) % 1440

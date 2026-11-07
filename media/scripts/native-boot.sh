@@ -95,11 +95,29 @@ network_ready() {
     ifconfig wlan0 2>/dev/null | grep -q 'inet addr:' || return 1
     arping -c 1 -w 2 -I wlan0 "$gateway" >/dev/null 2>&1
 }
+# Not for ever, though: a radio that crashed stays that way until a reset, wpa_supplicant can die,
+# and nothing else resets a boot that has never had a gateway. Taking the file away lets the feeder
+# limit run out. No marker exists here, so nothing latches, and the next boot waits again, for
+# longer each time: 15 minutes doubling to 4 hours, and 5 minutes once the radio has crashed.
+waits=$(cat "$root/net-wait-boots" 2>/dev/null) || waits=0
+case "$waits" in ''|*[!0-9]*) waits=0 ;; esac
+[ "$waits" -le 4 ] || waits=4
+wait_limit=${JIPC_NETWORK_WAIT_LIMIT:-$((900 << waits))}
+give_up_waiting() {
+    [ -e "$network_wait" ] || return 0
+    rm -f "$network_wait"
+    printf '%s\n' "$((waits + 1))" > "$root/net-wait-boots" || :
+    log "$1: the watchdog resets the camera in 10 minutes unless a gateway answers"
+}
 i=0
 until network_ready; do
     if [ "$i" -ge 300 ] && ! worth_waiting; then
         rm -f "$network_wait"
         fail 'no gateway, and no committed network, runtime or earlier qualified boot to wait for'
+    fi
+    [ "$i" -lt "$wait_limit" ] || give_up_waiting 'no gateway yet'
+    if [ "$i" -ge 300 ] && [ $((i % 30)) = 0 ] && dmesg 2>/dev/null | grep -q DUMPDONE; then
+        give_up_waiting 'the radio firmware crashed'
     fi
     sleep 1; i=$((i + 1))
 done
@@ -172,6 +190,7 @@ else
     log "gateway silent at the end of qualification ($lost of 3)"
 fi
 [ -e "$root/ever-qualified" ] || printf '' > "$root/ever-qualified"
+rm -f "$root/net-wait-boots"
 printf '%s\n' "$boot $native" > "$run/qualified"
 rm -f "$root/native-trial" "$root/native-trial.new"
 sync

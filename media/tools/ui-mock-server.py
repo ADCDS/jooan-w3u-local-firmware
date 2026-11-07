@@ -744,6 +744,11 @@ class Mock:
         elif rest == "v1/network/wifi":
             name = {"POST": "wifi/stage", "PUT": "wifi/commit", "GET": "wifi/state"}.get(m, "wifi/rollback")
         elif rest == "v1/update":
+            if m == "GET":  # --update-status 500,failed answers those in turn, then the last one
+                sequence = self.args.update_status.split(",") if self.args.update_status else ["idle"]
+                self.update_polls = getattr(self, "update_polls", -1) + 1
+                said = sequence[min(self.update_polls, len(sequence) - 1)]
+                return bare(int(said), "unavailable") if said.isdigit() else ok({"state": said, "reason": "", "restart": ""})
             name = "firmware/stage" if m == "POST" else "firmware/apply"
         else:
             name = V1.get(rest, rest)
@@ -851,7 +856,8 @@ class Mock:
             if i is None: return bare(400, "id required")
             if i != self.staged: return integration()
             self.staged, self.release = None, ("0.2.27", 61)
-            self.reboot(now + 0.5, 25)
+            if not self.args.update_status:  # with it, this install stops instead of restarting
+                self.reboot(now + 0.5, 25)
             return ok({"ok": True, "id": i})
         return perr(404, "route_not_found", "route not found")
 
@@ -1519,6 +1525,7 @@ def main():
                    help="how long a requested or scheduled restart keeps the camera away")
     p.add_argument("--restart-blocked", choices=("update", "boot-trial"),
                    help="system/restart refuses with this reason (a Wi-Fi trial refuses by itself)")
+    p.add_argument("--update-status", help="what GET /api/v1/update answers, in turn: a state, or a status code")
     p.add_argument("--ui-dir", default=os.path.normpath(os.path.join(here, "..", "ui")))
     args = p.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
