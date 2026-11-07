@@ -20,8 +20,18 @@ await b.send('Page.addScriptToEvaluateOnNewDocument', { source:
   "document.addEventListener('securitypolicyviolation',e=>__errs.push('CSP '+e.violatedDirective))" });
 await b.viewport(1440, 900);
 await b.go(url, 2000);
+// A camera over HTTPS takes longer than a mock, so wait for each step rather than for a fixed time.
+const until = async (check, seconds) => {
+  for (let i = 0; i < seconds * 2; i++) {
+    try { if (await b.eval(check)) return true; } catch { /* still navigating */ }
+    await sleep(500);
+  }
+  return false;
+};
+await until("!!document.getElementById('si-form')&&!document.getElementById('signin').hidden", 20);
 await b.eval(`document.getElementById('si-stay').checked=false;document.getElementById('si-pass').value=${JSON.stringify(password)};document.getElementById('si-form').requestSubmit();1`);
-await sleep(6000);
+await until("(a=>a&&!a.hidden&&a.offsetHeight>0)(document.getElementById('app'))", 25);
+await sleep(2000);
 // A wrong password or a page that did not load would otherwise give clean pictures of the sign-in.
 if (!await b.eval("(a=>a&&!a.hidden&&a.offsetHeight>0)(document.getElementById('app'))")) {
   console.error('the app did not open: check the URL and the password');
