@@ -10,8 +10,8 @@ and do not contain the vendor's implementation.
 | --- | --- | --- | --- |
 | cJSON | 1.7.19, `c859b25da02955fef659d658b8f324b5cde87be3` | MIT | Source and license under `vendor/cjson` |
 | MbedTLS | 3.6.7, release SHA-256 `a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6` | Apache-2.0 OR GPL-2.0-or-later; use Apache-2.0 for this build | Official source fetched during configure; full license retained below |
-| GNU libatomic | Matching MIPS compiler runtime | GPLv3 with GCC Runtime Library Exception; retain applicable notices when packaging | Required by the separate OpenIMP build, not vendored here |
-| External T23/Ace libimp | Operator-selected compatible file | Its original terms | Not distributed; dynamically loaded only for `backend=imp` |
+| GNU libatomic | Matching MIPS compiler runtime | GPLv3 or later with GCC Runtime Library Exception 3.1 | Published in the release archive, with that notice |
+| T23 libimp | [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi) | Per file, per its `NOTICE`: includes GPL-2.0-or-later and BSD-3-Clause code, and files with no explicit grant ([details](../../docs/THIRD_PARTY.md#published-media-binaries)) | Published with its source; dynamically loaded only for `backend=imp` |
 | OEM kernel/modules/IQ | Existing camera installation | Their respective terms | Not distributed |
 | Ingenic GCC/uClibc toolchain | Operator-provided GCC 5.4 multilib | Compiler/runtime components' terms | Build-time dependency, not distributed |
 

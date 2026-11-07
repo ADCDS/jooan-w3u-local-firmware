@@ -80,6 +80,7 @@
 		lastOk = 0, // when the camera last answered anything
 		upx = null, // the platform upload in flight
 		spw = null, // the stream password, fetched only when shown or copied
+		reloadOn = 0, // a media update: when the camera returns, the page may be a new one
 		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
 		tzAt = 0; // after saving the time zone: the camera takes up to a minute to follow
 	const S = {},
@@ -290,6 +291,7 @@
 		ov();
 	}
 	function setOn() {
+		if (reloadOn) return location.reload();
 		off = 0;
 		place();
 		shell();
@@ -3451,17 +3453,18 @@
 		$('sy-apply').disabled = !fw;
 		tx('sy-apply', fw ? 'Install and restart…' : 'Install (upload first)');
 	}
-	function upload(f) {
-		return take().then(
+	/* o: where it goes and what shows it; only the platform's goes through the relay's slots. */
+	function upload(f, o) {
+		return (o.relay ? take() : Promise.resolve()).then(
 			() =>
 				new Promise((ok, no) => {
 					const x = (upx = new XMLHttpRequest());
 					x.onloadend = () => {
 						upx = null;
-						give();
+						o.relay && give();
 					};
 					x.onabort = () => no(new Fail('', 'cancel'));
-					x.open('POST', J + 'update');
+					x.open('POST', o.url);
 					[
 						['X-Requested-With', 'jipc-ui'],
 						['X-CSRF-Token', csrf],
@@ -3471,11 +3474,11 @@
 					x.timeout = 18e4;
 					x.upload.onprogress = e => {
 						if (e.lengthComputable) {
-							$('sy-pb').value = (e.loaded / e.total) * 100;
-							tx('sy-pn', bytes(e.loaded) + ' of ' + bytes(e.total));
+							$(o.pb).value = (e.loaded / e.total) * 100;
+							tx(o.pn, bytes(e.loaded) + ' of ' + bytes(e.total));
 						}
 					};
-					x.upload.onload = () => fwUI(2, 'Checking the signature (up to a minute). Keep this page open.');
+					x.upload.onload = o.checking;
 					x.onload = () => {
 						let d = null;
 						try {
@@ -3489,8 +3492,8 @@
 						const er = d?.error;
 						no(
 							new Fail(
-								x.status == 502
-									? 'The camera refused this package: it must be a signed, newer platform release for this camera.'
+								x.status == 502 && o.refused
+									? o.refused
 									: say(x.status, er?.code, typeof er == 'string' ? er : er?.message || '')
 							)
 						);
@@ -3512,7 +3515,14 @@
 			$('sy-stage'),
 			async () => {
 				try {
-					const d = await upload(f);
+					const d = await upload(f, {
+						relay: 1,
+						url: J + 'update',
+						pb: 'sy-pb',
+						pn: 'sy-pn',
+						checking: () => fwUI(2, 'Checking the signature (up to a minute). Keep this page open.'),
+						refused: 'The camera refused this package: it must be a signed, newer platform release for this camera.'
+					});
 					if (!d?.id) no('The camera did not stage the package. Try again.');
 					fw = d.id;
 					fwUI(3, `Signature verified${d.version ? ': platform ' + d.version : ''}. Ready to install.`);
@@ -3543,6 +3553,73 @@
 				$('sy-file').value = '';
 				fwUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
 				toast('Installing. The camera restarts now.');
+			}
+		});
+	/* A media package: the same three steps. A failure before the flash leaves the camera up
+	   and says why; otherwise it restarts, for longer than a platform update takes. */
+	let mfw = '';
+	function mfUI(st, m) {
+		$('sy-mprog').hidden = st != 1;
+		tx('sy-must', m || '');
+		$('sy-mapply').disabled = !mfw;
+		tx('sy-mapply', mfw ? 'Install and restart…' : 'Install (upload first)');
+	}
+	$('sy-mup').onsubmit = e => {
+		e.preventDefault();
+		const f = $('sy-mfile').files[0];
+		if (!f) return err($('sy-mfile'), 'Choose the package file first.');
+		if (f.size > 34e5) return err($('sy-mfile'), 'Too large for a media package.');
+		mfw = '';
+		tx('sy-mpt', 'Uploading ' + f.name);
+		mfUI(1);
+		run(
+			$('sy-mstage'),
+			async () => {
+				try {
+					const d = await upload(f, {
+						url: M + 'update/media',
+						pb: 'sy-mpb',
+						pn: 'sy-mpn',
+						checking: () => mfUI(2, 'Checking the signature. Keep this page open.')
+					});
+					if (!d?.release) no('The camera did not keep the package. Try again.');
+					mfw = d.release;
+					mfUI(3, `Signature verified: release ${d.release}. Ready to install.`);
+				} catch (x) {
+					mfUI(0, x.kind == 'cancel' ? 'Upload cancelled.' : '');
+					throw x;
+				}
+			},
+			$('sy-mfile')
+		);
+	};
+	$('sy-mcancel').onclick = () => upx?.abort();
+	$('sy-mapply').onclick = () =>
+		mfw &&
+		sheet({
+			title: 'Install and restart?',
+			text: 'The camera writes the new media firmware and restarts. Video and this page are away for about 2 minutes, and your NVR reconnects by itself. Do not cut its power meanwhile. If it does not come back, recovery is over SSH.',
+			ok: 'Install and restart',
+			danger: 1,
+			icon: 'system',
+			run: async () => {
+				await api(M + 'update/media/apply', { method: 'POST', json: { release: mfw }, timeout: 3e4 });
+				mfw = '';
+				$('sy-mfile').value = '';
+				holdOff = Date.now() + 8e3;
+				reloadOn = 1;
+				mfUI(4, 'Installing. The camera restarts; this page reconnects by itself.');
+				toast('Installing. The camera restarts soon.');
+				/* It says so if it stopped short of the flash; once it goes away, it has not. */
+				for (let i = 0; i < 12; i++) {
+					await new Promise(z => setTimeout(z, 2500));
+					const d = await api(M + 'update/media', { quiet: 1 }).catch(() => null);
+					if (!d) return;
+					if (d.error) {
+						reloadOn = 0;
+						return mfUI(0, 'Not installed, nothing changed: ' + d.error);
+					}
+				}
 			}
 		});
 	function theme(t) {

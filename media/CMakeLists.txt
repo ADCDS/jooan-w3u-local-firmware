@@ -32,7 +32,7 @@ add_library(jipc_json STATIC vendor/cjson/cJSON.c)
 target_include_directories(jipc_json PUBLIC vendor/cjson)
 target_compile_definitions(jipc_json PRIVATE CJSON_NESTING_LIMIT=32)
 add_library(jipc_core STATIC src/util.c src/authlimit.c src/audio.c src/speaker.c src/crypto.c src/config.c src/media.c src/imp_backend.c src/watchdog.c
-  src/platform.c src/aim.c src/overlay.c src/siren.c src/controls.c src/rtsp.c src/http.c src/joan.c src/onvif.c src/discovery.c src/ntp.c src/record.c
+  src/platform.c src/aim.c src/overlay.c src/siren.c src/update.c src/controls.c src/rtsp.c src/http.c src/joan.c src/onvif.c src/discovery.c src/ntp.c src/record.c
   ${CMAKE_CURRENT_BINARY_DIR}/ui_assets.h)
 target_include_directories(jipc_core PUBLIC include)
 target_include_directories(jipc_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -125,6 +125,13 @@ if(JIPC_BUILD_TESTS)
   add_test(NAME install-preflight COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_install_camera.py
     ${CMAKE_SOURCE_DIR}/scripts/install-camera.py)
+  add_test(NAME first-appfs COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_first_appfs.py
+    ${CMAKE_SOURCE_DIR}/scripts/first-appfs.sh
+    ${CMAKE_SOURCE_DIR}/tools/build-appfs.sh)
+  add_test(NAME apply-media-update COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_apply_media_update.py
+    ${CMAKE_SOURCE_DIR}/scripts/apply-media-update.sh)
   add_test(NAME appfs-upgrade COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_upgrade_appfs.py
     ${CMAKE_SOURCE_DIR}/scripts/upgrade-appfs.sh)

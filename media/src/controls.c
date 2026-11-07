@@ -742,6 +742,7 @@ static void *engine(void *opaque)
         if (!privacy) atomic_store(&app->privacy_hold, 0);
         patrol_tick(c, &s, privacy, now);
         overlay_tick(c, &s);
+        jipc_update_tick();
 
         pthread_mutex_lock(&c->mutex);
         if (!atomic_load(&c->quit) && !c->apply_picture) {

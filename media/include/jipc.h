@@ -286,11 +286,19 @@ int jipc_joan_request(const char *method, const char *path, const char *type,
                       size_t length, jipc_joan_reply *reply);
 /* Upload: send `length` bytes of `body`, then pull the rest up to `total`. */
 typedef ssize_t (*jipc_joan_pull)(void *context, void *data, size_t capacity);
+/* A media update from the browser (src/update.c). The three that answer give an HTTP status. */
+int jipc_update_receive(const char *first, size_t first_size, size_t total, jipc_joan_pull pull, void *context,
+                        char *out, size_t out_capacity, char *error, size_t capacity);
+int jipc_update_apply(const char *release, char *error, size_t capacity);
+void jipc_update_discard(void);
+void jipc_update_tick(void);
+int jipc_update_json(char *out, size_t capacity);
 int jipc_joan_stream(const char *method, const char *path, const char *type,
                      const char *cookies, const char *csrf, const char *body,
                      size_t length, size_t total, jipc_joan_pull pull, void *context,
                      jipc_joan_reply *reply);
 #define JIPC_JOAN_UPLOAD_LIMIT 2097344u /* the platform's own update body limit */
+#define JIPC_MEDIA_UPDATE_LIMIT 3400000u /* an app partition, its scripts and its manifest */
 void jipc_joan_reply_free(jipc_joan_reply *reply);
 int jipc_joan_session(const char *cookie_header, char *csrf, size_t capacity);
 void jipc_joan_forget(const char *cookie_header);

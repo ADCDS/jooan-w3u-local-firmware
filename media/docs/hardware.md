@@ -487,3 +487,16 @@ fails, the camera stays up for manual recovery with both images in `/tmp`
 Power loss during the flash leaves no `startapp` and needs an SPI programmer.
 Stop the NVR during a platform update (`--nvr-stop`/`--nvr-start`): memory
 pressure from both streams has stalled the board during that transaction.
+
+A bundle from `tools/build-appfs.sh --first` (`"first": true`) instead installs
+the first release on a camera with only the platform, with
+`scripts/first-appfs.sh`. It has not yet run on a camera; see
+[The media layer](../../docs/INSTALL.md#the-media-layer).
+
+The admin UI can also install a release, from a package made by
+`tools/make-media-update.py`. The daemon verifies its signature with the platform's
+verifier, then has the signed `scripts/apply-media-update.sh` check the camera
+and run the signed `scripts/upgrade-appfs.sh`. Nothing is flashed until the owner
+confirms, and a package not confirmed in 15 minutes is forgotten. On camera1 an
+install with Frigate connected took 4 s to upload and check, video kept its 15 fps
+meanwhile, and the page was back about 90 s after confirming.

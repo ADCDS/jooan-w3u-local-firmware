@@ -59,6 +59,24 @@ supplied privately by that device's owner under whatever rights apply. A
 media-layer bundle's appfs image is rebuilt from the owner's own camera and
 contains OEM files; it is a private artifact, not a generic release.
 
+## Published media binaries
+
+Since v0.2.33 a release also carries these, none of them vendor code:
+
+- `jooanipc-open`, under MIT, which includes MbedTLS under Apache-2.0;
+- `libatomic.so.1`, from GCC's runtime, under GPLv3 or later with the GCC
+  Runtime Library Exception;
+- `libimp.so`, built from the
+  [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi), with
+  the source that rebuilds it in the same release, and OpenIMP's `NOTICE`.
+
+**OpenIMP has no project-wide licence.** Per its `NOTICE`, licensing is per file.
+x264-derived code built into this library is under GPL-2.0-or-later, its WebRTC
+code is under BSD-3-Clause, and files without a header carry no explicit grant.
+So this library's licensing is not fully settled, which only those files'
+authors can change. The maintainer publishes it knowing that. The daemon loads
+it at run time, and anyone can build it from that source instead.
+
 ## External open-source projects
 
 The release build uses:

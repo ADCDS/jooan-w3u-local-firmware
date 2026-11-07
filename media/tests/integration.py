@@ -158,6 +158,118 @@ def talk_checks(rtsp_port, secret, request, capture, context_status):
     return status["audio"]
 
 
+def media_update_checks(call, ui_post, secret, update_root):
+    """The browser's media update: who may, what is refused and why, and what each step
+    leaves. The verifier and both scripts here are this test's own fixtures: nothing can
+    flash or restart anything."""
+    verifier, marker = update_root / "verifier.sh", update_root / "applied"
+    verifier.write_text(f'#!/bin/sh\n[ ! -e "{update_root}/verify-fails" ]\n')
+    verifier.chmod(0o755)
+    upload = ui_post | {"X-CSRF-Token": "c1", "Content-Type": "application/octet-stream"}
+    post = ui_post | {"X-CSRF-Token": "c1"}
+    apply_script = (f'#!/bin/sh\n[ "$1" = check ] && {{ [ ! -e "{update_root}/check-fails" ] || {{ echo "Built from something else"; exit 1; }}; exit 0; }}\n'
+                    f'[ ! -e "{update_root}/apply-fails" ] || {{ echo "1.00 ABORT: platform maintenance is in progress"; exit 1; }}\n'
+                    f'echo "$1" > "{marker}"\n').encode()
+
+    def package(kind=b"media", release=b"cafe0123-8b374e7a", image=3211264, listed=b"  appfs.img\n  upgrade-appfs.sh\n  apply-media-update.sh\n"):
+        manifest = (b"JOOAN-SIGNED-RELEASE-V1\ntarget_id=jooan-ja-a12-t23n-dual-cv2005-skw6316\ndevice_model=JA-A12\n"
+                    b"release_version=" + release + b"\nartifact_kind=" + kind + b"\nfiles-begin\n" + listed + b"files-end\n")
+        signature, upgrade = b"signature", b"#!/bin/sh\n"
+        header = f"JIPCMEDIA1 {len(manifest)} {len(signature)} {len(upgrade)} {len(apply_script)} {image}".encode()
+        return header.ljust(95) + b"\n" + manifest + signature + upgrade + apply_script + b"\xff" * image
+
+    def state():
+        status, _, body = call("GET", "/api/v1/update/media", headers=ui_post)
+        assert status == 200, body
+        return json.loads(body)
+
+    def idle():
+        assert state() == {"state": "idle", "release": None, "error": ""}, state()
+        kept = update_root / "staged"
+        assert not kept.exists() or not list(kept.iterdir()), "a refused package is not left in RAM"
+
+    good = package()
+    idle()
+    # Only the signed-in admin's own page: never the stream account, nor another site.
+    basic = {"Authorization": "Basic " + base64.b64encode(f"admin:{secret}".encode()).decode(), "X-Requested-With": "jipc-ui",
+             "Content-Type": "application/octet-stream"}
+    assert call("POST", "/api/v1/update/media", b"x", basic)[0] == 403
+    assert call("GET", "/api/v1/update/media", headers=basic)[0] == 403
+    assert call("POST", "/api/v1/update/media", b"x", {"Content-Type": "application/octet-stream"})[0] == 401
+    assert call("POST", "/api/v1/update/media", b"x", upload | {"Sec-Fetch-Site": "cross-site"})[0] == 403
+    assert call("POST", "/api/v1/update/media", b"x", upload | {"X-CSRF-Token": "c2"})[0] == 403
+    idle()
+    # Refused for what it is, and nothing stays behind.
+    assert call("POST", "/api/v1/update/media", b"", upload)[0] != 200
+    for body, code, why in ((b"short", 400, b"not a media package"),
+                            (b"JOOAN_FW_PKG" + b"x" * 200, 400, b"not a media package"),
+                            (package(image=4096), 400, b"for this camera"),
+                            (package(kind=b"install"), 400, b"not a media release"),
+                            (package(release=b"../../etc"), 400, b"not a media release"),
+                            (package(listed=b"  appfs.img\n"), 400, b"does not cover")):
+        status, _, reply = call("POST", "/api/v1/update/media", body, upload)
+        assert status == code and why in reply, (status, reply, why)
+        idle()
+    assert call("POST", "/api/v1/update/media", b"x", upload | {"Content-Type": "application/json"})[0] == 415
+    # Too large is refused from its header alone.
+    assert call("POST", "/api/v1/update/media", None, upload | {"Content-Length": "3400001"})[0] == 413
+    # The signature decides, and its script is not run unless it holds.
+    (update_root / "verify-fails").write_text("")
+    (update_root / "check-fails").write_text("")
+    status, _, reply = call("POST", "/api/v1/update/media", good, upload)
+    assert status == 400 and b"signature" in reply, (status, reply)
+    (update_root / "verify-fails").unlink()
+    idle()
+    # The package's own check says why it cannot go on this camera.
+    status, _, reply = call("POST", "/api/v1/update/media", good, upload)
+    assert status == 409 and b"Built from something else" in reply, (status, reply)
+    (update_root / "check-fails").unlink()
+    idle()
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "cafe0123-8b374e7a"}), post)[0] == 409
+    # A good one is kept, and goes nowhere until asked.
+    status, _, reply = call("POST", "/api/v1/update/media", good, upload)
+    assert status == 200 and json.loads(reply) == {"release": "cafe0123-8b374e7a"}, (status, reply)
+    assert state() == {"state": "staged", "release": "cafe0123-8b374e7a", "error": ""}
+    assert not marker.exists()
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "deadbeef-8b374e7a"}), post)[0] == 409
+    assert call("POST", "/api/v1/update/media/apply", "{}", post)[0] == 400
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "cafe0123-8b374e7a"}), basic | {"Content-Type": "application/json"})[0] == 403
+    assert not marker.exists()
+    # If it changed in RAM since the check, it does not go.
+    (update_root / "verify-fails").write_text("")
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "cafe0123-8b374e7a"}), post)[0] == 400
+    (update_root / "verify-fails").unlink()
+    assert not marker.exists()
+    idle()
+    # Discarded, it is gone.
+    assert call("POST", "/api/v1/update/media", good, upload)[0] == 200
+    assert call("POST", "/api/v1/update/media/discard", "{}", post)[0] == 200
+    idle()
+    # A script that stops short of the flash says why, and the package can be tried again.
+    assert call("POST", "/api/v1/update/media", good, upload)[0] == 200
+    (update_root / "apply-fails").write_text("")
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "cafe0123-8b374e7a"}), post)[0] == 200
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not state()["error"]:
+        time.sleep(0.1)
+    assert "platform maintenance" in state()["error"] and state()["state"] == "staged", state()
+    (update_root / "apply-fails").unlink()
+    # And then it runs.
+    assert call("POST", "/api/v1/update/media/apply", json.dumps({"release": "cafe0123-8b374e7a"}), post)[0] == 200
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.1)
+    assert marker.read_text() == "apply\n"
+    assert call("POST", "/api/v1/update/media/discard", "{}", post)[0] == 200
+    # A failure's reason goes with what it was about, and an abandoned upload leaves by itself.
+    assert state()["error"] == ""
+    assert call("POST", "/api/v1/update/media", good, upload)[0] == 200
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline and state()["state"] != "idle":
+        time.sleep(0.2)
+    idle()
+
+
 def siren_checks(request, capture, context_status):
     """The siren through the HTTP operations: its saved settings, a test, a talker
     kept out meanwhile, and that it stops."""
@@ -747,7 +859,7 @@ def idle_connection_checks(http_port, tls):
         raw.close()
 
 
-def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
+def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None, update_root=None):
     """The admin UI: public files with a strict CSP, single sign-in through
     the platform relay, the session cookie on the media API with CSRF and
     Origin checks, and no browser password dialog for the UI's requests."""
@@ -856,6 +968,7 @@ def ui_checks(connection, scheme, http_port, secret, seen, ui_connection=None):
              "X-Requested-With": "jipc-ui"}
     assert call("GET", "/api/v1/config/password", headers=basic)[0] == 403
     assert call("GET", "/api/v1/config/password", headers=ui_get | {"Sec-Fetch-Site": "cross-site"})[0] == 403
+    media_update_checks(call, ui_post, secret, update_root)
     # Sign-out reaches the media API at once (the session cache is dropped).
     # Joining a network takes the platform longer than the relay's usual 15 s.
     slow = connection()
@@ -938,6 +1051,7 @@ def main():
                                     "JIPC_JOAN_PORT": str(platform_server.server_address[1]),
                                     "JIPC_HTTPS_UI_PORT": str(ui_port),
                                     "JIPC_ISP_PROC": str(root / "isp-m0"), "JIPC_AUTO_HOLD_S": "12", "JIPC_AUTO_SETTLE_S": "4",
+                                    "JIPC_UPDATE_STAGED_S": "6", "JIPC_UPDATE_DIR": str(root / "staged"), "JIPC_UPDATE_VERIFIER": str(root / "verifier.sh"),
                                     "JIPC_OEM_CONFIG": str(root / "oem-config.json"),
                                     "JIPC_BOOT_LOG_DIR": str(root)}
         (root / "oem-config.json").write_text('{"IpcParam":{"TimeZomeCfg":{\n "GmtTz":\t"GMT-03:00"\n}}}\n')
@@ -1035,7 +1149,7 @@ def main():
                 if args.tls else None
             idle_connection_checks(http_port, args.tls)
             result["ui"] = ui_checks(connection, "https" if args.tls else "http", http_port, secret, platform_seen,
-                                     ui_connection)
+                                     ui_connection, update_root=root)
             result["checks"].append("admin UI: public files with CSP, platform sign-in relay, session cookie "
                                     "with CSRF and Origin on the media API, no Basic dialog for the UI, "
                                     "streamed platform package upload, the UI's own HTTPS port")

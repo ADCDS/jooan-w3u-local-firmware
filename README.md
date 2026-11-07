@@ -34,14 +34,19 @@ boundary.
   install and uninstall, migration, Wi-Fi, network time, SSH, routing,
   power-loss and cold-recovery checks pass on that camera
   ([hardware promotion gates](tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Published: v0.2.21** (2026-10-16, platform only). Anyone with a matching
-  camera can install it over Wi-Fi with no extra hardware (see
-  [Installation](docs/INSTALL.md)). In v0.2.21, video still comes from the
-  vendor's program, running confined.
-- **Not published: 0.2.22 to 0.2.33.** This repository and its documents
-  describe 0.2.33, which only the maintainer can install today. Its media
-  layer needs files rebuilt from each owner's own camera, and there is no
-  first-install tool yet.
+- **Published: v0.2.33** (2026-11-06): the platform package and, for the first
+  time, the media layer's binaries and scripts. Each owner still builds the
+  image for the camera from that camera's own app partition, because it holds
+  vendor files, so no image is published.
+- **The first-install path for the media layer has not yet run on a camera.**
+  The only test camera got its media layer by hand and cannot be brought back
+  to stock. A first image built from the stock partition matches the image
+  running on that camera, file for file, but the script that flashes it has
+  only been tested offline (see
+  [The media layer](docs/INSTALL.md#the-media-layer)).
+- **v0.2.21** (2026-10-16, platform only) stays published. It is the last release
+  installed on a stock camera. With it, video still comes from the vendor's
+  program, running confined.
 
 ## Exact hardware scope
 
@@ -121,7 +126,7 @@ vulnerability.
 | `runtime/` | boot hook, supervisor, slot and maintenance scripts | GPL-2.0-only |
 | `src/` | `joan-daemon` (web console and API), the containment guard, release verifiers, package tooling | GPL-2.0-only |
 | `web/` | the web console | GPL-2.0-only |
-| `tools/` | `upload_ota.py` (first install), toolchain fetch, Wi-Fi diagnostics | GPL-2.0-only |
+| `tools/` | `upload_ota.py` (first install), `make-github-release.py`, toolchain fetch, Wi-Fi diagnostics | GPL-2.0-only |
 | `tests/`, `ci/` | host-side validation | GPL-2.0-only |
 | `docs/` | documentation | GPL-2.0-only |
 | [`media/`](media/) | media daemon `jooanipc-open`, its boot scripts, appfs tools and release-bundle installer | MIT |

@@ -6,24 +6,22 @@ building their own releases want [Building and releasing](BUILDING.md).
 
 ## Read this first
 
-As of 2026-11-05:
+As of 2026-11-06, two releases are on
+[GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases):
 
-- **Only one release can be installed without the maintainer: v0.2.21**
-  (2026-10-16), the last one published on
-  [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases).
-  It installs over Wi-Fi with no extra hardware. You get a local web console,
-  SSH, RTSP video from both lenses and ONVIF pan/tilt and presets for an NVR
-  such as Frigate, and the camera can no longer reach the JOOAN cloud. The
-  video still comes from the vendor's camera program, which keeps running
-  under confinement.
-- **The rest of this repository describes 0.2.24, which you cannot install
-  yet.** Releases 0.2.22 to 0.2.24 have not been published. They also need
-  the open media daemon in [`media/`](../media/), and installing that needs
-  files that are not published and a first-install tool that does not
-  exist (see [The media layer](#the-media-layer)). Wait for a published
-  release that says it includes the media layer.
-- **v0.2.21 installs only on a camera whose vendor firmware is identical to
-  the verified unit's.** Before it writes anything, the installer compares
+- **v0.2.21** (2026-10-16) is the one this guide walks through, and the last
+  release that has been installed on a stock camera. It installs over Wi-Fi with
+  no extra hardware. You get a local web console, SSH, RTSP video from both
+  lenses and ONVIF pan/tilt and presets for an NVR such as Frigate, and the
+  camera can no longer reach the JOOAN cloud. The video still comes from the
+  vendor's camera program, which keeps running under confinement.
+- **v0.2.33** (2026-11-06) adds the open media daemon in
+  [`media/`](../media/), and is what the rest of this repository describes.
+  **No camera has yet been taken from stock to v0.2.33 with these
+  instructions.** See [The media layer](#the-media-layer), including what has
+  and has not been tested, before choosing it.
+- **Either release installs only on a camera whose vendor firmware is identical
+  to the verified unit's.** Before it writes anything, the installer compares
   the vendor's files, including the whole application partition, with the
   verified unit's. If they differ, it refuses and leaves the camera as it was.
   Nobody knows yet whether cameras sold today ship the same vendor firmware.
@@ -38,7 +36,7 @@ As of 2026-11-05:
 | Later updates and uninstall | Over Wi-Fi, from the web console's Firmware section | None |
 | Backup of the camera's flash | Over SSH, after the install ([step 7](#7-back-up-the-camera-over-ssh)) | None |
 | Chip-level backup or restore | With an SPI flash programmer and SOIC-8 clip, camera opened | Optional for the install. It is the only way to recover a camera that no longer boots |
-| Media layer (not available yet) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer is needed if power fails during that flash |
+| Media layer (v0.2.33, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
 
 **You do not need a microSD card, a USB cable, a serial adapter or a flash
 programmer to install v0.2.21, and you do not need to open the camera.** The
@@ -261,7 +259,7 @@ With v0.2.21:
 The v0.2.21 documentation describes these features. Read it at the tag:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 and [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-The documents on `main` describe 0.2.24.
+The documents on `main` describe 0.2.33.
 
 ## Updating later
 
@@ -271,9 +269,9 @@ it. The camera reboots and is offline for about 90 seconds. A release is
 accepted only if it is signed by this project and newer than the one
 installed.
 
-**Do not update a v0.2.21 camera to 0.2.22 or later unless that release also
-installs the media layer.** From 0.2.22 the platform no longer serves video
-itself, so the camera would have no video.
+**Do not update a v0.2.21 camera to 0.2.22 or later unless you will install the
+media layer straight after.** From 0.2.22 the platform no longer serves video
+itself, so until then the camera has no video.
 
 Releases after 0.2.21 answer only when they are addressed by a private IP
 address or by the camera's own name. The name is `jooan-w3u` unless you
@@ -312,33 +310,88 @@ When asking for help, never post flash images, passwords or keys (see
 From 0.2.22, video, ONVIF and pan/tilt come from the open media daemon
 [jooanipc-open](../media/) instead of the vendor's program. In a native boot,
 the default since 0.2.23, the vendor's program never starts. That is the
-setup the rest of this repository describes. Nobody but the maintainer can
-install it today:
+setup the rest of this repository describes.
 
-- the platform releases it needs (0.2.23 or later) are not published;
-- its program files are not published. The daemon has to be built for the
-  camera, and so does the `libimp.so` from the
-  [OpenIMP fork](https://github.com/ADCDS/openimp/tree/jooan/oem-t23-abi);
-- it is installed into the camera's application partition (`/dev/mtd4`). That
-  partition holds vendor files, so the image has to be rebuilt from your own
-  camera's copy (step 7). The rebuild tool only swaps an existing media
-  release, so it cannot make the first image;
-- the installer, `media/scripts/install-camera.py`, only upgrades a camera
-  that already runs the media daemon, and its appfs flasher only runs in a
-  native boot. No tool performs the first install;
-- a native boot also needs a Wi-Fi network committed in this firmware
-  (Network → Wi-Fi), not only the one the JOOAN app set up.
+**This install has not yet run on a real camera.** The only test camera got its
+media layer by hand, is mounted out of reach, and cannot be brought back to
+stock to try it. What has been checked, and what has not:
+
+| Step | Checked |
+|---|---|
+| The image | Built from the real stock partition, it has the same files, byte for byte, as the image running on the test camera |
+| The configuration | What the installer writes passes the shipped daemon's own check |
+| The installer | Its decisions and order, against a stand-in for the camera; its preflight, against the real camera, which it correctly refuses |
+| The flash script, `first-appfs.sh` | Only read and checked statically. It has never run. Most of its sequence comes from the script behind every later update, which has run many times |
+| Installing 0.2.33 from stock | Not repeated since v0.2.21, through the same updater |
+
+If the flash fails its readback, the script restores the partition from a copy
+in RAM. **If power is lost while it writes, only a flash programmer and a backup
+of that partition can bring the camera back** (see
+[Recovery](RECOVERY.md#appfs-reflash-recovery)). If you need the camera to keep
+working, stay on v0.2.21 until someone has reported this working.
+
+You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
+and OpenSSL, and the v0.2.33 files from the release page.
+
+1. **Install the platform.** Follow steps 4 and 5 with the v0.2.33 source and
+   files, or from v0.2.21 update as in [Updating later](#updating-later). The
+   camera now has no video until the last step. The web console stays at
+   `http://CAMERA_IP/`.
+2. **Back up the camera** ([step 7](#7-back-up-the-camera-over-ssh)).
+3. **Commit its Wi-Fi network** under Network → Wi-Fi in the web console, even
+   if it is the one the camera is on. A native boot uses only the network
+   committed there, not the one the JOOAN app set up.
+4. **Unpack** `jooanipc-open-*.tar.gz` and `libimp-*.tar.gz` next to each other,
+   and open a terminal in the `jooanipc-open-*` folder.
+5. **Copy your camera's application partition, and build your image from it.**
+   They contain vendor files, so keep them private:
+
+   ```sh
+   ssh admin@CAMERA_IP 'cat /dev/mtdblock4' > my-appfs.img
+   sh media/tools/build-appfs.sh --first my-appfs.img bin/jooanipc-open ../libimp-*/libimp.so bin/libatomic.so.1 my-bundle
+   ```
+
+   It refuses a partition that lacks a file it needs, or holds a different
+   vendor program from the one the platform pins.
+
+6. **Check the camera.** This changes nothing:
+
+   ```sh
+   CAMERA_PASSWORD=admin python3 media/scripts/install-camera.py my-bundle --camera CAMERA_IP
+   ```
+
+7. **Install,** choosing the password for the camera's video streams:
+
+   ```sh
+   CAMERA_PASSWORD=admin STREAM_PASSWORD=your-choice python3 media/scripts/install-camera.py my-bundle --camera CAMERA_IP --yes-untested
+   ```
+
+   Leave the camera powered. **It worked if** the last line says the release is
+   running. The admin UI is now at `https://CAMERA_IP/`, with the camera's own
+   certificate, so the browser warns once. Sign in with the admin password.
+   `http://CAMERA_IP/` now only redirects there.
+
+The boot checks itself: a native boot that does not qualify makes the next boot
+fall back to the vendor's program (see
+[Recovery](RECOVERY.md#a-media-change-that-stops-native-boot)).
+
+**On Windows,** build the bundle in WSL, then run the installer with `py` in
+Command Prompt, using `set` for each password. It uses the OpenSSH that comes
+with Windows. OpenSSH 8.4 or later (Windows 11) takes the password from
+`CAMERA_PASSWORD`; Windows 10's version asks for it at every connection, so add
+an SSH key in the web console first. This has not been run on Windows either.
+
+**Later media updates** are built the same way from your camera's current
+partition (see [Building and releasing](BUILDING.md#media-layer)) and installed
+with the same tool. The admin UI's System → Media form only accepts packages
+signed with this project's release key. Since an image holds vendor files, none
+is published, so that form is for the key's holder or anyone building the
+platform with their own key.
 
 **SD card:** the media layer's fallback boot mode can run the daemon from a
 microSD card instead of the application partition. Only the vendor's program
-mounts the card, so this works only in that fallback mode. You would still
-need the same unpublished files and the same manual setup. It is not a way
-around any of the points above.
+mounts the card, so this works only in that fallback mode. It is not a way
+around any of the steps above.
 
-The maintainer's procedure is in
-[Building and releasing](BUILDING.md#media-layer) and
+The format of a bundle is in
 [camera release bundles](../media/docs/hardware.md#camera-release-bundles).
-The appfs flash keeps a copy of the old partition in RAM and rolls back if
-verification fails. If power is lost while it is writing, only a flash
-programmer and a backup of that partition can bring the camera back (see
-[Recovery](RECOVERY.md#appfs-reflash-recovery)).
