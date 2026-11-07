@@ -338,7 +338,9 @@ stock to try it. What has been checked, and what has not:
 If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup
 of that partition can bring the camera back** (see
-[Recovery](RECOVERY.md#appfs-reflash-recovery)). If you need the camera to keep
+[Recovery](RECOVERY.md#appfs-reflash-recovery)). The board on camera1 also resets by itself a
+few times a day, for a reason not yet known (see
+[Known limits](DESIGN-DECISIONS.md#known-limits)); a reset during the write counts as a power cut. If you need the camera to keep
 working, stay on v0.2.21 until someone has reported this working.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH

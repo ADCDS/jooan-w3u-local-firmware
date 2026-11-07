@@ -208,9 +208,15 @@ control would sit at its lowest quantiser and the first real frames would be hug
 from 15 to 30 while the picture is black and back afterwards. In three runs by day that
 kept 15 fps but for one dip to 7 fps for a second, largest frame 189 KB. On the way out, day or night goes straight back to what privacy
 interrupted, since what the exposure reads at the privacy pose says nothing about the view,
-and the usual rule corrects it within its wait if the light changed meanwhile. That has run
-with night mode chosen (back in night in 0.7 s) and on the host, not yet in real darkness on
-camera1.
+and the usual rule corrects it within its wait if the light changed meanwhile. In real darkness
+on camera1 (2026-11-07, auto mode, exposure 41,000 to 68,000 against a night level of 30,000),
+privacy entered at night was back in night 0.5 s after it ended. Entered in day, with auto chosen
+meanwhile, it came back in day and turned to night 66 s later: its 60 s wait and a reading. Across
+a daemon restart during privacy every frame stayed black, and it was in night 11 s after the end.
+In all three every frame while black was black on both lenses (largest 4.5 KB), the microphone
+stayed silent and stills were refused. Video kept 15 fps except at each switch from day to night,
+where both lenses drop to 2 to 4 frames a second for 1 to 3 seconds; the run that switched 66 s
+after privacy shows that this is the switch itself.
 
 The black-out only works in the ISP's day mode: in night mode it ignores the picture
 settings that make it, as it does the Image page's sliders (brightness 40 changed nothing, measured
