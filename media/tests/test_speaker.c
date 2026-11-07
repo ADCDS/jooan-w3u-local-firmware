@@ -53,6 +53,8 @@ static void reset_fake(void)
     played_size = 0; opens = closes = amp_on = amp_off = amp_state = write_result = 0;
     pthread_mutex_unlock(&fake_lock);
 }
+static int amp_on_floor;
+static int amp_on_again(void) { return read_int(&amp_on) > amp_on_floor; }
 static int wait_until(int (*predicate)(void), unsigned milliseconds)
 {
     for (unsigned waited = 0; waited < milliseconds; waited += 5) {
@@ -284,12 +286,35 @@ int main(void)
     CHECK(read_int(&amp_off) == 1);
     write_blocked = 0;
     CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
-    /* A talker right after a siren plays at the speaker's volume, not the siren's. */
+    /* After the watch has cut the amplifier, a siren asked for again gets it on once the write is back. */
+    jipc_sleep_ms(500); /* the tail again */
+    reset_fake();
+    write_blocked = 1;
+    CHECK(!jipc_siren_start(app, 0, 1, 100, error, sizeof error));
+    CHECK(wait_until(session_running, 1000));
+    jipc_sleep_ms(3200);
+    jipc_speaker_watch(app);
+    CHECK(read_int(&amp_off) == 1 && read_int(&amp_state) == 0);
+    amp_on_floor = read_int(&amp_on);
+    CHECK(!jipc_siren_start(app, 0, 5, 100, error, sizeof error));
+    write_blocked = 0;
+    CHECK(wait_until(amp_on_again, 2000));
+    jipc_siren_stop(app);
+    CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
+    jipc_sleep_ms(500);
+    /* A talker right after a siren plays at the speaker's volume, not the siren's. With the output
+     * closed first, so that the siren really opens it at its own gain. */
     CHECK(!jipc_speaker_set_volume(app, 60, error, sizeof error));
+    uint64_t idle_close = speaker_idle_close_us;
+    speaker_idle_close_us = 100000;
+    reset_fake();
+    CHECK(wait_until(closed, 2000));
+    speaker_idle_close_us = idle_close;
     reset_fake();
     speech_volume = -999;
     CHECK(!jipc_siren_start(app, 0, 60, 10, error, sizeof error));
     CHECK(wait_until(session_running, 1000));
+    CHECK(read_int(&opens) == 1 && read_int(&volume_set) != 60);
     jipc_siren_stop(app);
     CHECK(jipc_talk_submit(app, 6, 6, 0, speech, sizeof speech, error, sizeof error) == JIPC_TALK_OK);
     CHECK(wait_until(session_idle, 3000) && wait_until(muted, 1000));
