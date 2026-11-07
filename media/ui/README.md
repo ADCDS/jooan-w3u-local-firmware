@@ -46,6 +46,10 @@ is about" data-t="the note">` in the page, or `tip(label, note)` in code; add
 `data-d="<id>"` to describe a control with it. Status and Health fold, and open by
 themselves on a problem (`foldOn`). Restart and Reset lock while an update is stopped.
 
+Two things the plan named are not done, because nothing that ships needs them. Fallback
+text is not marked `lang="en"`: the gate requires complete packs, so nothing falls back in
+a release. The CSS still uses physical properties: no right-to-left language ships.
+
 `tools/ui-compare/states.mjs` checks these behaviours on the mock and
 `tools/ui-compare/pseudo.mjs` reports text that `_()` and `walk()` do not reach.
 
@@ -65,7 +69,8 @@ themselves on a problem (`foldOn`). Restart and Reset lock while an update is st
   so the UI finds a key's line in a fresh list first. `POST` adds (at most 8;
   a 502 means full).
 - `POST /api/joan/v1/system/restart` answers 409 with a `reason` while an update
-  or a trial runs; afterwards the offline banner waits. The daily restart is
+  or a trial runs; afterwards the attention bar says it is restarting, and after
+  3 minutes that it is not answering. The daily restart is
   `GET`/`PUT /api/joan/v1/system/restart-schedule`, in the camera's time zone.
 - Wi-Fi: `GET /api/joan/v1/network/wifi/scan` only when asked (3–4 s); the camera
   joins only networks with a password. `GET /api/joan/v1/network/wifi` drives

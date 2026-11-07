@@ -76,12 +76,12 @@
 <main>
 <div id="attn" class="attn">
 <div id="at-stop" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b id="at-stopt"></b><p id="at-stopp"></p><div id="at-ssh"></div></div></div>
-<div id="at-late" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b>Not back after 5 minutes: do not cut power yet</b><p>Look at the camera over SSH first (see Recovery in the documentation).</p><div id="at-ssh2"></div></div></div>
-<div id="at-inst" class="ab warn" role="status" hidden><svg><use href="#i-warn"/></svg><div><b>Installing an update: do not cut power</b><p id="at-instp"></p><div class="prog"><i></i></div><small class="mono" id="at-el"></small></div></div>
-<div id="at-rest" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div><b id="at-restt"></b><p id="at-restp"></p></div></div>
-<div id="banner" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b id="bn-t"></b><p><span id="bn-why"></span> <span id="bn-s"></span> <span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
-<div id="at-sir" class="ab crit" role="alert" hidden><svg><use href="#i-siren"/></svg><div class="atr"><b id="at-sirt"></b><button class="btn dzf" id="at-sirb">Stop</button></div></div>
-<div id="at-try" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div class="atr"><b id="at-tryt"></b><a class="btn" href="#network">Decide</a></div></div>
+<div id="at-late" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b>Not back after 5 minutes: do not cut power yet</b><p>Look at the camera over SSH first (see docs/RECOVERY.md).</p><div id="at-ssh2"></div></div></div>
+<div id="at-inst" class="ab warn" role="status" hidden><svg><use href="#i-warn"/></svg><div><b>Installing an update: do not cut power</b><p id="at-instp"></p><div class="prog"><i></i></div><small class="mono" id="at-el" aria-live="off"></small></div></div>
+<div id="at-rest" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div><b id="at-restt"></b><p id="at-restp"></p><div class="acts"><button class="btn" id="at-restb">Try now</button></div></div></div>
+<div id="banner" class="ab crit" role="alert" hidden><svg><use href="#i-crit"/></svg><div><b id="bn-t"></b><p><span id="bn-why"></span> <span id="bn-s" aria-live="off"></span> <span id="bn-last"></span></p><div class="acts"><button class="btn" id="bn-try">Try now</button></div></div></div>
+<div id="at-sir" class="ab crit" role="alert" hidden><svg><use href="#i-siren"/></svg><div class="atr"><span class="vh">Siren sounding</span><b id="at-sirt" aria-live="off"></b><button class="btn dzf" id="at-sirb">Stop</button></div></div>
+<div id="at-try" class="ab warn" role="status" hidden><svg><use href="#i-wait"/></svg><div class="atr"><span class="vh">Testing a new network</span><b id="at-tryt" aria-live="off"></b><a class="btn" href="#network">Decide</a></div></div>
 <div id="at-priv" class="ab warn" role="status" hidden><svg><use href="#i-lock"/></svg><div class="atr"><span><b>Privacy mode is on</b><p>Video is black and the microphone is off. Your NVR is recording the black picture.</p></span><button class="btn" id="at-privb">Turn off</button></div></div>
 <div id="at-clock" class="ab warn" role="status" hidden><svg><use href="#i-warn"/></svg><div class="atr"><span><b>The camera’s clock is not confirmed</b><p>Schedules may run at the wrong time until network time answers or you set the clock.</p></span><a class="btn" href="#system">Set the clock</a></div></div>
 </div>

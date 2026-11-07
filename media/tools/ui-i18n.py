@@ -82,8 +82,11 @@ def catalog():
     plurals = {}
     for one, other in re.findall(r"\b_n\([^'\n]*?,\s*" + LITERAL + r",\s*" + LITERAL, js):
         plurals[unescape(other)] = unescape(one)
-    if re.search(r"\b_\(\s*[^'\s]", js):
-        sys.exit("ui-i18n: _() takes a literal string, or this script cannot see it: " + re.search(r"\b_\(\s*[^'\s].{0,40}", js).group(0))
+    # What this script cannot read, the browser would show in English: a whole literal, or nothing.
+    for bad in (r"\b_\((?!\s*" + LITERAL + r"\s*[,)])", r"\b_n\((?![^'\n]*?,\s*" + LITERAL + r",\s*" + LITERAL + r"\s*[,)])"):
+        m = re.search(bad, js)
+        if m:
+            sys.exit("ui-i18n: _() and _n() take literal strings, or this script cannot see them: " + js[m.start():m.start() + 60])
     return singles, plurals
 
 
@@ -112,6 +115,8 @@ def pack(code, singles, plurals):
                 problems.append(f"{code}: placeholders differ: {en!r} -> {form!r}")
         if isinstance(t, dict) and "other" not in t:
             problems.append(f"{code}: a plural needs 'other': {en!r}")
+        if isinstance(t, dict) and en not in plurals:
+            problems.append(f"{code}: only a plural can have forms: {en!r}")
         if t != en:
             out[k] = t
     for en in tr:

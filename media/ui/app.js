@@ -50,18 +50,19 @@ function walk() {
 	for (let n; (n = w.nextNode()); )
 		if (n.nodeType == 3) {
 			const t = n.data.trim();
-			if (t) n.data = n.data.replace(t, _(t));
+			if (t) n.data = n.data.replace(t, () => _(t));
 		} else for (const a of ['aria-label', 'placeholder', 'data-t', 'data-l']) n.hasAttribute(a) && n.setAttribute(a, _(n.getAttribute(a)));
 }
 function main() {
-const $ = i => document.getElementById(i),
+	const $ = i => document.getElementById(i),
 		$$ = (s, r = document) => [...r.querySelectorAll(s)],
 		noop = () => {},
 		J = '/api/joan/v1/',
 		M = '/api/v1/';
 	const tx = (i, t) => {
-			$(i).textContent = t;
-		},
+		const e = $(i);
+		e.textContent != t && (e.textContent = t); /* no write, no announcement from a live region */
+	},
 		no = m => {
 			throw new Fail(m);
 		},
@@ -135,14 +136,18 @@ const $ = i => document.getElementById(i),
 		instAt = 0, // when it began
 		instLate = 0, // a media install that has not come back after 5 minutes
 		restarting = '', // why the camera is away, when it was asked to go
+		restAt = 0, // when
+		fwWas = 0, // the install now running is a retry after one that stopped
+		fwV = '', // what is staged, for the dialog
+		fwW = 0, // a watch is running
 		fwMsg = '', // an update needs a look, on every page until it has had one
-fwStopped = 0, // a platform install stopped: a media install ends in the restart that must not happen yet
+		fwStopped = 0, // a platform install stopped: a media install ends in the restart that must not happen yet
 		holdOff = 0, // after asking for a restart: answers until then do not mean it is back
 		tzAt = 0; // after saving the time zone: the camera takes up to a minute to follow
 	const S = {},
 		age = k => Date.now() - (S[k + '@'] || 0);
 	const p2 = n => String(n).padStart(2, '0'),
-mi = n => String(n).replace('-', '−'),
+	mi = n => String(n).replace('-', '−'),
 		sg = n => (n > 0 ? '+' : '') + mi(n),
 		cap = s => (s ? s[0].toUpperCase() + s.slice(1) : '');
 	const hm = d => d.toLocaleTimeString(LC);
@@ -162,7 +167,7 @@ mi = n => String(n).replace('-', '−'),
 			: H < 48
 				? un(H, 'hour') + (m % 60 ? ' ' + un(m % 60, 'minute') : '')
 				: un((H / 24) | 0, 'day') + (H % 24 ? ' ' + un(H % 24, 'hour') : '');
-}
+			}
 	function bytes(n) {
 		n = +n;
 		if (!isFinite(n)) return _('Unknown');
@@ -172,7 +177,7 @@ mi = n => String(n).replace('-', '−'),
 			i++;
 		}
 		return un(i ? +n.toFixed(n < 10 ? 2 : 1) : n, ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'][i]);
-}
+	}
 	const sig = d => (d == null ? '' : d >= -50 ? _('Excellent') : d >= -60 ? _('Good') : d >= -70 ? _('Fair') : _('Weak'));
 	const pill = (t, x) => h('span', { class: 'pill ' + t }, ico(t), x);
 	let tt;
@@ -183,7 +188,7 @@ mi = n => String(n).replace('-', '−'),
 		clearTimeout(tt);
 		tt = setTimeout(() => t.classList.remove('show'), 3200);
 	}
-	const host = e => e.closest('.sl,.row,.f,.acts,dialog,form,.card') || e;
+	const host = e => e.closest('.sl,.row,.f,.acts,dialog,form,.card,.ab') || e;
 	function clr(e) {
 		$$(':scope>.err', host(e)).forEach(x => x.remove());
 	}
@@ -336,17 +341,19 @@ mi = n => String(n).replace('-', '−'),
 		wifiState = src('w', J + 'network/wifi', rWifi, { quiet: 1, timeout: 8e3 }),
 		restartAt = src('y', J + 'system/restart-schedule', rRestart, { timeout: 2e4 }),
 		ipInfo = src('i', J + 'network/ip', rIp, { timeout: 2e4 });
-	const guess = /^[\d.]+$|[:[]/.test(location.hostname) ? _('Camera') : location.hostname.split('.')[0],
-		name = () => S.n?.hostname || guess,
+	const guess = /^[\d.]+$|[:[]/.test(location.hostname) ? 'Camera' : location.hostname.split('.')[0],
+		name = () => S.n?.hostname || guess, // sent to the camera and pasted in configs, so never translated
+		label = () => (name() == 'Camera' ? _('Camera') : name()),
 		rel = () => (/\/releases\/([0-9a-f]{8})/.exec(S.c?.libimp || '') || [])[1];
 	function goOff(why) {
 		if (!csrf || off) return;
 		off = 1;
 		retry = Date.now() + 1e4;
 		restarting = why || '';
+		restAt = Date.now();
 		tx('bn-why', _('It may be restarting (about 90 s) or off the network. You are still signed in.'));
 		tx('bn-last', lastOk ? _('Last answer {t}.', { t: hm(new Date(lastOk)) }) : '');
-ptzEnd(1);
+		ptzEnd(1);
 		talkStop();
 		place();
 		shell();
@@ -357,7 +364,7 @@ ptzEnd(1);
 		off = 0;
 		restarting = '';
 		place();
-shell();
+		shell();
 		ov();
 		load(route);
 		W && !W.end && wifiState().catch(wifiLost);
@@ -373,12 +380,12 @@ shell();
 		setOn();
 	}
 	function place() {
-/* While the camera is away its controls are inert; the Wi-Fi countdown and
+		/* While the camera is away its controls are inert; the Wi-Fi countdown and
 		   the last known status stay usable. */
 		for (const c of $$('.page .card, .page>.f'))
 			c.inert = off && !(W && c.contains($('nw-count'))) && c.id != 'ov-last';
 	}
-	$('bn-try').onclick = e => run(e.currentTarget, probe);
+	$('bn-try').onclick = $('at-restb').onclick = e => run(e.currentTarget, probe);
 	function note(m, t) {
 		const n = $('si-note');
 		n.hidden = !m;
@@ -388,7 +395,7 @@ shell();
 	function showSignIn(m, t) {
 		$('app').hidden = true;
 		$('signin').hidden = false;
-		document.title = name() + ' · ' + _('Sign in');
+		document.title = label() + ' · ' + _('Sign in');
 		$('si-pass').value = '';
 		note(m, t);
 		req(J + 'setup/status', { timeout: 6e3 }).then(x => {
@@ -459,7 +466,7 @@ shell();
 		$('app').hidden = false;
 		$$('.signed').forEach(e => e.replaceChildren(...parts(_('Signed in as {user}'), { user: h('b', { class: 'ink', text: user }) })));
 		fwLast().catch(noop);
-W = ls.get(WIFI);
+		W = ls.get(WIFI);
 		if (W && !(W.deadline > Date.now())) ls.set(WIFI, (W = null));
 		wifi();
 		[config, mdns, media, joan].forEach(f => f().catch(noop));
@@ -482,7 +489,7 @@ W = ls.get(WIFI);
 		},
 		SUB = ['streams', 'network', 'system'],
 		wide = matchMedia('(min-width:900px)');
-	const title = () => csrf && (document.title = name() + ' · ' + TI[route]);
+	const title = () => csrf && (document.title = label() + ' · ' + TI[route]);
 	function go(f) {
 		let r = location.hash.slice(1);
 		if (!TI[r]) r = 'overview';
@@ -716,7 +723,7 @@ W = ls.get(WIFI);
 							: ['warn', _('Starting')],
 			/* the side nav also names the boot mode; a phone header has room for the state only */
 			a = S.q?.wifi?.address || location.hostname;
-		$$('.cam-name').forEach(e => (e.textContent = name()));
+		$$('.cam-name').forEach(e => (e.textContent = label()));
 		$$('.cam-addr').forEach(e => (e.textContent = a));
 		$$('.state').forEach(e => e.replaceChildren(pill(st[0], st[1])));
 		tx('sy-cmd', `ssh ${user}@${a}`);
@@ -747,7 +754,7 @@ W = ls.get(WIFI);
 		tx(
 			'sy-pws',
 			j.default_password_warning ? _('This page and SSH, user {u}. Initial value.', { u: user }) : _('This page and SSH, user {u}. Changed.', { u: user })
-);
+		);
 		$('sy-sync').hidden = j.ssh_password_sync !== false;
 	}
 	function rName(n) {
@@ -850,8 +857,8 @@ W = ls.get(WIFI);
 				j.ssh_password_sync === false ? _('Not synchronized') : _('In sync')
 			);
 			j.state == 'ready' || a('warn', _('Platform'), j.version + ' · ' + j.state);
-}
-return L;
+		}
+		return L;
 	}
 	/* Status and Health: folded, and open by themselves on a problem; closed again when it clears. */
 	function foldOn(d, n) {
@@ -868,17 +875,18 @@ return L;
 			h('li', null, h('span', { class: 'ico ' + t }, ico(t)), h('span', { text: k }), h('span', { text: v }))
 		);
 	function ov() {
-const L = hl(),
+		const L = hl(),
 			n = L.filter(x => x[0] == 'warn' || x[0] == 'crit').length,
 			w = S.q?.wifi;
 		$('ov-stats').replaceChildren(...hlist(L));
 		const LS = hl(1),
 			ns = LS.filter(x => x[0] == 'warn' || x[0] == 'crit').length;
 		$('sy-stats').replaceChildren(...hlist(LS));
-		$('sy-sum').replaceChildren(LS.length ? (ns ? pill('warn', _n(ns, '{n} thing to check', '{n} things to check')) : pill('ok', _('All normal'))) : '');
+		const calm = !fwMsg && !installing && !instLate && !sirOn() && !S.m?.platform?.privacy;
+		$('sy-sum').replaceChildren(LS.length ? (ns ? pill('warn', _n(ns, '{n} thing to check', '{n} things to check')) : calm ? pill('ok', _('All normal')) : '') : '');
 		foldOn($('sy-fold'), ns);
 		foldOn($('ov-fold'), n);
-tx('sy-hc', S['m@'] ? _('Checked {t}', { t: hm(new Date(S['m@'])) }) : '');
+		tx('sy-hc', S['m@'] ? _('Checked {t}', { t: hm(new Date(S['m@'])) }) : '');
 		/* Offline: the last known status replaces the live list. */
 		$('ov-st').hidden = !!off;
 		$('ov-last').hidden = !off;
@@ -890,7 +898,9 @@ tx('sy-hc', S['m@'] ? _('Checked {t}', { t: hm(new Date(S['m@'])) }) : '');
 				: L.length
 					? n
 						? pill('warn', _n(n, '{n} thing to check', '{n} things to check'))
-						: pill('ok', _('All normal'))
+						: calm
+							? pill('ok', _('All normal'))
+							: ''
 					: ''
 		);
 	}
@@ -947,7 +957,7 @@ tx('sy-hc', S['m@'] ? _('Checked {t}', { t: hm(new Date(S['m@'])) }) : '');
 				at.textContent = !t ? '' : e.dataset.at == 'ago' ? _('{t} · {d} ago', { t, d: old }) : t;
 			}
 		}
-$('ov-pz').disabled = !!(priv || off);
+		$('ov-pz').disabled = !!(priv || off);
 	}
 	async function stGrab(ch) {
 		stBusy = 1;
@@ -1003,7 +1013,7 @@ $('ov-pz').disabled = !!(priv || off);
 	   dashed frame is most of the picture, and only the part inside it is drawn. */
 	let ptView = 'live',
 		aimKey = null,
-aimGo = null,
+		aimGo = null,
 		aimErr = '';
 	function aim() {
 		return api(M + 'aim').then(d => {
@@ -1023,7 +1033,7 @@ aimGo = null,
 		$('pt-aim').hidden = !aiming;
 		$('pt-vl').hidden = aiming;
 		if (!a?.calibrated) return;
-$('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
+		$('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
 		const x0 = v ? Math.max(0, v.u - v.w / 2) : 1,
 			x1 = v ? Math.min(1, v.u + v.w / 2) : 0,
 			y0 = v ? Math.max(0, v.v - v.h / 2) : 1,
@@ -1147,7 +1157,7 @@ $('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
 		} else if (n.mode == 'schedule') t += ' ' + _('Night from {a} until {b}, camera time.', { a: n.from, b: n.until }) + camNow() + clockNote();
 		else t += ' ' + _('It stays so until you change it.');
 		return t + (L.error ? ' ' + _('The camera reports: {m}', { m: L.error }) : '');
-}
+	}
 	function wlNote() {
 		const x = S.x,
 			p = S.m?.platform,
@@ -1163,7 +1173,7 @@ $('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
 			: on
 				? _('On')
 				: _('Off');
-}
+			}
 	/* The schedule line: the zone the camera uses, and the next change. */
 	function wlWhen() {
 		const x = S.x,
@@ -1190,7 +1200,7 @@ $('pt-aimb').disabled = !!(pl?.privacy || pl?.homing);
 							? _('Next: today {t}.', { t: s.from })
 							: _('Next: tomorrow {t}.', { t: s.from }))) +
 			(dz != null && x.utc_offset_min != dz ? ' ' + _('Saving uses this device’s zone, {z}.', { z: utc(dz) }) : '') +
-camNow() + clockNote()
+			camNow() + clockNote()
 		);
 	}
 	function lights() {
@@ -1254,7 +1264,7 @@ camNow() + clockNote()
 		ovShow(x.overlay);
 		sirShow(x.siren);
 		attn();
-const n = x.night,
+		const n = x.night,
 			w = x.white_light,
 			wm = w.schedule.enabled ? 'schedule' : w.on ? 'on' : 'off';
 		lights();
@@ -1296,7 +1306,7 @@ const n = x.night,
 					: w.on
 						? _('On for {t} more, then it stays on.', { t: mmss(tl) })
 						: _('On for {t} more, then off.', { t: mmss(tl) })
-: ''
+						: ''
 		);
 	}
 	/* Day and night (Overview and Image): the mode; schedules follow this device's zone. */
@@ -1325,7 +1335,7 @@ const n = x.night,
 			high = ne != null && de != null && de < ne && de > ne / 3.6;
 		$('im-evw').hidden = !high;
 		foldOn($('im-lvf'), high);
-high &&
+		high &&
 			tx(
 				'im-evt',
 				_('A day level of {a} may make it flip back and forth at dusk and dawn. For a night level of {b}, try {c} or lower.', { a: num(de), b: num(ne), c: num(Math.floor(ne / 3.6)) })
@@ -1434,7 +1444,7 @@ high &&
 	/* Picture per lens, from the camera's remembered values. */
 	const PICN = { brightness: _('Brightness'), contrast: _('Contrast'), saturation: _('Saturation'), sharpness: _('Sharpness'), denoise: _('Noise reduction') },
 		PIC = ['brightness', 'contrast', 'saturation', 'sharpness', 'denoise'],
-picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
+		picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 	PIC.forEach(op =>
 		$('im-sl').append(
 			slider('im-' + op, PICN[op], 0, 255, 128, String, v =>
@@ -1588,7 +1598,7 @@ picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 		tx(
 			'pt-rcn',
 			p.homing ? _('Running now.') : p.homed_ago_s != null ? _('Last done {t} ago.', { t: dur(p.homed_ago_s) }) : _('Last done at boot.')
-);
+		);
 		map();
 	}
 	/* Privacy mode and the patrol live in the saved controls; on a schedule, the switch holds until its next edge. */
@@ -1616,7 +1626,7 @@ picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 						h('i', { text: i + 1 }),
 						h('b', { text: nm(s.slot) }),
 						d,
-						h('button', { class: 'btn', 'aria-label': `Remove ${nm(s.slot)}`, onclick: e => stopsPut(stops.filter((o, j) => j != i), e.currentTarget) }, _('Remove'))
+						h('button', { class: 'btn', 'aria-label': _('Remove {c}', { c: nm(s.slot) }), onclick: e => stopsPut(stops.filter((o, j) => j != i), e.currentTarget) }, _('Remove'))
 					);
 				})
 			);
@@ -1665,7 +1675,7 @@ picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 	const camNow = () => {
 			const m = S.x?.live?.local_minutes;
 			return m == null ? '' : ' ' + _('Camera time now {t}.', { t: p2(Math.floor(m / 60)) + ':' + p2(m % 60) });
-},
+		},
 		clockNote = () =>
 			S.x?.live?.clock_ok === false
 				? ' ' + _('Nothing has confirmed this clock since the camera started, so this can be off by as long as it had no power.') + ' ' +
@@ -1673,12 +1683,12 @@ picOf = (l, p) => ({ picture: l ? [null, p] : [p] });
 				: S.x?.live?.network_time === false
 					? ' ' + _('Network time is off, so after a power cut this runs late by the time without power until the clock is set again.')
 					: '';
-function privacyShow() {
+					function privacyShow() {
 		const x = S.x;
 		if (!x?.privacy) return;
 		const c = x.privacy.schedule;
 		$$('.sw.pv').forEach(b => busy(b) || sw(b, x.live.privacy));
-busy($('pt-pls')) || sw($('pt-pls'), c.enabled);
+		busy($('pt-pls')) || sw($('pt-pls'), c.enabled);
 		$('pt-plf').hidden = !c.enabled;
 		setIn($('pt-pf'), c.from);
 		setIn($('pt-pu'), c.until);
@@ -1700,7 +1710,7 @@ busy($('pt-pls')) || sw($('pt-pls'), c.enabled);
 					camNow() +
 					clockNote() +
 					(x.live.clock_waiting && x.live.privacy ? ' ' + _('Privacy stays on until the clock is confirmed, for up to 30 minutes after a start.') : '')
-);
+				);
 	}
 	$('pt-pvs').onchange = e => {
 		const el = e.target;
@@ -1720,7 +1730,7 @@ busy($('pt-pls')) || sw($('pt-pls'), c.enabled);
 	$$('.sw.pv').forEach(b => (b.onclick = () => {
 		if (b.getAttribute('aria-checked') == 'true') return pvOff(b);
 		sheet({
-title: _('Turn on privacy mode?'),
+			title: _('Turn on privacy mode?'),
 			text: _('Video from both lenses goes black and the microphone is muted until you turn it off. Your NVR keeps recording the black picture. The pan/tilt lens points away and comes back afterwards.'),
 			ok: _('Turn on'),
 			icon: 'pantilt',
@@ -1732,7 +1742,7 @@ title: _('Turn on privacy mode?'),
 			}
 		});
 	}));
-$('pt-pls').onclick = e => {
+	$('pt-pls').onclick = e => {
 		const b = e.currentTarget,
 			on = b.getAttribute('aria-checked') != 'true';
 		run(b, async () => {
@@ -1807,7 +1817,7 @@ $('pt-pls').onclick = e => {
 			p.position_known
 				? _n(L.length, 'Map of the travel range with the current aim and {n} preset position', 'Map of the travel range with the current aim and {n} preset positions')
 				: _n(L.length, 'Map of the travel range with {n} preset position', 'Map of the travel range with {n} preset positions')
-);
+			);
 		$('pt-map').firstElementChild.replaceChildren(
 			...L.map(q => at(h('b', { title: q.name, text: q.slot }), q.x, q.y)),
 			...(p.position_known ? [at(h('i', { class: 'me' }), p.position_x, p.position_y)] : [])
@@ -1862,14 +1872,14 @@ $('pt-pls').onclick = e => {
 		$('pt-list').replaceChildren(...L.map(used));
 		$('pt-list').hidden = !L.length;
 		tx('pt-count', L.length ? (L.length < 16 ? _('{a} of 16 used', { a: L.length }) : _('All 16 slots are in use. Delete a preset to save a new one.')) : '');
-map();
+		map();
 	}
 	/* Preset names: 1-64 UTF-8 bytes, no control characters, unique ignoring ASCII case (as the camera checks). */
 	const low = s => s.replace(/[A-Z]+/g, x => x.toLowerCase());
 	function chk(v, slot) {
 		v = v.trim();
 		if (!v) no(_('Enter a name.'));
-		if (new TextEncoder().encode(v).length > 64) no(_('Use a shorter name (up to 64 letters).'));
+		if (new TextEncoder().encode(v).length > 64) no(_('That name is too long for the camera. Use a shorter one.'));
 		if (/[\x00-\x1f\x7f]/.test(v)) no(_('Names cannot contain control characters.'));
 		if (P().some(p => p.slot != slot && low(p.name) == low(v)))
 			no(_('Another preset is already called “{v}”.', { v }));
@@ -2086,7 +2096,7 @@ map();
 				: mu
 					? _('The microphone is off: your NVR receives silence until you turn it back on.')
 					: ''
-);
+				);
 		}
 		talkUI();
 	}
@@ -2106,7 +2116,7 @@ map();
 		sheet({
 			title: on ? _('Turn audio on?') : _('Turn audio off?'),
 			text: on ? _('Video restarts for a few seconds, and your NVR reconnects by itself.') : _('Video restarts for a few seconds, and your NVR reconnects by itself. The microphone, talk and the siren stop working until you turn it back on.'),
-ok: on ? _('Turn on') : _('Turn off'),
+			ok: on ? _('Turn on') : _('Turn off'),
 			icon: 'audio',
 			run: async () => {
 				let lost = 0;
@@ -2140,7 +2150,7 @@ ok: on ? _('Turn on') : _('Turn off'),
 										: on
 											? _('It did not: audio is still off.')
 											: _('It did not: audio is still on.')
-);
+										);
 							})
 							.catch(noop),
 					6e3
@@ -2208,9 +2218,9 @@ ok: on ? _('Turn on') : _('Turn off'),
 				T.err ||
 				(on
 					? v != null
-						? _('Your voice plays through the speaker of {n} at volume {v}.', { n: name(), v })
-						: _('Your voice plays through the speaker of {n}.', { n: name() })
-: w
+						? _('Your voice plays through the speaker of {n} at volume {v}.', { n: label(), v })
+						: _('Your voice plays through the speaker of {n}.', { n: label() })
+						: w
 						? _('Waiting for the microphone…')
 						: en === false
 							? _('Audio is off on the camera.')
@@ -2409,7 +2419,7 @@ ok: on ? _('Turn on') : _('Turn off'),
 				)
 			);
 		$('st-lenses').replaceChildren(ln(_('Pan/tilt lens'), 0), ...(c.sensors > 1 ? [ln(_('Fixed lens'), 2)] : []));
-$('st-onvif').replaceChildren(cf(`https://${hs}:18443/onvif/device_service`, _('ONVIF device address')));
+		$('st-onvif').replaceChildren(cf(`https://${hs}:18443/onvif/device_service`, _('ONVIF device address')));
 		$('st-ont').replaceChildren(
 			tip(
 				_('ONVIF device address'),
@@ -2419,13 +2429,13 @@ $('st-onvif').replaceChildren(cf(`https://${hs}:18443/onvif/device_service`, _('
 					(c.main_only ? ' ' + _('ch1 and ch3 repeat ch0 and ch2.') : '')
 			)
 		);
-$('st-user').replaceChildren(cf(c.username, _('stream user name')));
+		$('st-user').replaceChildren(cf(c.username, _('stream user name')));
 		$('st-pwr').hidden = !c.password_set;
 		$('st-pwn').hidden = !!c.password_set;
 		ha(c);
 		$('st-o3l').hidden = c.sensors < 2;
 		$('st-env').replaceChildren(...parts(_('Set {v} in Frigate’s environment to the stream password.'), { v: h('code', { text: envName() }) }));
-tx('st-yaml', yaml(rp, c));
+		tx('st-yaml', yaml(rp, c));
 	}
 	seg($('st-host'), v => {
 		hs = v;
@@ -2487,7 +2497,7 @@ tx('st-yaml', yaml(rp, c));
 		b.lastChild.textContent = on ? _('Stop the siren · {a} s', { a: sirLeft() }) : talking ? _('Siren (after talk)') : _('Siren…');
 		b.disabled = !on && (talking || aon() === false);
 		$('ov-sirn').hidden = !!on || aon() !== false;
-const flashing = left(S.x?.live?.strobe_left_s || 0);
+		const flashing = left(S.x?.live?.strobe_left_s || 0);
 		$('au-sirx').hidden = !on && !flashing;
 		if (!on && flashing) {
 			b.lastChild.textContent = _('Stop the flashing · {flashing} s', { flashing });
@@ -2550,7 +2560,7 @@ const flashing = left(S.x?.live?.strobe_left_s || 0);
 	});
 	$('au-sirx').onclick = sirStop;
 	$('at-sirb').onclick = sirStop;
-$('ov-sir').onclick = e => {
+	$('ov-sir').onclick = e => {
 		if (sirOn() || left(S.x?.live?.strobe_left_s || 0)) return sirStop(e);
 		const x = S.x?.siren;
 		sheet({
@@ -2599,7 +2609,7 @@ $('ov-sir').onclick = e => {
 		haK = k;
 		$('st-hau').replaceChildren(cf(haUrl(), _('Address for all actions')));
 		$('st-acts').replaceChildren(
-...HA.map(([nm, op, v, what, note]) => {
+			...HA.map(([nm, op, v, what, note]) => {
 				const body = haBody(op, v),
 					curl = `curl -k -u ${c.username} -H 'Content-Type: application/json' -d '${body}' ${haUrl()}`,
 					b = h(
@@ -2614,7 +2624,7 @@ $('ov-sir').onclick = e => {
 					h('span', { class: 'han' }, h('b', { text: nm }), tip(nm, note())),
 					h('code', { class: 'body', dir: 'ltr', text: body }),
 					b
-);
+				);
 			})
 		);
 	}
@@ -2727,17 +2737,17 @@ $('ov-sir').onclick = e => {
 		$('nw-st').replaceChildren(
 			st(_('Sent'), bytes(w.tx_bytes)),
 			st(_('Received'), bytes(w.rx_bytes)),
-st(
+			st(
 				_('Ethernet'),
 				e.link ? (e.speed_mbps ? e.speed_mbps + ' Mb/s' : _('Connected')) : _('Not used')
-)
+			)
 		);
 		tx('nw-qc', _('Checked {t}', { t: hm(new Date(S['q@'] || Date.now())) }));
 		tx(
 			'se-net',
 			w.associated
 				? (w.ssid || _('Wi-Fi')) + ' · ' + (d != null ? _('{q} signal', { q: sig(d) }) : _('connected'))
-: _('Not connected to Wi-Fi')
+				: _('Not connected to Wi-Fi')
 		);
 		joinHelp();
 		ov();
@@ -2765,7 +2775,7 @@ st(
 		$('nw-scan').hidden = false;
 		$('nw-sb').setAttribute('aria-expanded', 'true');
 		tx('nw-sh', _('Looking for networks; this takes a few seconds.'));
-try {
+		try {
 			nets = await api(J + 'network/wifi/scan', { timeout: 2e4 });
 		} catch (e) {
 			tx('nw-sh', '');
@@ -2774,7 +2784,7 @@ try {
 		const at = new Date().toLocaleTimeString(LC, { hour: '2-digit', minute: '2-digit' });
 		tx('nw-sc', _('Networks nearby · scanned {t}', { t: at }));
 		$('nw-sb').querySelector('span').textContent = _('Scan again');
-rNets();
+		rNets();
 	}, $('nw-scan'));
 	function rNets() {
 		const A = Array.isArray(nets) ? nets : [],
@@ -2897,7 +2907,7 @@ rNets();
 			};
 		if (!id.trim() || id.length > 32) return bad(s, _('Enter the network name, up to 32 characters.'));
 		if (!safe(id)) return bad(s, _('This camera can only join a network whose name uses plain English letters, digits and symbols: no accents, no other alphabets, and no " or \\.'));
-if (k.length < 8 || k.length > 63) return bad(p, _('Wi-Fi passwords have 8 to 63 characters.'));
+		if (k.length < 8 || k.length > 63) return bad(p, _('Wi-Fi passwords have 8 to 63 characters.'));
 		if (!safe(k)) return bad(p, _('The camera can only use plain letters, digits and symbols here, without " or \\.'));
 		run(
 			sb(e),
@@ -2967,7 +2977,7 @@ if (k.length < 8 || k.length > 63) return bad(p, _('Wi-Fi passwords have 8 to 63
 			shell();
 		} else if (W && !W.end && !joining) {
 			const pv = prevName(),
-				n = name();
+				n = label();
 			d?.last == 'committed'
 				? wend(_('{n} stays on {ssid}', { n, ssid: W.ssid }), _('If the camera’s address changed, update your NVR.'))
 				: d?.last == 'rolled_back'
@@ -2993,13 +3003,13 @@ if (k.length < 8 || k.length > 63) return bad(p, _('Wi-Fi passwords have 8 to 63
 		$('p-network').classList.toggle('wc', !!W);
 		$('nw-sb').hidden = !!W;
 		$('nw-scan').hidden = !!W || !scanOpen;
-$('nw-join').hidden = !!W || !joinOpen;
+		$('nw-join').hidden = !!W || !joinOpen;
 		$('nw-count').hidden = !W;
 		if (!W) return;
 		const L = Math.max(0, W.deadline - Date.now()),
 			s = Math.ceil(L / 1e3),
 			pv = prevName(),
-			n = name(),
+			n = label(),
 			E = W.end,
 			was = W.was || location.hostname,
 			u = W.addr && `https://${W.addr}${location.port ? ':' + location.port : ''}/`;
@@ -3018,7 +3028,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 						? W.addr
 							? _('The camera moved. To keep {ssid}, open it at the new address and sign in again in time; otherwise it goes back to {pv} and restarts.', { ssid: W.ssid, pv })
 							: _('The camera moved. To keep {ssid}, open it at {n}.local, or the address your router lists, and sign in again in time; otherwise it goes back to {pv} and restarts.', { ssid: W.ssid, n, pv })
-: _('The camera can’t be reached from this device. To keep {ssid}, open this page from a device on it in time; otherwise it goes back to {pv} and restarts.', { ssid: W.ssid, pv })
+							: _('The camera can’t be reached from this device. To keep {ssid}, open this page from a device on it in time; otherwise it goes back to {pv} and restarts.', { ssid: W.ssid, pv })
 					: W.joined
 						? _('{n} is answering on {ssid}. If you do nothing, it goes back to {pv} and restarts when the timer ends.', { n, ssid: W.ssid, pv })
 						: _('{n} is trying {ssid}. If nobody confirms, it goes back to {pv} and restarts.', { n, ssid: W.ssid, pv })
@@ -3061,7 +3071,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 							{ a: h('a', { href: u, class: 'mono', text: W.addr }) }
 						)
 					)
-: tx('wc-nt', W.ip ? _('If the address changes, update your NVR after keeping it.') : _('If the address changes, update your NVR after keeping the new network.'));
+					: tx('wc-nt', W.ip ? _('If the address changes, update your NVR after keeping it.') : _('If the address changes, update your NVR after keeping the new network.'));
 		}
 		tx('wc-keep', E ? _('Done') : _('Keep {ssid}', { ssid: W.ssid }));
 		tx('wc-back', _('Go back to {pv} now', { pv }));
@@ -3085,7 +3095,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 		}
 		run(e.currentTarget, async () => {
 			await api(J + 'network/wifi', { method: 'PUT', json: { id: trialId() }, timeout: 2e4 });
-			wend(_('{n} stays on {ssid}', { n: name(), ssid: W.ssid }), _('If the camera’s address changed, update your NVR.'));
+			wend(_('{n} stays on {ssid}', { n: label(), ssid: W.ssid }), _('If the camera’s address changed, update your NVR.'));
 			quality().catch(noop);
 			ipInfo().catch(noop);
 		});
@@ -3112,7 +3122,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 		update: _('An update is being installed. Try again when it has finished.'),
 		'wifi-trial': _('A network change is already being tested. Keep it or go back first.'),
 		'boot-trial': _('A new release is still being tried out after an update. Try again in a few minutes.'),
-		'no-runtime': _('A platform update stopped half way. Look at the camera over SSH first (see Recovery in the docs).'),
+		'no-runtime': _('A platform update stopped half way. Look at the camera over SSH first (see docs/RECOVERY.md).'),
 		starting: _('The camera is still checking its start. Try again in about 4 minutes.')
 	};
 	function ipShow(mode) {
@@ -3194,7 +3204,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 				const d = await api(J + 'network/mdns', { method: 'PUT', json: { hostname: v } }),
 					u = `https://${d.address}${location.port ? ':' + location.port : ''}/`;
 				$('nw-res').replaceChildren(...parts(_('Saved. {u} works after the next restart.'), { u: h('a', { href: u, class: 'mono', text: u }) }));
-},
+			},
 			i
 		);
 	};
@@ -3319,7 +3329,7 @@ $('nw-join').hidden = !!W || !joinOpen;
 					: n.error
 						? _('Not synced yet: {e}.', { e: n.error })
 						: _('Not synced yet: waiting for the first reply.')
-);
+					);
 		tick();
 	}
 	function tick() {
@@ -3387,18 +3397,19 @@ $('nw-join').hidden = !!W || !joinOpen;
 		update: _('An update is being installed. Try again when it has finished.'),
 		'wifi-trial': _('A new Wi-Fi network is being tested. Keep it or go back first.'),
 		'boot-trial': _('A new release is still being tried out after an update. Try again in a few minutes.'),
-		'no-runtime': _('A platform update stopped half way, and the camera would not come back from a restart. Look at it over SSH first (see Recovery in the docs).'),
+		'no-runtime': _('A platform update stopped half way, and the camera would not come back from a restart. Look at it over SSH first (see docs/RECOVERY.md).'),
 		starting: _('The camera is still checking its start, and a restart now would count against it. Try again in about 4 minutes.')
 	};
 	$('sy-rs').onclick = () =>
 		fwStopped ||
 		sheet({
-title: _('Restart the camera?'),
+			title: _('Restart the camera?'),
 			text: _('It is offline for about 90 seconds. Your NVR reconnects by itself and this page comes back on its own.'),
 			ok: _('Restart now'),
 			danger: 1,
 			icon: 'system',
 			run: async () => {
+				fwStopped && no(_('Locked: an update stopped. Look at the camera over SSH first.'));
 				try {
 					await api(J + 'system/restart', { method: 'POST', json: {}, quiet: 1, timeout: 15e3 });
 				} catch (x) {
@@ -3412,7 +3423,7 @@ title: _('Restart the camera?'),
 	/* Reset to defaults: typing the camera's name confirms it. The camera checks the name too. */
 	$('sy-rd').onclick = () => {
 		if (fwStopped) return;
-const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' }),
+		const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' }),
 			L = (t, a) => h('div', { class: 'f' }, h('span', { class: 'cap', text: t }), h('ul', { class: 'rl' }, ...a.map(x => h('li', { text: x }))));
 		sheet({
 			title: _('Reset {n} to defaults?', { n: name() }),
@@ -3429,6 +3440,7 @@ const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocap
 			focus: i,
 			run: async () => {
 				const v = i.value.trim();
+				fwStopped && no(_('Locked: an update stopped. Look at the camera over SSH first.'));
 				if (v != name()) no(_('Type {n} exactly.', { n: name() }));
 				try {
 					await api(J + 'system/reset', { method: 'POST', json: { confirm: v }, quiet: 1, timeout: 15e3 });
@@ -3449,7 +3461,7 @@ const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocap
 			wait = (mins(t) - d.getUTCHours() * 60 - d.getUTCMinutes() + 1440) % 1440 || 1440,
 			at = new Date(now + wait * 6e4);
 		return (
-			at.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) +
+			at.toLocaleDateString(LC, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) +
 			', ' +
 			t
 		);
@@ -3668,15 +3680,21 @@ const i = h('input', { id: 'rd-name', class: 'raw', autocomplete: 'off', autocap
 		tx(nm, f ? f.name : '');
 		$(box).hidden = !f && !st && !m;
 	}
-	$('sy-file').onchange = () => fwUI(0);
-	$('sy-mfile').onchange = () => mfUI(0);
+	$('sy-file').onchange = () => {
+		fw = '';
+		fwUI(0);
+	};
+	$('sy-mfile').onchange = () => {
+		mfw = '';
+		mfUI(0);
+	};
 	/* Upload stages: 0 idle, 1 uploading (can cancel), 2 checking, 3 staged, 4 installing. */
-function fwUI(st, m) {
+	function fwUI(st, m) {
 		$('sy-prog').hidden = st != 1;
 		tx('sy-ust', m || '');
 		$('sy-apply').disabled = !fw || installing;
 		upShow('sy-upb', 'sy-file', 'sy-fn', st, m);
-}
+	}
 	/* o: where it goes and what shows it; only the platform's goes through the relay's slots. */
 	function upload(f, o) {
 		return (o.relay ? take() : Promise.resolve()).then(
@@ -3749,6 +3767,7 @@ function fwUI(st, m) {
 					});
 					if (!d?.id) no(_('The camera did not stage the package. Try again.'));
 					fw = d.id;
+					fwV = d.version || '';
 					fwUI(3, d.version ? _('Signature verified: platform {v}. Ready to install.', { v: d.version }) : _('Signature verified. Ready to install.'));
 				} catch (x) {
 					fwUI(0, x.kind == 'cancel' ? _('Upload cancelled.') : '');
@@ -3761,7 +3780,7 @@ function fwUI(st, m) {
 	$('sy-cancel').onclick = () => upx?.abort();
 	/* A platform install runs on behind its answer. If it stops, nothing else would say so. */
 	const FW_NOT_RESTARTED = _('Installed. The camera has not restarted, because a media update has not finished: look at it over SSH, then restart it.'),
-		FW_STOPPED = _('The update stopped and the camera is still running. Before restarting it, look at it over SSH (see Recovery in the documentation).');
+		FW_STOPPED = _('The update stopped and the camera is still running. Before restarting it, look at it over SSH (see docs/RECOVERY.md).');
 	/* What a status means. Only an install that got going can have left anything half done. */
 	function fwReport(d) {
 		const stopped = d.state == 'failed' && d.reason == 'upgrade',
@@ -3769,12 +3788,13 @@ function fwUI(st, m) {
 			needed = d.restart == 'needed';
 		if (!stopped && !refused && !needed) return 0;
 		installing = 0;
-		fwStopped = +stopped;
-		fwMsg = needed ? FW_NOT_RESTARTED : stopped ? FW_STOPPED : '';
+		const still = stopped || (refused && fwWas); /* a refusal changes nothing: what stopped before is still there */
+		fwStopped = +still;
+		fwMsg = needed ? FW_NOT_RESTARTED : still ? FW_STOPPED : '';
 		shell();
-$('sy-mapply').disabled = !mfw || fwStopped;
+		$('sy-mapply').disabled = !mfw || fwStopped;
 		$('sy-mstage').disabled = false;
-		fwUI(0, needed ? FW_NOT_RESTARTED : stopped ? FW_STOPPED : _('The update did not start, and nothing was changed: the camera refused this package.'));
+		upx || fw || fwUI(0, needed ? FW_NOT_RESTARTED : stopped ? FW_STOPPED : _('The update did not start, and nothing was changed: the camera refused this package.'));
 		return 1;
 	}
 	/* When this page opens too: the tab may have closed, or reloaded, while an install ran. */
@@ -3788,20 +3808,23 @@ $('sy-mapply').disabled = !mfw || fwStopped;
 			fwStopped = 0;
 			fwMsg = '';
 			shell();
-$('sy-mapply').disabled = !mfw;
-			fwUI(0);
+			fwWas = 0;
+			$('sy-mapply').disabled = !mfw;
+			upx || fw || fwUI(0);
 		}
 		if (d.state == 'running' || d.state == 'launching') {
 			installing = 1;
 			instAt ||= Date.now();
-$('sy-mapply').disabled = $('sy-mstage').disabled = true;
+			$('sy-mapply').disabled = $('sy-mstage').disabled = true;
 			fwUI(4, _('Installing. The camera restarts; this page reconnects by itself.'));
 			fwWatch();
 		}
 	}
 	async function fwWatch() {
+		if (fwW) return; /* the page opening on System asks twice */
+		fwW = 1;
 		let lost = 0;
-		for (let i = 0; i < 240; i++) {
+		for (let i = 0; i < 240 || lost; i++) {
 			await new Promise(z => setTimeout(z, 2e3));
 			let d = null;
 			try {
@@ -3812,47 +3835,59 @@ $('sy-mapply').disabled = $('sy-mstage').disabled = true;
 			/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
 			if (!d) {
 				lost++;
+				if (!instLate && Date.now() - instAt > 3e5) {
+					instLate = 1;
+					shell();
+					fwUI(4, _('It has not come back after 5 minutes. Do not cut its power yet: look at it over SSH first (see docs/RECOVERY.md).'));
+				}
 				continue;
+			}
+			if (instLate) {
+				instLate = 0;
+				shell();
 			}
 			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart: the buttons and the versions are a new page's */
 			lost = 0;
-			if (fwReport(d)) return;
+			if (fwReport(d)) return void (fwW = 0);
 		}
-		if (lost) return; /* the offline banner has it from here */
+		fwW = 0;
 		installing = 0;
 		fwStopped = 1;
-		fwMsg = _('Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see Recovery in the docs).');
+		fwMsg = _('Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see docs/RECOVERY.md).');
 		shell();
 		$('sy-mapply').disabled = true;
 		$('sy-mstage').disabled = false;
 		fwUI(0, fwMsg);
-}
+	}
 	$('sy-apply').onclick = () =>
 		fw &&
 		sheet({
 			title: _('Install and restart?'),
 			text: _('The camera installs the verified package and restarts; it is offline for about 90 seconds. Do not cut its power meanwhile. If it does not come back, recovery is over SSH.'),
-ok: _('Install and restart'),
+			body: fwV && h('p', { class: 'mono', text: _('Package: {v}', { v: fwV }) }),
+			ok: _('Install and restart'),
 			danger: 1,
 			icon: 'system',
 			run: async () => {
 				try {
 					installing = 1;
 					instAt = Date.now();
-					fwStopped = 0;
-					fwMsg = '';
-$('sy-mapply').disabled = $('sy-mstage').disabled = true;
+					$('sy-mapply').disabled = $('sy-mstage').disabled = true;
 					await api(J + 'update', { method: 'PUT', json: { id: fw }, timeout: 6e4, quiet: 1 });
 				} catch (x) {
 					if (x.kind != 'off') {
 						installing = 0;
 						instAt = 0;
-						$('sy-mapply').disabled = !mfw;
-$('sy-mstage').disabled = false;
+						shell();
+						$('sy-mapply').disabled = !mfw || !!fwStopped;
+						$('sy-mstage').disabled = false;
 						if (x.st == 409 && x.d?.reason == 'wifi-trial') throw new Fail(RESTART_NO['wifi-trial']);
 						throw x;
 					}
 				}
+				fwWas = fwStopped;
+				fwStopped = 0;
+				fwMsg = '';
 				fw = '';
 				$('sy-file').value = '';
 				shell();
@@ -3870,7 +3905,7 @@ $('sy-mstage').disabled = false;
 		tx('sy-must', m || '');
 		$('sy-mapply').disabled = !mfw || installing || fwStopped;
 		upShow('sy-mupb', 'sy-mfile', 'sy-mfn', st, m);
-}
+	}
 	$('sy-mup').onsubmit = e => {
 		e.preventDefault();
 		const f = $('sy-mfile').files[0];
@@ -3906,6 +3941,7 @@ $('sy-mstage').disabled = false;
 		sheet({
 			title: _('Install and restart?'),
 			text: _('The camera writes the new media firmware and restarts. Video and this page are away for about 2 minutes, and your NVR reconnects by itself. Do not cut its power meanwhile. If it does not come back, recovery is over SSH.'),
+			body: h('p', { class: 'mono', text: _('Package: {v}', { v: mfw }) }),
 			ok: _('Install and restart'),
 			danger: 1,
 			icon: 'system',
@@ -3914,7 +3950,7 @@ $('sy-mstage').disabled = false;
 				mfw = '';
 				installing = 1;
 				instAt = Date.now();
-$('sy-apply').disabled = $('sy-stage').disabled = true;
+				$('sy-apply').disabled = $('sy-stage').disabled = true;
 				$('sy-mfile').value = '';
 				holdOff = Date.now() + 8e3;
 				reloadOn = 1;
@@ -3926,7 +3962,7 @@ $('sy-apply').disabled = $('sy-stage').disabled = true;
 					if (!reloadOn) return;
 					instLate = 1;
 					shell();
-					mfUI(4, _('It has not come back after 5 minutes. Do not cut its power yet: look at it over SSH first (see Recovery in the documentation).'));
+					mfUI(4, _('It has not come back after 5 minutes. Do not cut its power yet: look at it over SSH first (see docs/RECOVERY.md).'));
 				}, 3e5);
 				/* It says so if it stopped short of the flash; once it goes away, it has not. */
 				for (let i = 0; i < 36; i++) { /* stopping the media daemon can take a minute before it refuses */
@@ -3939,7 +3975,7 @@ $('sy-apply').disabled = $('sy-stage').disabled = true;
 						instAt = 0;
 						shell();
 						$('sy-apply').disabled = !fw;
-$('sy-stage').disabled = false;
+						$('sy-stage').disabled = false;
 						return mfUI(0, _('Not installed, nothing changed: {e}', { e: d.error }));
 					}
 				}
@@ -4006,6 +4042,7 @@ $('sy-stage').disabled = false;
 		}
 		$('sy-rs').disabled = $('sy-rd').disabled = !!fwStopped;
 		$('sy-lock').hidden = !fwStopped;
+		$('sy-rss').disabled = !!fwStopped && $('sy-rss').getAttribute('aria-checked') != 'true';
 		$('at-late').hidden = !instLate;
 		instLate && sc('at-ssh2');
 		$('at-inst').hidden = !installing || !!fwMsg || !!instLate;
@@ -4013,19 +4050,21 @@ $('sy-stage').disabled = false;
 			tx('at-instp', reloadOn ? _('The camera is writing the update and then restarts. Video and this page are away for about 2 minutes. This page reconnects by itself.') : _('The camera is writing the update and then restarts. It is away for about 90 seconds. This page reconnects by itself.'));
 			tx('at-el', _('{t} so far', { t: dur((Date.now() - instAt) / 1e3) }));
 		}
-		$('at-rest').hidden = !off || !restarting;
-		if (off && restarting) {
-			tx('at-restt', _('{n} isn’t answering', { n: name() }));
+		const rs = !!off && !!restarting && Date.now() - restAt < 18e4;
+		$('at-rest').hidden = !rs;
+		if (rs) {
+			tx('at-restt', _('{n} isn’t answering', { n: label() }));
 			tx('at-restp', restarting);
 		}
-		$('banner').hidden = !off || !!restarting || !!installing;
-		off && tx('bn-t', _('{n} isn’t answering', { n: name() }));
+		$('banner').hidden = !off || rs || (!!installing && !instLate);
+		$$('.lang').forEach(e => (e.disabled = !!(installing || off)));
+		off && tx('bn-t', _('{n} isn’t answering', { n: label() }));
 		$('at-sir').hidden = !on && !fl;
 		(on || fl) && tx('at-sirt', on ? _('Siren sounding: {s} s left', { s: sirLeft() }) : _('The white light is flashing: {s} s left.', { s: fl }));
 		const trial = W && !W.end && route != 'network';
 		$('at-try').hidden = !trial;
 		trial && tx('at-tryt', _('Testing {ssid}: {t} left to decide', { ssid: W.ssid, t: mmss(Math.ceil(Math.max(0, W.deadline - Date.now()) / 1e3)) }));
-		$('at-priv').hidden = !(P0?.privacy || live?.privacy) || !!off;
+		$('at-priv').hidden = !(P0 ? P0.privacy : live?.privacy) || !!off;
 		$('at-clock').hidden = !(live?.clock_ok === false && (X.night.mode == 'schedule' || X.white_light.schedule.enabled || X.privacy?.schedule.enabled || X.overlay?.enabled)) || !!off;
 	}
 	function theme(t) {
@@ -4068,13 +4107,13 @@ $('sy-stage').disabled = false;
 	pick($('im-lens'), 0);
 	pick($('pt-speed'), speed);
 	pick($('pt-view'), 'live');
-$$('.raw,[type=password]').forEach(i => {
+	$$('.raw,[type=password]').forEach(i => {
 		i.autocomplete = i.autocomplete || 'off';
 		i.autocapitalize = 'off';
 		i.spellcheck = false;
 	});
 	$$('.host').forEach(e => (e.textContent = location.host));
-	$$('.cam-name').forEach(e => (e.textContent = guess));
+	$$('.cam-name').forEach(e => (e.textContent = label()));
 	setInterval(() => {
 		tick();
 		W && !W.end && wifi();
@@ -4085,25 +4124,22 @@ $$('.raw,[type=password]').forEach(i => {
 			fwLast().catch(noop);
 		}
 		stShow();
-stTick();
+		stTick();
 		if (off) {
 			tx('bn-s', _('Retrying in {s} s.', { s: Math.max(0, Math.ceil((retry - Date.now()) / 1e3)) }));
-Date.now() >= retry && probe();
+			Date.now() >= retry && probe();
 			return;
 		}
-		/* Media status: every 5 s; 1 s while pan/tilt moves; 2 s on Audio for the level meter. */
+		/* Media status, which the attention bar needs on every page: every 5 s, 10 s where nothing else
+		   on the page uses it; 1 s while pan/tilt moves or the siren sounds; 2 s on Audio for the level meter. */
 		const mv = fast > Date.now() || S.m?.platform?.moving;
-		if (
-			!['streams', 'network', 'settings'].includes(route) &&
-			age('m') > (sirOn() || (mv && route == 'pantilt') ? 1e3 : route == 'audio' ? 2e3 : 5e3)
-		)
-			media().catch(noop);
+		if (age('m') > (sirOn() || (mv && route == 'pantilt') ? 1e3 : route == 'audio' ? 2e3 : ['streams', 'network', 'settings'].includes(route) ? 1e4 : 5e3)) media().catch(noop);
 		if (route == 'pantilt') {
 			rAim();
 			if (age('a') > (mv ? 1e3 : 5e3)) aim().catch(noop);
 		}
-		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview. */
-		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' || route == 'audio' ? 5e3 : 1 / 0)) controls().catch(noop);
+		/* Controls: every 2 s on Image & night (the darkness meter), 5 s on Overview, 30 s elsewhere for the bar. */
+		if (age('x') > (route == 'image' ? 2e3 : route == 'pantilt' ? 3e3 : route == 'overview' || route == 'audio' ? 5e3 : 3e4)) controls().catch(noop);
 		/* A Wi-Fi trial: every 3 s while one runs; otherwise now and then on Network. */
 		if (age('w') > (joining || (W && !W.end) ? 3e3 : route == 'network' ? 2e4 : 1 / 0)) wifiState().catch(wifiLost);
 		if ((route == 'overview' || route == 'system') && age('j') > 6e4) joan().catch(noop);
@@ -4129,20 +4165,25 @@ Date.now() >= retry && probe();
 	})();
 }
 {
-	const l = langOf(),
-		start = () => {
-			if (PACK) PR = new Intl.PluralRules(LC);
-			walk();
-			main();
-		};
-	document.documentElement.lang = l;
-	LC = (navigator.languages || []).find(x => x.startsWith(l.slice(0, 2))) || l;
+	const l = langOf();
+	let began = 0;
+	const start = pack => {
+		if (began++) return; /* a pack that arrives after the wait is too late */
+		PACK = pack || null;
+		const x = PACK ? l : 'en';
+		document.documentElement.lang = x;
+		LC = (x != 'zh-CN' && (navigator.languages || []).find(y => y.startsWith(x.slice(0, 2)))) || x;
+		if (PACK) PR = new Intl.PluralRules(LC);
+		walk();
+		main();
+	};
 	if (l == 'en') start();
 	else {
 		const e = document.createElement('script');
 		e.src = '/ui/lang-' + l + '.js';
-		e.onload = () => ((PACK = self.JIPC_PACK || null), start());
-		e.onerror = start;
+		e.onload = () => start(self.JIPC_PACK);
+		e.onerror = () => start();
+		setTimeout(() => start(), 6e3); /* the page must not wait for ever on a pack that hangs */
 		document.head.append(e);
 	}
 }

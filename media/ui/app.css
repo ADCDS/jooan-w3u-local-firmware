@@ -39,7 +39,7 @@ label,.lbl{font-weight:600}
 #top,#tabs{display:none!important}
 main{padding:32px 40px 64px;min-width:0}
 .page{max-width:1160px;margin:0 auto}
-.ph{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
+.ph{position:relative;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px}
 .ph>div,.card>div:not([class]),.bar>div{gap:2px;max-width:760px}
 .cols{display:flex;flex-wrap:wrap;align-items:flex-start}
 .cols>*{flex:1 1 380px;min-width:0}
