@@ -635,6 +635,7 @@
 "The camera’s clock is not confirmed": "摄像机时钟未确认",
 "The camera’s speaker is not available right now.": "摄像机的扬声器现在不可用。",
 "The current password is wrong or the new one is not allowed.": "当前密码错误，或新密码不被允许。",
+"The daily restart is on and can still happen: turn it off under System.": "每日重启已开启，仍可能执行：请在“系统”中关闭。",
 "The day level must be below the night level.": "白天阈值必须低于夜间阈值。",
 "The installed firmware": "已安装的固件",
 "The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.": "此数值是云台镜头的曝光量：越高越暗。滤光片打开时，黄昏读数约低 3.6 倍，因此白天阈值应低于夜间阈值 ÷ 3.6。",

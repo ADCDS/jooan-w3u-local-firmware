@@ -639,6 +639,7 @@
 "The camera’s clock is not confirmed": "El reloj de la cámara no está confirmado",
 "The camera’s speaker is not available right now.": "El altavoz de la cámara no está disponible ahora mismo.",
 "The current password is wrong or the new one is not allowed.": "La contraseña actual es incorrecta o la nueva no está permitida.",
+"The daily restart is on and can still happen: turn it off under System.": "El reinicio diario está activo y puede producirse igualmente: desactívalo en Sistema.",
 "The day level must be below the night level.": "El nivel de día debe ser inferior al de noche.",
 "The installed firmware": "El firmware instalado",
 "The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.": "El nivel es la exposición de la lente pan/tilt: más alto es más oscuro. Con el filtro abierto marca unas 3,6 veces menos al anochecer, así que deja el nivel de día por debajo del de noche ÷ 3,6.",

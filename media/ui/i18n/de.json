@@ -637,6 +637,7 @@
 "The camera’s clock is not confirmed": "Die Uhr der Kamera ist nicht bestätigt",
 "The camera’s speaker is not available right now.": "Der Lautsprecher der Kamera ist gerade nicht verfügbar.",
 "The current password is wrong or the new one is not allowed.": "Das aktuelle Passwort ist falsch, oder das neue ist nicht erlaubt.",
+"The daily restart is on and can still happen: turn it off under System.": "Der tägliche Neustart ist an und kann trotzdem stattfinden: Schalte ihn unter System aus.",
 "The day level must be below the night level.": "Der Tagpegel muss unter dem Nachtpegel liegen.",
 "The installed firmware": "Die installierte Firmware",
 "The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.": "Der Pegel ist die Belichtung des Schwenk-Objektivs: höher ist dunkler. Mit offenem Filter liegt er in der Dämmerung etwa 3,6-mal niedriger, halte den Tagpegel daher unter Nachtpegel ÷ 3,6.",

@@ -25,7 +25,8 @@ await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(()=>{const D=D
  const J=(s,o)=>new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json'}});
  window.fetch=async(u,o={})=>{u=String(u);const m=o.method||'GET';
   if(window.__off)throw new TypeError('off');
-  if(/joan.v1.update$/.test(u)){if(m=='GET'){window.__gets++;if(window.__upd)return J(200,window.__upd)}if(m=='PUT'&&window.__put)return J(window.__put,{error:'no',reason:'wifi-trial'})}
+  if(window.__401)return J(401,{error:{code:'x'}});
+  if(/joan.v1.update$/.test(u)){if(m=='GET'){window.__gets++;const a=window.__upd||JSON.parse(localStorage.getItem('__upd')||'null');if(window.__hold)await new Promise(r=>window.__release=r);if(a)return J(200,a)}if(m=='PUT'&&window.__put)return J(window.__put,{error:'no',reason:'wifi-trial'})}
   if(/network.mdns$/.test(u)&&localStorage.getItem('__nomdns'))return J(500,{error:'no'});
   if(/v1.controls?$/.test(u)&&m=='POST'&&window.__ctl)return J(500,{error:'boom'});
   const r=await f(u,o);
@@ -140,6 +141,7 @@ await errs('normal');
 // offline
 await fetch(new URL('/__mock/fail?on=1', normal));
 ok(await until(vis('banner'), 20), 'offline banner appears');
+ok(await E(`document.getElementById('sy-sum').textContent==''`), 'Health does not say All normal while it is away');
 ok(await E(`/answering/.test(document.getElementById('bn-t').textContent)&&document.querySelector('.page:not([hidden]) .card').inert`), 'it names the camera and the page is inert');
 await fetch(new URL('/__mock/fail?on=0', normal));
 await E(`document.getElementById('bn-try').click();1`);
@@ -206,6 +208,48 @@ await go('overview');
 await sleep(5500);
 ok(await E(`document.getElementById('ov-sum').textContent==''`), 'nor does Status');
 await errs('refused retry');
+// an answer that left before the retry began says nothing about it
+ok(await signIn(await mock(), `window.__upd={state:'failed',reason:'upgrade'}`), 'a retry, with a check in flight');
+await until(vis('at-stop'), 6);
+await go('system');
+await choose('#sy-file');
+await E(`document.getElementById('sy-stage').click();1`);
+await until(`!document.getElementById('sy-apply').disabled`, 8);
+await E(`window.__hold=1;window.__skew=31e3;1`);
+await sleep(1500);
+await E(`document.getElementById('sy-apply').click();1`);
+await sleep(200);
+ok(await E(`/pkg-a.bin/.test(document.getElementById('sheet').textContent)`), 'the platform dialog names the file');
+await E(`window.__upd={state:'running'};window.__hold=0;document.querySelector('#sheet form').requestSubmit();1`);
+await sleep(100);
+await E(`window.__release&&window.__release();1`);
+await sleep(2500);
+ok(await E(vis('at-inst')), 'the stale answer does not end the install');
+ok(await E(`document.querySelector('.state').textContent`) !== 'Online', 'the pill does not say Online');
+// choosing another file while one uploads
+const slow = await mock('--latency', '1500');
+ok(await signIn(slow), 'a slow upload');
+await go('system');
+await sleep(2500);
+await choose('#sy-file', 'pkg-a.bin');
+await E(`document.getElementById('sy-stage').click();1`);
+await sleep(300);
+await choose('#sy-file', 'pkg-b.bin');
+await until(`document.getElementById('sy-stage').getAttribute('aria-busy')!='true'`, 20);
+await sleep(300);
+ok(await E(`document.getElementById('sy-apply').disabled&&document.getElementById('sy-fn').textContent=='pkg-b.bin'`), 'another file while uploading cancels the first');
+// the daily restart under a stopped update
+const dm = await mock();
+ok(await signIn(dm), 'a daily restart');
+await go('system');
+await until(`document.getElementById('sy-rsn').textContent!=''`, 6);
+await E(`document.getElementById('sy-rss').click();1`);
+await sleep(800);
+await E(`localStorage.setItem('__upd',JSON.stringify({state:'failed',reason:'upgrade'}));location.reload();1`);
+await sleep(800);
+await until(vis('at-stop'), 8);
+ok(await until(`/daily/.test(document.getElementById('at-stopp').textContent)`, 8), 'the bar says it can still happen');
+await E(`localStorage.removeItem('__upd');1`);
 // a platform install that does not come back
 ok(await signIn(await mock(), `window.__upd={state:'running'}`), 'a running install');
 ok(await until(vis('at-inst'), 6), 'shows as installing');
@@ -235,6 +279,26 @@ ok(await until(vis('at-rest'), 6), 'an expected restart says so');
 ok(await E(`document.getElementById('banner').hidden&&!!document.getElementById('at-restb')`), 'not the red banner, and Try now stays');
 await E(`window.__skew=4*60e3;1`);
 ok(await until(vis('banner') + `&&document.getElementById('at-rest').hidden`, 5), 'after 3 minutes it is simply not answering');
+ok(await E(`document.querySelector('.state').textContent`) !== 'Restarting', 'and the pill agrees');
+await E(`window.__off=0;window.__401=1;1`);
+ok(await until(`!document.getElementById('signin').hidden`, 16), 'a session gone on its return signs out');
+ok(await E(`[...document.querySelectorAll('#signin .lang')].every(x=>!x.disabled)`), 'and the language can be chosen there');
+await E(`window.__401=0;1`);
+// an install's silence is counted from when it fell silent
+ok(await signIn(await mock(), `window.__upd={state:'running'}`), 'a long install');
+await until(vis('at-inst'), 6);
+await E(`window.__skew=14*60e3;1`);
+await sleep(2500);
+await E(`window.__off=1;1`);
+await sleep(4500);
+ok(await E(`document.getElementById('at-late').hidden`), 'its first silence is not already late');
+await E(`window.__skew=20*60e3;1`);
+ok(await until(vis('at-late'), 18), 'five minutes of silence is');
+await E(`window.__off=0;1`);
+ok(await until(`document.getElementById('at-late').hidden`, 16), 'an answer clears it');
+await E(`location.hash='#system';1`);
+await sleep(800);
+ok(await E(`!/5 minutes/.test(document.getElementById('sy-ust').textContent)`), 'and the form no longer says so');
 // the bar follows the camera on a page that does not otherwise read its status
 ok(await signIn(await mock()), 'the bar on Network');
 await go('network');
@@ -248,6 +312,11 @@ await until(vis('at-priv'), 14);
 await E(`window.__ctl=1;document.getElementById('at-privb').click();1`);
 ok(await until(`!!document.querySelector('#at-priv .err')`, 5), 'a failed Turn off says so');
 ok(await E(`!document.querySelector('#at-privb .err')`), 'beside the button, not inside it');
+ok(await E(`document.querySelector('#at-priv>div').offsetWidth>100&&document.getElementById('at-priv').offsetHeight<300`), 'and the bar keeps its shape');
+await E(`window.__priv=0;1`);
+await until(`document.getElementById('at-priv').hidden`, 14);
+await sleep(1100);
+ok(await E(`!document.querySelector('#at-priv .err')`), 'the error goes when the bar does');
 // the name that crosses to the camera
 ok(await signIn(await mock(), `localStorage.setItem('__nomdns','1');localStorage.setItem('jipc-lang','"fr"')`), 'with no name from the camera');
 await b.go(await E('location.href'), 500);

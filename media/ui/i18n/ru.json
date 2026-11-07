@@ -641,6 +641,7 @@
 "The camera’s clock is not confirmed": "Часы камеры не подтверждены",
 "The camera’s speaker is not available right now.": "Динамик камеры сейчас недоступен.",
 "The current password is wrong or the new one is not allowed.": "Текущий пароль неверен или новый недопустим.",
+"The daily restart is on and can still happen: turn it off under System.": "Ежедневный перезапуск включён и всё ещё может произойти: отключите его в разделе «Система».",
 "The day level must be below the night level.": "Дневной уровень должен быть ниже ночного.",
 "The installed firmware": "Установленная прошивка",
 "The level is the pan/tilt lens’s exposure: higher is darker. With the filter open it reads about 3.6× lower at twilight, so keep the day level below the night level ÷ 3.6.": "Уровень — это экспозиция поворотного объектива: чем выше, тем темнее. С открытым фильтром в сумерках он примерно в 3,6 раза ниже, поэтому держите дневной уровень ниже ночного ÷ 3,6.",

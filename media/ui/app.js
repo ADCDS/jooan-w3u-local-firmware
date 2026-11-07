@@ -137,6 +137,7 @@ function main() {
 		instLate = 0, // a media install that has not come back after 5 minutes
 		restarting = '', // why the camera is away, when it was asked to go
 		restAt = 0, // when
+		rsWas = false,
 		fwWas = 0, // the install now running is a retry after one that stopped
 		fwV = '', // what is staged, for the dialog
 		fwW = 0, // a watch is running
@@ -397,6 +398,7 @@ function main() {
 		$('signin').hidden = false;
 		document.title = label() + ' · ' + _('Sign in');
 		$('si-pass').value = '';
+		$$('.lang').forEach(e => (e.disabled = false));
 		note(m, t);
 		req(J + 'setup/status', { timeout: 6e3 }).then(x => {
 			const d = x?.r.ok && x.d,
@@ -707,7 +709,7 @@ function main() {
 				: installing
 					? ['warn', _('Installing')]
 					: off
-				? restarting
+				? restarting && Date.now() - restAt < 18e4
 					? ['warn', _('Restarting')]
 					: ['crit', _('Not answering')]
 				: sirOn()
@@ -882,7 +884,7 @@ function main() {
 		const LS = hl(1),
 			ns = LS.filter(x => x[0] == 'warn' || x[0] == 'crit').length;
 		$('sy-stats').replaceChildren(...hlist(LS));
-		const calm = !fwMsg && !installing && !instLate && !sirOn() && !S.m?.platform?.privacy;
+		const calm = !off && !fwMsg && !installing && !instLate && !sirOn() && !S.m?.platform?.privacy;
 		$('sy-sum').replaceChildren(LS.length ? (ns ? pill('warn', _n(ns, '{n} thing to check', '{n} things to check')) : calm ? pill('ok', _('All normal')) : '') : '');
 		foldOn($('sy-fold'), ns);
 		foldOn($('ov-fold'), n);
@@ -3680,11 +3682,17 @@ function main() {
 		tx(nm, f ? f.name : '');
 		$(box).hidden = !f && !st && !m;
 	}
+	let fwG = 0,
+		mfG = 0;
 	$('sy-file').onchange = () => {
+		fwG++;
+		upx?.k == 'p' && upx.abort();
 		fw = '';
 		fwUI(0);
 	};
 	$('sy-mfile').onchange = () => {
+		mfG++;
+		upx?.k == 'm' && upx.abort();
 		mfw = '';
 		mfUI(0);
 	};
@@ -3700,7 +3708,13 @@ function main() {
 		return (o.relay ? take() : Promise.resolve()).then(
 			() =>
 				new Promise((ok, no) => {
+					/* Another file was chosen while this one waited its turn. */
+					if (o.gone()) {
+						o.relay && give();
+						return no(new Fail('', 'cancel'));
+					}
 					const x = (upx = new XMLHttpRequest());
+					x.k = o.relay ? 'p' : 'm';
 					x.onloadend = () => {
 						upx = null;
 						o.relay && give();
@@ -3751,6 +3765,7 @@ function main() {
 		if (!f) return err($('sy-file'), _('Choose the package file first.'));
 		if (f.size > 2097344) return err($('sy-file'), _('Too large for a platform package (2 MB).'));
 		fw = '';
+		const g = fwG;
 		tx('sy-pt', _('Uploading {f}', { f: f.name }));
 		fwUI(1);
 		run(
@@ -3759,6 +3774,7 @@ function main() {
 				try {
 					const d = await upload(f, {
 						relay: 1,
+						gone: () => g != fwG,
 						url: J + 'update',
 						pb: 'sy-pb',
 						pn: 'sy-pn',
@@ -3767,7 +3783,7 @@ function main() {
 					});
 					if (!d?.id) no(_('The camera did not stage the package. Try again.'));
 					fw = d.id;
-					fwV = d.version || '';
+					fwV = d.version || f.name;
 					fwUI(3, d.version ? _('Signature verified: platform {v}. Ready to install.', { v: d.version }) : _('Signature verified. Ready to install.'));
 				} catch (x) {
 					fwUI(0, x.kind == 'cancel' ? _('Upload cancelled.') : '');
@@ -3788,9 +3804,11 @@ function main() {
 			needed = d.restart == 'needed';
 		if (!stopped && !refused && !needed) return 0;
 		installing = 0;
+		instAt = 0;
 		const still = stopped || (refused && fwWas); /* a refusal changes nothing: what stopped before is still there */
 		fwStopped = +still;
 		fwMsg = needed ? FW_NOT_RESTARTED : still ? FW_STOPPED : '';
+		still && restartAt().catch(noop);
 		shell();
 		$('sy-mapply').disabled = !mfw || fwStopped;
 		$('sy-mstage').disabled = false;
@@ -3800,7 +3818,9 @@ function main() {
 	/* When this page opens too: the tab may have closed, or reloaded, while an install ran. */
 	async function fwLast() {
 		if (installing) return;
+		S['f@'] = Date.now(); /* the check every 30 s counts from this one */
 		const d = await api(J + 'update', { quiet: 1 });
+		if (installing) return; /* it left before this install began, so it says nothing about it */
 		if (d.state == 'failed' && d.reason != 'upgrade') return; /* old news, and nothing changed */
 		if (fwReport(d)) return;
 		if (fwMsg && d.state == 'idle') {
@@ -3823,7 +3843,8 @@ function main() {
 	async function fwWatch() {
 		if (fwW) return; /* the page opening on System asks twice */
 		fwW = 1;
-		let lost = 0;
+		let lost = 0,
+			quietAt = 0;
 		for (let i = 0; i < 240 || lost; i++) {
 			await new Promise(z => setTimeout(z, 2e3));
 			let d = null;
@@ -3835,16 +3856,19 @@ function main() {
 			/* No answer says nothing: Wi-Fi, or the restart. What it says afterwards decides. */
 			if (!d) {
 				lost++;
-				if (!instLate && Date.now() - instAt > 3e5) {
+				quietAt ||= Date.now();
+				if (!instLate && Date.now() - quietAt > 3e5) {
 					instLate = 1;
 					shell();
 					fwUI(4, _('It has not come back after 5 minutes. Do not cut its power yet: look at it over SSH first (see docs/RECOVERY.md).'));
 				}
 				continue;
 			}
+			quietAt = 0;
 			if (instLate) {
 				instLate = 0;
 				shell();
+				fwUI(4, _('Installing. The camera restarts; this page reconnects by itself.'));
 			}
 			if (lost && d.state == 'idle') return location.reload(); /* the status went with the restart: the buttons and the versions are a new page's */
 			lost = 0;
@@ -3852,6 +3876,7 @@ function main() {
 		}
 		fwW = 0;
 		installing = 0;
+		instAt = 0;
 		fwStopped = 1;
 		fwMsg = _('Not sure how this went: the camera still answers after 8 minutes and has not restarted. Before restarting it, look at it over SSH (see docs/RECOVERY.md).');
 		shell();
@@ -3864,7 +3889,7 @@ function main() {
 		sheet({
 			title: _('Install and restart?'),
 			text: _('The camera installs the verified package and restarts; it is offline for about 90 seconds. Do not cut its power meanwhile. If it does not come back, recovery is over SSH.'),
-			body: fwV && h('p', { class: 'mono', text: _('Package: {v}', { v: fwV }) }),
+			body: h('p', { class: 'mono', text: _('Package: {v}', { v: fwV }) }),
 			ok: _('Install and restart'),
 			danger: 1,
 			icon: 'system',
@@ -3912,6 +3937,7 @@ function main() {
 		if (!f) return err($('sy-mfile'), _('Choose the package file first.'));
 		if (f.size > 34e5) return err($('sy-mfile'), _('Too large for a media package.'));
 		mfw = '';
+		const g = mfG;
 		tx('sy-mpt', _('Uploading {f}', { f: f.name }));
 		mfUI(1);
 		run(
@@ -3920,6 +3946,7 @@ function main() {
 				try {
 					const d = await upload(f, {
 						url: M + 'update/media',
+						gone: () => g != mfG,
 						pb: 'sy-mpb',
 						pn: 'sy-mpn',
 						checking: () => mfUI(2, _('Checking the signature. Keep this page open.'))
@@ -4037,9 +4064,10 @@ function main() {
 		$('at-stop').hidden = !fwMsg;
 		if (fwMsg) {
 			tx('at-stopt', fwStopped ? _('Update stopped: do not restart the camera or cut its power') : _('An update needs a look'));
-			tx('at-stopp', fwMsg + (fwStopped ? ' ' + _('Restart and reset are locked until then.') : ''));
+			tx('at-stopp', fwMsg + (fwStopped ? ' ' + _('Restart and reset are locked until then.') : '') + (fwStopped && S.y?.enabled ? ' ' + _('The daily restart is on and can still happen: turn it off under System.') : ''));
 			sc('at-ssh');
 		}
+		$$('.ab[hidden]>.err').forEach(x => x.remove());
 		$('sy-rs').disabled = $('sy-rd').disabled = !!fwStopped;
 		$('sy-lock').hidden = !fwStopped;
 		$('sy-rss').disabled = !!fwStopped && $('sy-rss').getAttribute('aria-checked') != 'true';
@@ -4052,6 +4080,10 @@ function main() {
 		}
 		const rs = !!off && !!restarting && Date.now() - restAt < 18e4;
 		$('at-rest').hidden = !rs;
+		if (rs != rsWas) {
+			rsWas = rs;
+			shell();
+		}
 		if (rs) {
 			tx('at-restt', _('{n} isn’t answering', { n: label() }));
 			tx('at-restp', restarting);
@@ -4120,7 +4152,6 @@ function main() {
 		if (!csrf || document.hidden) return;
 		attn();
 		if (fwMsg && !installing && age('f') > 3e4) {
-			S['f@'] = Date.now();
 			fwLast().catch(noop);
 		}
 		stShow();
