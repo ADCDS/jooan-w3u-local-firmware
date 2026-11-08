@@ -52,4 +52,21 @@ resume, the flash-requires-backup gate, build-input assembly, dry-run safety).
 The full stock -> provision -> OTA -> platform -> media round trip has now been
 run once end to end on a real camera (the media build and flash via this repo's
 scripts; the camera served RTSP and survived a cold reboot on the open stack).
-The GUI wrapper is the remaining piece.
+
+## The GUI
+
+`gui.py` is a single-window Tk front end over this same engine, so an owner never
+needs a terminal: fill in the camera address, the platform package and the media
+release, press **Start**, watch a colour-coded live log, and answer one clear
+warning dialog before the only irreversible step. It starts in **Dry run** so the
+first press plans the whole install and touches nothing.
+
+```sh
+python3 installer/gui.py
+```
+
+Tkinter ships with CPython on Windows and macOS; on Linux install `python3-tk`.
+The GUI adds no behaviour of its own -- it drives exactly the five steps above,
+subclassing the engine's `Reporter` and running it on a worker thread -- so the
+CLI and the GUI always do the same thing. The `squashfs-tools` requirement for
+the build step is unchanged (on Windows, build in WSL).
