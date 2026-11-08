@@ -198,6 +198,10 @@ configuration also stays.
 The runtime removes IPv4 and IPv6 default routes and repeatedly prunes any that
 reappear. Connected local-subnet routes remain. `/api/v1/network/routes` accepts
 only explicit RFC1918 or ULA routes; it cannot add a public or default route.
+The two directions are not symmetric: `GET` returns the prefixes as a JSON array
+(`{"cidrs":["192.168.9.0/24"]}`), but `PUT` takes them as a single
+comma-or-space-separated **string** (`{"cidrs":"192.168.9.0/24,10.0.0.0/8"}`),
+not an array. An array in a `PUT` is rejected `400 invalid_routes`.
 
 The embedded responder advertises the `label.local` A record plus DNS-SD
 PTR/SRV/TXT records for `_http._tcp` (80), `_ssh._tcp` (22) and

@@ -155,18 +155,66 @@ python3 -c "import cryptography; print(cryptography.__version__)"
 
 On Windows, type `py` in place of `python3`, here and in step 5.
 
+### Over-the-air delivery: how the camera actually gets the package
+
+Read this before step 5. The stock updater is a cloud **pull**, not an upload.
+`tools/upload_ota.py` triggers it, but what it POSTs is ignored: the camera then
+downloads the firmware from a fixed cloud URL,
+`https://use1api.jooaniot.com/fw/JOOAN_FW_PKG`, over TLS. So an install has two
+requirements beyond running the tool:
+
+1. **`use1api.jooaniot.com` must resolve, for the camera, to the PC that will
+   serve the package.** This is the part most people miss. The camera **ignores
+   the DNS server your router hands out by DHCP** and queries hard-coded public
+   resolvers (223.6.6.6 and 8.8.8.8). Changing "your DNS" does nothing. The
+   redirect has to happen in the network path. Two ways that work:
+
+   - **A router that overrides that name for the camera.** On OpenWrt, a single
+     dnsmasq line, `address=/use1api.jooaniot.com/<PC-IP>`, plus a firewall rule
+     that **redirects the camera's own port-53 traffic to the router's
+     resolver** (a DNAT of the camera's UDP/TCP 53 to the router), because the
+     camera bypasses the router's DNS otherwise. Scope both to the camera's MAC.
+   - **A DNS redirect box on the camera's subnet** that answers that one name
+     with the PC's address and forwards everything else, again with the camera's
+     port 53 pointed at it.
+
+   You do not need to fake the rest of the cloud. Only this one hostname, and
+   only for the firmware download.
+
+2. **The PC must serve the package on TCP 443.** `tools/serve_ota.py` does
+   exactly this and nothing else: it answers `/fw/JOOAN_FW_PKG` with the file you
+   give it over a self-signed certificate (the camera does not validate it) and
+   404s every other path. It does not impersonate the cloud API, forward
+   anything upstream, or touch the device's credentials.
+
+If your camera is already on jooan-local (a later update, not a first install),
+none of this applies: updates go through the authenticated
+`/api/v1/update` API, not the cloud pull.
+
 ### 5. Install
 
-Open a terminal (on Windows, Command Prompt) in the
-`jooan-w3u-local-firmware-0.2.21` folder and run:
+Serve the package. In the `jooan-w3u-local-firmware-0.2.21` folder, in one
+terminal (needs privileges to bind port 443; on Linux use `sudo`):
+
+```sh
+sudo python3 tools/serve_ota.py --pkg ../release/JOOAN_FW_PKG
+```
+
+It prints `[ready] https://0.0.0.0:443/fw/JOOAN_FW_PKG` and generates a
+throwaway certificate for `use1api.jooaniot.com`. Leave it running. Set up the
+DNS redirect from the section above so the camera reaches this server.
+
+Then, in a second terminal in the same folder, trigger the camera:
 
 ```sh
 python3 tools/upload_ota.py --host CAMERA_IP --pkg ../release/JOOAN_FW_PKG
 ```
 
-The tool checks the package's signature, sends the package to the camera's
-vendor updater, and waits for the camera to restart with the new firmware.
-Expect one to five minutes. Leave the camera powered.
+The tool checks the package's signature, triggers the camera's vendor updater
+(which downloads from the server you started above), and waits for the camera to
+restart with the new firmware. The serving terminal prints
+`[served] /fw/JOOAN_FW_PKG -> ... bytes` when the camera pulls it. Expect one to
+five minutes. Leave the camera powered.
 
 **It worked if** the last line is:
 
@@ -180,7 +228,8 @@ If it fails:
 |---|---|
 | `error: signed release target/ABI contract does not match this repository` | You are running a different version of the source. Use the v0.2.21 zip from step 4 |
 | `... requires the Python 'cryptography' package` | Install it as in step 4 |
-| `[-] unexpected OEM response HTTP ...` | The camera's vendor updater refused the upload. Stop here |
+| `[-] unexpected OEM response HTTP ...` | The camera's vendor updater refused the trigger. Stop here |
+| The serving terminal never prints `[served] ...` | The camera could not reach your server. The DNS redirect is almost always the cause: confirm `use1api.jooaniot.com` resolves to your PC **from the camera's side** and that the camera's port 53 is redirected (it ignores DHCP DNS). Check that port 443 is open on the PC |
 | `[-] package upload completed but jooan-local did not become healthy` | The camera took the package, but this firmware did not start. Most likely the installer found different vendor files and refused the camera before writing anything. The camera keeps its vendor firmware. Stop here and see [If something goes wrong](#if-something-goes-wrong) |
 | No answer at all | Check `CAMERA_IP` and that the PC and camera are on the same network |
 

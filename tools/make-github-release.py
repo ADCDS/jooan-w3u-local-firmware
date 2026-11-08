@@ -42,6 +42,8 @@ MEDIA_FILES = (
     "media/config/ja-a12.example.ini",
     "media/config/ja-a12-appfs-keep.txt",
     "packaging/targets/ja-a12.json",
+    "tools/upload_ota.py",
+    "tools/serve_ota.py",
     "LICENSE",
     "media/LICENSE",
     "media/vendor/licenses/mbedtls-LICENSE",
@@ -50,7 +52,8 @@ MEDIA_FILES = (
     "docs/THIRD_PARTY.md",
     "docs/INSTALL.md",
 )
-EXECUTABLE = {"media/scripts/install-camera.py", "media/tools/build-appfs.sh"}
+EXECUTABLE = {"media/scripts/install-camera.py", "media/tools/build-appfs.sh",
+              "tools/upload_ota.py", "tools/serve_ota.py"}
 # What the T23 library is built from: the corresponding source of libimp.so, without the
 # fork's reverse-engineering notes and tools, which are not build inputs.
 OPENIMP_SOURCE = ("src", "include", "build-t23.sh", "tools/openimp-tuningd.c", "tools/t23_helix_selftest.c",
