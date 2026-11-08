@@ -27,6 +27,14 @@ installed on top:
 [Architecture](docs/ARCHITECTURE.md) explains the boot modes and the trust
 boundary.
 
+<p align="center">
+  <img src="docs/images/webui-overview.png" width="480"
+       alt="The local web console Overview page: both lens views (blurred here), and quick actions for night vision, white light, privacy mode, talk and siren">
+  <br>
+  <sub>The local web console (both lens views blurred). It runs on the camera,
+  needs no cloud, and speaks seven languages. More views below.</sub>
+</p>
+
 ## Status
 
 - **Engineering pre-release; nothing is supported yet.** Releases are tested
@@ -38,12 +46,15 @@ boundary.
   time, the media layer's binaries and scripts. Each owner still builds the
   image for the camera from that camera's own app partition, because it holds
   vendor files, so no image is published.
-- **The first-install path for the media layer has not yet run on a camera.**
-  The only test camera got its media layer by hand and cannot be brought back
-  to stock. A first image built from the stock partition matches the image
-  running on that camera, file for file, but the script that flashes it has
-  only been tested offline (see
-  [The media layer](docs/INSTALL.md#the-media-layer)).
+- **The whole chain has now run once, end to end, on a real camera.** A test
+  camera was taken back to stock, provisioned onto Wi-Fi with no vendor app,
+  updated to the platform over the air, and flashed with a media image built
+  from its own partition; it served video over RTSP and survived a cold reboot
+  on the open stack (see
+  [the round-trip report](docs/reports/hardware-roundtrip-20261108.md) and
+  [The media layer](docs/INSTALL.md#the-media-layer)). It has run only once, so
+  treat it as pre-release: take the full backup the installer makes and keep the
+  camera powered during the flash.
 - **v0.2.21** (2026-10-16, platform only) stays published. It is the last release
   installed on a stock camera. With it, video still comes from the vendor's
   program, running confined.
@@ -87,6 +98,14 @@ With 0.2.39 and its media layer:
 [OEM comparison](docs/OEM-COMPARISON.md) compares this firmware with the
 vendor firmware item by item.
 
+<p align="center">
+  <img src="docs/images/webui-system.png" width="480"
+       alt="The web console System page showing Platform 0.2.39 and Media 0.1.0 installed, plus update, time, password, SSH-key and restart controls">
+  <br>
+  <sub>The System page: platform and media versions, updates, time, passwords,
+  SSH keys and reset — all on the camera, no cloud.</sub>
+</p>
+
 ## Install
 
 Follow [Installation](docs/INSTALL.md). The first install goes over Wi-Fi
@@ -94,6 +113,18 @@ through the vendor firmware's own updater, and later updates go through the
 web console. No SD card, cable or flash programmer is needed, and the camera
 stays closed. A flash programmer matters only for recovering a camera that no
 longer boots ([Recovery](docs/RECOVERY.md)).
+
+For a guided install without a terminal, the [installer](installer/) wraps the
+whole sequence — provision, platform update, backup, build and flash — in one
+window. It starts in a dry run that plans everything and touches nothing, shows
+a live log, and asks once before the only irreversible step.
+
+<p align="center">
+  <img src="docs/images/gui-running.png" width="480"
+       alt="The installer window: a form for the camera address, packages and keys, a Dry run checkbox, and a colour-coded live log of the five install steps">
+  <br>
+  <sub>The one-window installer (<code>python3 installer/gui.py</code>) driving the five steps.</sub>
+</p>
 
 ## Security in brief
 
