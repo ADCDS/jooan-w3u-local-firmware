@@ -60,16 +60,18 @@ here is what the camera did and what it proves.
    `release_version ≥ 0.2.39`. A genuinely old platform at sequence 0 is still
    refused. Covered by `tests/test_install_camera_gate.py`.
 
-2. **Recorded (platform runtime).** The platform's `wifi-apply.sh` requires an
-   8–63 character password and rejects open networks, so an **open** Wi-Fi cannot
-   be committed; WPA2 works. A future platform build should support
-   `key_mgmt=NONE`.
+2. **Fixed (platform runtime).** `wifi-apply.sh` (and the ip-stage re-apply in
+   `integration-helper.sh`) required an 8–63 character password and rejected open
+   networks. They now treat an empty password as an open network and join it with
+   `key_mgmt NONE`. Covered by `tests/test_runtime_hooks.py`
+   (`test_wifi_hook_joins_an_open_network_with_key_mgmt_none`).
 
-3. **Recorded (space).** A fresh platform plus the full stock `/opt/conf` can
-   leave the 384 KiB `/opt` below the ~96 KiB the first media install needs.
-   Freeing the regenerable `/opt/conf/config.org` (the stock boot recreates it
-   from `/mnt/mtd/etc`) gave headroom. A future platform OTA should prune it, or
-   the media install should stage off `/opt`.
+3. **Fixed (space).** A fresh platform plus the full stock `/opt/conf` can leave
+   the 384 KiB `/opt` below the ~96 KiB the first media install needs.
+   `install-camera.py` now frees the regenerable `/opt/conf/config.org`
+   automatically when `/opt` is short and the stock copy is present in
+   `/mnt/mtd/etc` to restore it. Covered by `tests/test_install_camera_gate.py`
+   (`OptSpaceReclaim`).
 
 ## Bottom line
 

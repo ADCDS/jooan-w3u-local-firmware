@@ -377,7 +377,8 @@ case "$op" in
         json_tool=${JOAN_JSON_TOOL:-/mnt/mtd/run/json_debug}
         ssid=$("$json_tool" -c r -k /ssid "$wifi_json" 2>/dev/null | sed 's/^[^ ]* [^ ]* //')
         password=$("$json_tool" -c r -k /password "$wifi_json" 2>/dev/null | sed 's/^[^ ]* [^ ]* //')
-        [ -n "$ssid" ] && [ -n "$password" ] || exit 1
+        # An empty password is a valid open network; only the SSID is required.
+        [ -n "$ssid" ] || exit 1
         candidate=$run/ip-candidate.json
         rm -f "$candidate"
         ( umask 077

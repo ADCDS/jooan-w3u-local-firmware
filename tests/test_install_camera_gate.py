@@ -68,5 +68,42 @@ class PlatformBootGate(unittest.TestCase):
                          f"fresh platform wrongly flagged: {problems}")
 
 
+class OptSpaceReclaim(unittest.TestCase):
+    PLATFORM = {"release_sequence": 0, "release_version": "0.2.39", "state": "ready"}
+    APPFS = {"expected_current_appfs_md5": "x", "release": "r"}
+    BASE = {
+        "sensors": "cv2005 cv2005s1", "appfs_size": "3211264", "appfs_name": "appfs",
+        "appfs_md5": "x", "native": "no", "enabled": "no", "daemon": "0",
+        "wifi_json": "yes",
+    }
+
+    def _facts(self, **over):
+        return dict(self.BASE, **over)
+
+    def test_tight_opt_with_reclaimable_config_org_is_not_a_problem(self):
+        facts = self._facts(opt_free="80", reclaim_config_org="52")
+        problems = ic.first_problems(facts, self.PLATFORM, self.APPFS)
+        self.assertFalse(any("under 96" in p for p in problems), problems)
+        self.assertTrue(ic.opt_needs_reclaim(facts))
+
+    def test_tight_opt_without_reclaim_is_a_problem(self):
+        facts = self._facts(opt_free="80", reclaim_config_org="0")
+        problems = ic.first_problems(facts, self.PLATFORM, self.APPFS)
+        self.assertTrue(any("under 96" in p for p in problems))
+        self.assertFalse(ic.opt_needs_reclaim(facts))
+
+    def test_plenty_of_space_needs_no_reclaim(self):
+        facts = self._facts(opt_free="200", reclaim_config_org="52")
+        self.assertFalse(ic.opt_needs_reclaim(facts))
+        self.assertFalse(any("under 96" in p
+                             for p in ic.first_problems(facts, self.PLATFORM, self.APPFS)))
+
+    def test_reclaim_that_still_falls_short_stays_a_problem(self):
+        facts = self._facts(opt_free="40", reclaim_config_org="10")  # 50 < 96
+        self.assertTrue(any("under 96" in p
+                            for p in ic.first_problems(facts, self.PLATFORM, self.APPFS)))
+        self.assertFalse(ic.opt_needs_reclaim(facts))
+
+
 if __name__ == "__main__":
     unittest.main()

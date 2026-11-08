@@ -306,9 +306,22 @@ def first_problems(facts, platform, appfs):
     if facts.get("wifi_json") != "yes":
         problems.append(f"native boot needs a committed Wi-Fi network ({WIFI_JSON}); without it the boot "
                         "fails after 300 s. Commit one through the platform first")
-    if int(facts.get("opt_free") or 0) < 96:
+    opt_free = int(facts.get("opt_free") or 0)
+    reclaim = int(facts.get("reclaim_config_org") or 0)
+    # A fresh platform over stock can leave /opt just short. Freeing the stock
+    # config.org backup (the stock boot recreates it) is enough and safe; only
+    # count it as a shortfall if even that would not reach 96 KiB.
+    if opt_free < 96 and opt_free + reclaim < 96:
         problems.append("/opt has under 96 KiB free; the media layer's files need room and the stock boot needs 50 KiB left")
     return problems
+
+
+def opt_needs_reclaim(facts):
+    """True when /opt is below the 96 KiB the install needs but freeing the
+    regenerable stock config.org would reach it."""
+    opt_free = int(facts.get("opt_free") or 0)
+    reclaim = int(facts.get("reclaim_config_org") or 0)
+    return opt_free < 96 and reclaim > 0 and opt_free + reclaim >= 96
 
 
 def stream_password_problem(password):
@@ -367,6 +380,11 @@ def first_install(args, cam, bundle, spec):
         "echo appfs_name=$(cat /sys/class/mtd/mtd4/name);"
         "echo appfs_md5=$(md5sum /dev/mtdblock4 | cut -c1-32);"
         "echo opt_free=$(df -k /opt | awk 'END {print $4}');"
+        # config.org is a stock factory-config backup the stock boot recreates
+        # from /mnt/mtd/etc; on a fresh platform it needlessly fills /opt. Report
+        # its reclaimable size (KiB) only when the stock copy exists to restore it.
+        "echo reclaim_config_org=$([ -f /opt/conf/config.org ] && [ -f /mnt/mtd/etc/config.org ] && "
+        "echo $(( ($(wc -c < /opt/conf/config.org) + 1023) / 1024 )) || echo 0);"
         f"echo native=$([ -e {NATIVE} ] && echo yes || echo no);"
         "echo enabled=$([ -e /opt/jooanipc-open/enabled ] && echo yes || echo no);"
         "echo sensors=$(cat /tmp/sensor1_name /tmp/sensor2_name 2>/dev/null);"
@@ -381,6 +399,14 @@ def first_install(args, cam, bundle, spec):
     log(f"first release {appfs['release']} over appfs {facts.get('appfs_md5')}")
     if problems:
         raise SystemExit("not installing:\n  " + "\n  ".join(problems))
+    if opt_needs_reclaim(facts):
+        # Free the regenerable stock config.org to give the first install room in
+        # /opt. The stock boot recreates it from /mnt/mtd/etc, so this is safe and
+        # reversible; only do it when the stock copy is present to restore from.
+        log("freeing the regenerable stock config.org to make room in /opt")
+        cam.ssh("[ -f /mnt/mtd/etc/config.org ] && rm -f /opt/conf/config.org && sync")
+        new_free = cam.ssh("df -k /opt | awk 'END {print $4}'").strip()
+        log(f"/opt free after reclaim: {new_free} KiB")
     stream_password = os.environ.get("STREAM_PASSWORD", "")
     problem = stream_password_problem(stream_password)
     if problem or args.yes_untested is not True:

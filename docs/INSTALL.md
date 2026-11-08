@@ -390,13 +390,14 @@ cycle on the open stack. What that run checked, and what is still thin:
 | Survives reboot | After a full power cycle the camera came back on the open media image and served RTSP, with no rollback to stock |
 | Installing 0.2.39 from stock | Done through the same updater during this run |
 
-Known rough edges found during that run, not yet smoothed:
+Two rough edges found during that run have since been fixed:
 
-- An **open** (no-password) Wi-Fi network cannot be committed through the
-  platform yet; use a WPA2 network. A WPA2 network commits cleanly.
-- A fresh platform leaves little room in the 384 KiB `/opt`; the first media
-  install needs the regenerable `/opt/conf/config.org` freed first (the stock
-  boot recreates it). A future platform build should prune it automatically.
+- An **open** (no-password) Wi-Fi network can now be committed through the
+  platform (it joins with `key_mgmt NONE`); WPA2 networks work as before.
+- A fresh platform can leave the 384 KiB `/opt` just short for the first media
+  install. The installer now frees the regenerable stock `/opt/conf/config.org`
+  automatically when it is short and the stock copy is present to restore it
+  (the stock boot recreates that file from `/mnt/mtd/etc`).
 
 If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup

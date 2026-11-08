@@ -11,7 +11,10 @@ ssid=$("$json_tool" -c r -k /ssid "$candidate" 2>/dev/null |
     sed 's/^[^ ]* [^ ]* //')
 password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null |
     sed 's/^[^ ]* [^ ]* //')
-[ -n "$ssid" ] && [ -n "$password" ] || exit 3
+# An empty password means an open (no-encryption) network: join it with
+# key_mgmt NONE and no psk. A set password is a WPA/WPA2 passphrase, 8-63 chars.
+[ -n "$ssid" ] || exit 3
+if [ -n "$password" ]; then is_open=0; else is_open=1; fi
 # Values are passed as one argv element to wpa_cli; they are never evaluated as
 # shell.  Accept ordinary printable passphrases and SSIDs (including spaces),
 # but reject the two characters that would alter wpa_supplicant's quoted-string
@@ -19,7 +22,8 @@ password=$("$json_tool" -c r -k /password "$candidate" 2>/dev/null |
 LC_ALL=C
 export LC_ALL
 case "$ssid$password" in *'"'*|*'\'*|*[!\ -~]*) exit 3 ;; esac
-[ "${#ssid}" -le 32 ] && [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] || exit 3
+[ "${#ssid}" -le 32 ] || exit 3
+[ "$is_open" = 1 ] || { [ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ]; } || exit 3
 
 # A static address, when the candidate has one: address, prefix and gateway
 # together or not at all. The daemon checked them before they were committed.
@@ -124,7 +128,12 @@ add_band() {
     band_id=$(wpa_cli -iwlan0 add_network | awk '/^[0-9]+$/{print;exit}')
     case "$band_id" in ''|*[!0-9]*) return 1 ;; esac
     wpa_cli -iwlan0 set_network "$band_id" ssid "\"$ssid\"" | grep -q OK || return 1
-    wpa_cli -iwlan0 set_network "$band_id" psk "\"$password\"" | grep -q OK || return 1
+    if [ "$is_open" = 1 ]; then
+        # Open network: no passphrase, key_mgmt NONE.
+        wpa_cli -iwlan0 set_network "$band_id" key_mgmt NONE | grep -q OK || return 1
+    else
+        wpa_cli -iwlan0 set_network "$band_id" psk "\"$password\"" | grep -q OK || return 1
+    fi
     wpa_cli -iwlan0 set_network "$band_id" freq_list "$1" | grep -q OK || return 1
     wpa_cli -iwlan0 set_network "$band_id" priority "$2" | grep -q OK || return 1
     # Let the OEM wpa_supplicant 2.9 select protocol and ciphers from the BSS.

@@ -340,6 +340,34 @@ class RuntimeHookTests(unittest.TestCase):
             self.assertIn('5|-iwlan0|set_network|0|ssid|"Family Room WiFi"', calls)
             self.assertIn('5|-iwlan0|set_network|0|psk|"safe passphrase!"', calls)
 
+    def test_wifi_hook_joins_an_open_network_with_key_mgmt_none(self) -> None:
+        """An empty password is an open network: set key_mgmt NONE, never psk."""
+        hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, log = self._wifi_apply_environment(root)
+            # Override the candidate reader to return an empty password.
+            executable(
+                Path(environment["JOAN_JSON_TOOL"]),
+                "#!/bin/sh\n"
+                "case \"$4\" in\n"
+                "  /ssid) printf '1 /ssid CoffeeShop\\n' ;;\n"
+                "  /password) printf '1 /password \\n' ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
+            )
+            candidate = root / "open.json"
+            candidate.write_text('{"ssid":"CoffeeShop","password":""}\n', encoding="utf-8")
+            result = subprocess.run(
+                [str(hook), str(candidate)],
+                env=environment, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn('-iwlan0|set_network|0|key_mgmt|NONE', calls)
+            self.assertNotIn('|psk|', calls)
+            self.assertIn('set_network|0|ssid|"CoffeeShop"', calls)
+
     def test_health_accepts_native_boot_and_guards_the_oem_application(self) -> None:
         """A native boot never starts jooanipc, so its absence must pass a
         runtime trial; whenever jooanipc does run, it needs the guard."""
