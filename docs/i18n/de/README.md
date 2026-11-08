@@ -37,7 +37,7 @@ Vertrauensgrenze.
        alt="Die Seite „Übersicht“ der lokalen Webkonsole: beide Objektivansichten (hier weichgezeichnet) sowie Schnellaktionen für Nachtsicht, Weißlicht, Privatmodus, Sprechen und Sirene">
   <br>
   <sub>Die lokale Webkonsole (beide Objektivansichten weichgezeichnet). Sie läuft auf der Kamera,
-  braucht keine Cloud und ist in sieben Sprachen verfügbar. Weitere Ansichten folgen weiter unten.</sub>
+  braucht keine Cloud und ist in sieben Sprachen verfügbar. Weitere Ansichten weiter unten.</sub>
 </p>
 
 ## Status
@@ -78,7 +78,7 @@ Merkmale erfüllen:
 - von der OEM-Firmware gemeldetes Produkt/Modell: `JA-A12` / Paketkennung `A12`;
 - Platine: `JA-6621 V1.0`;
 - SoC: Ingenic T23N;
-- Bildsensoren: zwei, `cv2005` und `cv2005s1`;
+- Bildsensoren: zwei (`cv2005` und `cv2005s1`);
 - Funkmodul: SeekWave SKW6316 über USB (`SV6160LITE` beim verifizierten Gerät);
 - Flash-Speicher: 8 MiB SPI-NOR (verifiziertes Gerät: Puya P25Q64HA).
 

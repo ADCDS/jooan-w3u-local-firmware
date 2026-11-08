@@ -4,9 +4,9 @@
 
 <p align="center">
   <img src="../../../docs/images/w3u-camera.jpg" width="320"
-       alt="La cámara JOOAN W3-U sostenida en una mano: dos lentes superpuestas en una única carcasa blanca con pan/tilt, dos antenas Wi-Fi y un cable Ethernet corto">
+       alt="La cámara JOOAN W3-U sostenida en una mano: dos lentes, una encima de otra, en una misma carcasa blanca con pan/tilt, dos antenas Wi-Fi y un cable Ethernet corto">
   <br>
-  <sub>La cámara a la que se dirige este proyecto: JOOAN W3-U (<code>JA-A12</code>), de doble lente.</sub>
+  <sub>La cámara para la que está pensado este proyecto: JOOAN W3-U (<code>JA-A12</code>), de doble lente.</sub>
 </p>
 
 Firmware que prioriza el funcionamiento local, para una cámara muy concreta: la JOOAN W3-U
@@ -39,7 +39,7 @@ confianza.
 
 ## Estado
 
-- **Versión preliminar de ingeniería; todavía no hay nada con soporte.** Las versiones se
+- **Versión preliminar de ingeniería; aún no hay ninguna versión con soporte.** Las versiones se
   prueban en una sola cámara física. Una versión solo pasa a tener soporte cuando supera en
   esa cámara las comprobaciones de instalación y desinstalación firmadas, migración, Wi-Fi,
   hora de red, SSH, enrutamiento, corte de corriente y recuperación en frío
@@ -50,13 +50,13 @@ confianza.
   contiene archivos del fabricante; por eso no se publica ninguna imagen.
 - **La cadena completa ya se ha ejecutado una vez, de principio a fin, en una cámara real.**
   Una cámara de pruebas se devolvió al firmware de fábrica, se conectó a la Wi-Fi sin la app
-  del fabricante, se actualizó a la plataforma por OTA y se le grabó una imagen de medios
+  del fabricante, se actualizó a la plataforma de forma inalámbrica (OTA) y se le grabó una imagen de medios
   generada a partir de su propia partición; sirvió vídeo por RTSP y superó un reinicio en frío
   con la pila de software abierta (consulta
   [el informe de la prueba de ida y vuelta](../../../docs/reports/hardware-roundtrip-20261108.md) y
   [La capa de medios](./INSTALL.md#the-media-layer)). Solo se ha ejecutado una vez, así
   que tómalo como una versión preliminar: guarda la copia de seguridad completa que hace el
-  instalador y mantén la cámara alimentada durante la grabación.
+  instalador y mantén la cámara alimentada mientras se graba la memoria flash.
 - **v0.2.21** (2026-10-16, solo plataforma) sigue publicada. Es la última versión
   instalada en una cámara de fábrica. Con ella, el vídeo sigue procediendo del programa
   del fabricante, que se ejecuta confinado.
@@ -88,8 +88,8 @@ Con la 0.2.39 y su capa de medios:
   pan/tilt ONVIF y 16 presets con nombre para Frigate; calibración del pan/tilt (homing) en
   cada arranque; volteo de imagen, modo noche/IR-cut manual y luz blanca; una única interfaz
   de administración en `https://<camera>/` para móviles y ordenadores (`http://<camera>/`
-  redirige allí); SSH; Wi-Fi con lista de redes, dirección estática y cambios en prueba que
-  se confirman o se revierten; reinicio, reinicio diario y restablecimiento de los valores
+  redirige allí); SSH; Wi-Fi con lista de redes, dirección estática, preparación,
+  confirmación y reversión de cambios; reinicio, reinicio diario y restablecimiento de los valores
   predeterminados; modo privacidad; patrulla entre presets; movimientos ONVIF precisos;
   hora de red opcional desde un servidor local; mDNS; actualizaciones firmadas.
 - **Activado salvo con `audio=0`:** audio (micrófono en RTSP; hablar por el altavoz desde
@@ -113,8 +113,8 @@ del fabricante, punto por punto.
 
 Sigue la guía de [Instalación](./INSTALL.md). La primera instalación se hace por Wi-Fi
 mediante el propio actualizador del firmware del fabricante, y las actualizaciones posteriores,
-desde la consola web. No hace falta tarjeta SD, cable ni programador de flash, y la cámara
-no se abre. Un programador de flash solo es necesario para recuperar una cámara que ya no
+desde la consola web. No hace falta tarjeta SD, cable ni programador de flash, y no hay que
+abrir la cámara. Un programador de flash solo es necesario para recuperar una cámara que ya no
 arranca ([Recuperación](./RECOVERY.md)).
 
 Para una instalación guiada sin terminal, el [instalador](../../../installer/) reúne toda la
