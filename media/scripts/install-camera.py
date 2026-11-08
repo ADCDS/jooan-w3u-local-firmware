@@ -51,6 +51,37 @@ MEDIA_CERT = "/opt/jooanipc-open/cert.pem"
 NATIVE = "/opt/jooanipc-open/native"
 WIFI_JSON = "/opt/custom/jooan-local/config/wifi.json"
 FIRST_PLATFORM_SEQUENCE = 73
+# The platform release that introduced the media-boot contract this installer
+# targets. A platform at this version or newer can boot the media layer even
+# when its release_sequence is still 0 -- which is exactly the state of a fresh
+# OTA platform install, before any sequence is published. Gate on whichever is
+# satisfied, so a first-ever platform install is not wrongly rejected.
+FIRST_PLATFORM_VERSION = (0, 2, 39)
+
+
+def _version_tuple(text):
+    """Parse 'A.B.C' into a comparable tuple; unknown parts count as 0.
+
+    Each dotted component is read up to its first non-digit, so a decorated
+    version like 'v0.2.39-rc1' parses as (0, 2, 39), not (0, 2, 391)."""
+    parts = []
+    for piece in str(text or "").split("."):
+        digits = ""
+        for c in piece:
+            if not c.isdigit():
+                break
+            digits += c
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) if parts else (0,)
+
+
+def platform_can_boot_media(platform):
+    """True if the platform can boot the media layer: sequence >= the contract
+    sequence, or (for a fresh install with sequence 0) version >= the contract
+    version."""
+    if int(platform.get("release_sequence") or 0) >= FIRST_PLATFORM_SEQUENCE:
+        return True
+    return _version_tuple(platform.get("release_version")) >= FIRST_PLATFORM_VERSION
 
 
 def log(message):
@@ -251,9 +282,13 @@ def first_problems(facts, platform, appfs):
     problems = []
     if no_runtime(facts):
         problems.append(NO_RUNTIME)
-    if int(platform.get("release_sequence") or 0) < FIRST_PLATFORM_SEQUENCE:
-        problems.append(f"the platform is sequence {platform.get('release_sequence')}: a first install needs "
-                        f"{FIRST_PLATFORM_SEQUENCE} or later, because older ones cannot boot the media layer as this expects")
+    if not platform_can_boot_media(platform):
+        problems.append(
+            f"the platform is sequence {platform.get('release_sequence')} / version "
+            f"{platform.get('release_version')!r}: a first install needs sequence "
+            f"{FIRST_PLATFORM_SEQUENCE}+ or version "
+            f"{'.'.join(map(str, FIRST_PLATFORM_VERSION))}+, because older ones cannot "
+            "boot the media layer as this expects")
     if facts.get("sensors") != "cv2005 cv2005s1":
         problems.append(f"this camera's sensors read {facts.get('sensors')!r}, not 'cv2005 cv2005s1': the image keeps "
                         "only those sensors' drivers, and it would have no video")
