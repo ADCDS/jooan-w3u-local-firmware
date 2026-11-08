@@ -179,19 +179,24 @@ class Context:
 def step_provision(ctx: Context) -> None:
     """Put a stock camera on the owner's Wi-Fi.
 
-    The fully app-free channel (SoftAP/CoAP) is Phase E research. Until it lands,
-    this step verifies the camera is reachable and, if not, tells the owner to
-    provision once with the vendor app (the project has no other way to bring a
-    truly stock camera onto Wi-Fi). It never blocks the rest of the chain.
+    An app-free SoftAP/CoAP channel is reverse-engineered (jooan-w3u research
+    repo, provision_softap.py) and can be wired in here via --provision-helper;
+    it is pending validation against a stock camera. Until that is confirmed, the
+    supported path is: provision once with the vendor app, then pass --camera.
+    This step records the address and never blocks the rest of the chain.
     """
     host = ctx.state.camera_ip or ctx.args.camera
+    helper = getattr(ctx.args, "provision_helper", "")
+    if not host and helper:
+        raise InstallerError(
+            "SoftAP provisioning helper support is staged but not yet validated; "
+            "provision with the vendor app once and re-run with --camera <ip>.")
     if not host:
         raise InstallerError(
             "no camera address yet. Provision the camera onto your Wi-Fi "
             "(for now, with the vendor app once) and re-run with --camera <ip>.")
     ctx.state.camera_ip = host
     ctx.report.step("provision", f"using camera at {host}")
-    # Liveness: stock answers :80 (goahead) only transiently, so just check reachability.
     ctx.report.detail("camera address recorded; continuing")
 
 
@@ -418,6 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--camera", default="", help="camera IP once it is on your Wi-Fi")
+    p.add_argument("--provision-helper", default="",
+                   help="path to an app-free SoftAP provisioner (staged; pending validation)")
     p.add_argument("--work", default=str(Path.home() / ".jooan-installer"),
                    help="working directory for backups, the image and run state")
     p.add_argument("--platform-pkg", default=str(REPO / "dist/JOOAN_FW_PKG"),
