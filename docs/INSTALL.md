@@ -372,25 +372,39 @@ From 0.2.22, video, ONVIF and pan/tilt come from the open media daemon
 the default since 0.2.23, the vendor's program never starts. That is the
 setup the rest of this repository describes.
 
-**This install has not yet run on a real camera.** The only test camera got its
-media layer by hand, is mounted out of reach, and cannot be brought back to
-stock to try it. What has been checked, and what has not:
+**This whole chain has now run once, end to end, on a real camera.** A test
+camera was taken back to genuine stock, provisioned onto Wi-Fi without the vendor
+app, updated to the platform over the air, and then flashed with a media image
+built from its own partition. It served video over RTSP and survived a cold power
+cycle on the open stack. What that run checked, and what is still thin:
 
 | Step | Checked |
 |---|---|
-| The image | Built from the real stock partition, it has the same files, byte for byte, as the image running on the test camera |
+| Revert to stock | The test camera was flashed back to the stock partition (watchdog-fed, with a RAM rollback) and booted genuine, unprovisioned stock |
+| App-free provisioning | From a nearby PC, `GET /goform/setupWifiInfo` on the camera's SoftAP moved it onto Wi-Fi; the camera reported success and joined |
+| Over-the-air platform install | With the cloud redirected to a local server, the camera pulled and applied the signed platform package and booted it |
+| The image | Built from the real stock partition; same files, byte for byte, as a known-good media image |
 | The configuration | What the installer writes passes the shipped daemon's own check |
-| The installer | Its decisions and order, against a stand-in for the camera; its preflight, against the real camera, which it correctly refuses |
-| The flash script, `first-appfs.sh` | Only read and checked statically. It has never run. Most of its sequence comes from the script behind every later update, which has run many times |
-| Installing 0.2.39 from stock | Not repeated since v0.2.21, through the same updater |
+| The installer | Its decisions, order and preflight, both against a stand-in and against the real camera; it correctly refused until the platform and Wi-Fi were ready |
+| The flash script, `first-appfs.sh` | Ran for real: it flashed the media image, kept the RAM rollback, and the open daemon qualified native boot and held the watchdog |
+| Survives reboot | After a full power cycle the camera came back on the open media image and served RTSP, with no rollback to stock |
+| Installing 0.2.39 from stock | Done through the same updater during this run |
+
+Known rough edges found during that run, not yet smoothed:
+
+- An **open** (no-password) Wi-Fi network cannot be committed through the
+  platform yet; use a WPA2 network. A WPA2 network commits cleanly.
+- A fresh platform leaves little room in the 384 KiB `/opt`; the first media
+  install needs the regenerable `/opt/conf/config.org` freed first (the stock
+  boot recreates it). A future platform build should prune it automatically.
 
 If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup
 of that partition can bring the camera back** (see
-[Recovery](RECOVERY.md#appfs-reflash-recovery)). The board on camera1 also resets by itself a
-few times a day, for a reason not yet known (see
-[Known limits](DESIGN-DECISIONS.md#known-limits)); a reset during the write counts as a power cut. If you need the camera to keep
-working, stay on v0.2.21 until someone has reported this working.
+[Recovery](RECOVERY.md#appfs-reflash-recovery)). The flash has now run to
+completion on a real camera, but it has run only once; take a full backup of
+every partition first (the installer does this) and keep the camera on steady
+power for the few minutes it takes.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
 and OpenSSL, and the v0.2.39 files from the release page.

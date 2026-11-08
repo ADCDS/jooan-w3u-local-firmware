@@ -103,7 +103,7 @@ class ContentsTests(unittest.TestCase):
         self.assertNotIn("jooanipc-open-aaaa-bbbb/bin/libimp.so", names)
         self.assertIn("jooanipc-open-aaaa-bbbb/media/scripts/first-appfs.sh", names)
         self.assertIn("jooanipc-open-aaaa-bbbb/packaging/targets/ja-a12.json", names)
-        self.assertIn("NOT YET BEEN RUN", readme)
+        self.assertIn("HAS RUN ONCE", readme)
         self.assertIn("--first my-appfs.img", readme)
 
     def test_sums_cover_everything_else(self) -> None:

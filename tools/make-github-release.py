@@ -118,8 +118,9 @@ def readme(release: str, commit: str, library: str) -> str:
 jooanipc-open media release {release}, from {commit}.
 For the JOOAN W3-U (JA-A12) only, with platform 0.2.39 or later already installed.
 
-A FIRST INSTALL HAS NOT YET BEEN RUN ON A REAL CAMERA. Read "The media layer" in docs/INSTALL.md
-first. Power lost while it writes can only be recovered with a flash programmer and a backup.
+A FIRST INSTALL HAS RUN ONCE, END TO END, ON A REAL CAMERA, but only once. Read "The media
+layer" in docs/INSTALL.md first. Power lost while it writes can only be recovered with a flash
+programmer and a backup, so take the backup the installer makes and keep the camera powered.
 
 You build the image yourself, from your own camera, because it contains vendor files.
 Keep that image private. It needs Linux or WSL with squashfs-tools, Python 3, OpenSSH and OpenSSL.

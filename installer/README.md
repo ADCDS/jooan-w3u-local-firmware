@@ -49,5 +49,7 @@ linear wizard over exactly these steps.
 
 The CLI engine is tested in `tests/test_installer_orchestrator.py` (ordering,
 resume, the flash-requires-backup gate, build-input assembly, dry-run safety).
-The full stock -> OTA -> platform -> media round trip has not yet been run start
-to finish by this engine on a real camera; that is the final validation.
+The full stock -> provision -> OTA -> platform -> media round trip has now been
+run once end to end on a real camera (the media build and flash via this repo's
+scripts; the camera served RTSP and survived a cold reboot on the open stack).
+The GUI wrapper is the remaining piece.
