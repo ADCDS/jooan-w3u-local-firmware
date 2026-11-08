@@ -589,11 +589,23 @@ if [ "$legacy" != none ]; then
     rm -rf "$legacy_root" || die 'cannot retire predecessor tree'
     sync
 fi
+# Persist the sequence durably BEFORE flipping the journal to legacy-retired, so
+# a reboot anywhere in the finalize window below can be completed at next boot
+# (jl_finalize_sequence in common.sh) even though the signed package is gone by
+# then. Without this, an interrupt between legacy-retired and release-sequence
+# left a working-but-unjournaled install with no downgrade/replay protection.
+printf '%s\n' "$sequence" > "$root/state/release-sequence.pending.new"
+chmod 600 "$root/state/release-sequence.pending.new"
+sync
+mv -f "$root/state/release-sequence.pending.new" "$root/state/release-sequence.pending"
+sync
 write_state legacy-retired || die 'cannot finalize migration journal'
 printf '%s\n' "$sequence" > "$root/state/release-sequence.new"
 chmod 600 "$root/state/release-sequence.new"
 sync
 mv -f "$root/state/release-sequence.new" "$root/state/release-sequence"
+sync
+rm -f "$root/state/release-sequence.pending"
 sync
 [ "${JOOAN_FAIL_AFTER_STATE:-}" != release-sequence-published ] ||
     die 'injected failure after sequence publication'

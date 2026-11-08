@@ -277,7 +277,30 @@ jl_ensure_wifi() {
     esac
 }
 
+# Stock startapp runs `ifconfig eth0 172.16.1.18 netmask 255.255.255.0 up` on a
+# carrier-less eth0 before sourcing this platform's boot hook. When wlan0 lands
+# on 172.16.1.0/24 (a very common home subnet), the kernel then holds two
+# identical 172.16.1.0/24 routes and the reverse-path check drops every inbound
+# packet whose source is the gateway: the camera cannot reach its own gateway
+# and cannot be managed from it. Removing the IPv4 address from a DOWN/no-carrier
+# eth0 fixes it for every boot mode and self-heals if stock re-adds it (this
+# runs once early in boot and then every second via jl_enforce_local_policy).
+# Guarded on carrier==0 so a real wired deployment is never disturbed.
+jl_drop_dead_eth0() {
+    jl_eth_sys=${JL_NET_SYSFS:-/sys/class/net}
+    jl_eth_ifconfig=${JL_IFCONFIG:-ifconfig}
+    [ -e "$jl_eth_sys/eth0" ] || return 0
+    jl_eth_carrier=
+    [ -r "$jl_eth_sys/eth0/carrier" ] && IFS= read -r jl_eth_carrier < "$jl_eth_sys/eth0/carrier" 2>/dev/null || :
+    # carrier reads 0 when down, or errors (empty) when the interface is down;
+    # only a live link reads 1. Flush only when we are sure there is no carrier.
+    case "$jl_eth_carrier" in 1) return 0 ;; esac
+    "$jl_eth_ifconfig" eth0 2>/dev/null | grep -q 'inet addr:' || return 0
+    ${JL_IP:-ip} addr flush dev eth0 2>/dev/null || "$jl_eth_ifconfig" eth0 0.0.0.0 2>/dev/null || :
+}
+
 jl_local_network_policy() {
+    jl_drop_dead_eth0
     jl_prune_default_routes
     jl_apply_allowed_routes
     for jl_resolver in /tmp/resolv.conf /etc/resolv.conf; do
@@ -611,6 +634,47 @@ jl_apply_reset() {
     fi
     sync
     rm -f "$JL_STATE/reset-pending"
+    sync
+}
+
+# Complete an install whose finalize was interrupted by a reboot. The signed
+# installer persists state/release-sequence.pending before flipping the journal
+# to legacy-retired, then publishes release-sequence and clears the pending
+# marker. A power cut in that window leaves a working but unjournaled install
+# (release_sequence reads 0, so there is no downgrade/replay protection). The
+# signed package is gone by boot, but the already-validated sequence is in the
+# durable pending marker, so promoting it here is safe and needs no package.
+# Only acts when the journal is legacy-retired and release-sequence is absent or
+# empty; never overwrites an existing published sequence.
+jl_finalize_sequence() {
+    [ -f "$JL_STATE/release-sequence.pending" ] || return 0
+    [ "$(cat "$JL_STATE/migration-state" 2>/dev/null)" = legacy-retired ] || return 0
+    jl_fs_pending=$(cat "$JL_STATE/release-sequence.pending" 2>/dev/null) || return 0
+    case "$jl_fs_pending" in ''|*[!0-9]*) rm -f "$JL_STATE/release-sequence.pending"; sync; return 0 ;; esac
+    # The installer writes pending only in the final finalize window, after the
+    # new runtime is fully activated and the sequence it validated as strictly
+    # greater than the installed one. So a pending that survives a boot is a real
+    # interrupted finalize of that sequence. Promote it only when it is greater
+    # than the currently published sequence (absent/empty/non-numeric counts as
+    # 0): that completes both a first install and an interrupted upgrade, and can
+    # never publish a downgrade. A pending that is not greater is stale; drop it.
+    jl_fs_current=0
+    if [ -s "$JL_STATE/release-sequence" ]; then
+        jl_fs_read=$(cat "$JL_STATE/release-sequence" 2>/dev/null) || jl_fs_read=
+        case "$jl_fs_read" in ''|*[!0-9]*) jl_fs_current=0 ;; *) jl_fs_current=$jl_fs_read ;; esac
+    fi
+    if [ "$jl_fs_pending" -le "$jl_fs_current" ]; then
+        rm -f "$JL_STATE/release-sequence.pending"
+        sync
+        return 0
+    fi
+    jl_log "completing interrupted install: publishing release sequence $jl_fs_pending"
+    printf '%s\n' "$jl_fs_pending" > "$JL_STATE/release-sequence.new" || return 0
+    chmod 600 "$JL_STATE/release-sequence.new" || { rm -f "$JL_STATE/release-sequence.new"; return 0; }
+    sync
+    mv -f "$JL_STATE/release-sequence.new" "$JL_STATE/release-sequence" || return 0
+    sync
+    rm -f "$JL_STATE/release-sequence.pending"
     sync
 }
 

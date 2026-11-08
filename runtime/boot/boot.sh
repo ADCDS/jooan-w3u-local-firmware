@@ -15,6 +15,7 @@ printf '%s\n' "$$" > "$JL_RUN/supervisor.pid"
 jl_restore_time || jl_log 'clock restore failed'
 jl_note_boot || :
 jl_apply_reset || :
+jl_finalize_sequence || :
 
 # OEM initialization may start services/routes after local.rc has returned.
 # This independent watcher survives runtime/controller failure.

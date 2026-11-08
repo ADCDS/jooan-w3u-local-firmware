@@ -939,6 +939,51 @@ class HostBuilderTests(unittest.TestCase):
             self.assertEqual((partial / "state/selection").read_text(), "- A 0\n")
             self.assertEqual((partial / "state/release-sequence").read_text(), "3\n")
 
+            # An install whose finalize is interrupted by a reboot between the
+            # journal flip (legacy-retired) and publishing the sequence must be
+            # completed at next boot from the durable pending marker, without the
+            # signed package. Reproduce that exact on-disk state on this real
+            # install tree and run the real boot reconciler (jl_finalize_sequence
+            # in common.sh), which the supervisor calls early in boot.sh.
+            (partial / "state/release-sequence.pending").write_text(
+                "4\n", encoding="utf-8"
+            )
+            (partial / "state/migration-state").write_text(
+                "legacy-retired\n", encoding="utf-8"
+            )
+            (partial / "state/release-sequence").write_text("", encoding="utf-8")
+            reconcile = subprocess.run(
+                ["sh", "-c",
+                 'JL_ROOT="$1"; JL_RUN="$1/run"; JL_STATE="$1/state"; '
+                 'JL_CONFIG="$1/config"; jl_log() { printf "%s\\n" "$*" >&2; }; '
+                 '. "$2" 2>/dev/null || true; JL_ROOT="$1"; JL_STATE="$1/state"; '
+                 'jl_finalize_sequence',
+                 "sh", str(partial), str(REPOSITORY / "runtime/boot/common.sh")],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(reconcile.returncode, 0, reconcile.stderr)
+            self.assertEqual(
+                (partial / "state/release-sequence").read_text(), "4\n"
+            )
+            self.assertFalse(
+                (partial / "state/release-sequence.pending").exists(),
+                "reconciler must clear the pending marker",
+            )
+            # Re-running is a no-op: no pending marker, sequence preserved.
+            again = subprocess.run(
+                ["sh", "-c",
+                 'JL_ROOT="$1"; JL_RUN="$1/run"; JL_STATE="$1/state"; '
+                 'JL_CONFIG="$1/config"; jl_log() { printf "%s\\n" "$*" >&2; }; '
+                 '. "$2" 2>/dev/null || true; JL_ROOT="$1"; JL_STATE="$1/state"; '
+                 'jl_finalize_sequence',
+                 "sh", str(partial), str(REPOSITORY / "runtime/boot/common.sh")],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(
+                (partial / "state/release-sequence").read_text(), "4\n"
+            )
+
             # Boot marks attempted before health; promotion makes A durable and
             # a later cleanup failure must never restore deleted B.
             (partial / "state/selection").write_text("- A 1\n", encoding="utf-8")
