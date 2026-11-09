@@ -66,7 +66,7 @@ class OrchestratorTests(unittest.TestCase):
             (self.release / "bin" / name).write_text("x")
         # Avoid any real network: stub platform status to "already up".
         self._real_status = inst._platform_status
-        inst._platform_status = lambda host: {"release_version": "0.2.39"}
+        inst._platform_status = lambda host: {"release_version": "0.2.40"}
         self.addCleanup(setattr, inst, "_platform_status", self._real_status)
 
     def _ctx(self, **over):

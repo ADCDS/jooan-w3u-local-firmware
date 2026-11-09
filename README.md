@@ -52,22 +52,23 @@ boundary.
   install and uninstall, migration, Wi-Fi, network time, SSH, routing,
   power-loss and cold-recovery checks pass on that camera
   ([hardware promotion gates](tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Published: v0.2.39** (2026-11-07): the platform package and, for the first
-  time, the media layer's binaries and scripts. Each owner still builds the
-  image for the camera from that camera's own app partition, because it holds
-  vendor files, so no image is published.
-- **The whole chain has now run once, end to end, on a real camera.** A test
-  camera was taken back to stock, provisioned onto Wi-Fi with no vendor app,
-  updated to the platform over the air, and flashed with a media image built
-  from its own partition; it served video over RTSP and survived a cold reboot
-  on the open stack (see
+- **Latest: v0.2.40** (2026-11-09): the platform package and the media layer's
+  binaries and scripts. Each owner still builds the image for the camera from
+  that camera's own app partition, because it holds vendor files, so no image
+  is published. It replaces v0.2.39 and folds in two fixes found on hardware:
+  an open (no-password) Wi-Fi network now commits through the platform, and a
+  fresh platform frees just enough `/opt` for the first media install.
+- **The whole chain has now run from stock to the open stack on a real camera.**
+  A test camera was taken back to stock, provisioned onto Wi-Fi with no vendor
+  app, updated to the platform over the air, flashed with a media image built
+  from its own partition, served video over RTSP, and ran a local NVR; it has
+  since been reinstalled from stock a second time with this release (see
   [the round-trip report](docs/reports/hardware-roundtrip-20261108.md) and
-  [The media layer](docs/INSTALL.md#the-media-layer)). It has run only once, so
-  treat it as pre-release: take the full backup the installer makes and keep the
-  camera powered during the flash.
-- **v0.2.21** (2026-10-16, platform only) stays published. It is the last release
-  installed on a stock camera. With it, video still comes from the vendor's
-  program, running confined.
+  [The media layer](docs/INSTALL.md#the-media-layer)). It is still pre-release:
+  take the full backup the installer makes and keep the camera powered during
+  the flash.
+- **v0.2.21** (2026-10-16, platform only) stays published. With it, video still
+  comes from the vendor's program, running confined. Prefer v0.2.40.
 
 ## Exact hardware scope
 
@@ -90,7 +91,7 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.39 and its media layer:
+With 0.2.40 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 1024×576 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,

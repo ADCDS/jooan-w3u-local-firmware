@@ -6,23 +6,23 @@ building their own releases want [Building and releasing](BUILDING.md).
 
 ## Read this first
 
-As of 2026-11-07, two releases are on
+As of 2026-11-09, these releases are on
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases):
 
-- **v0.2.21** (2026-10-16) is the one this guide walks through, and the last
-  release that has been installed on a stock camera. It installs over Wi-Fi with
-  no extra hardware. You get a local web console, SSH, RTSP video from both
-  lenses and ONVIF pan/tilt and presets for an NVR such as Frigate, and the
-  camera can no longer reach the JOOAN cloud. The video still comes from the
-  vendor's camera program, which keeps running under confinement.
-- **v0.2.39** (2026-11-07) adds the open media daemon in
-  [`media/`](../media/), and is what the rest of this repository describes.
-  **No camera has yet been taken from stock to v0.2.39 with these
-  instructions.** See [The media layer](#the-media-layer), including what has
-  and has not been tested, before choosing it.
+- **v0.2.21** (2026-10-16) is the one this guide's numbered steps walk through.
+  It installs over Wi-Fi with no extra hardware. You get a local web console,
+  SSH, RTSP video from both lenses and ONVIF pan/tilt and presets for an NVR
+  such as Frigate, and the camera can no longer reach the JOOAN cloud. The video
+  still comes from the vendor's camera program, which keeps running under
+  confinement.
+- **v0.2.40** (2026-11-09) is the latest release. It adds the open media daemon
+  in [`media/`](../media/), and is what the rest of this repository describes.
+  A camera has now been taken from stock to v0.2.40 and its media layer with
+  these instructions, twice. See [The media layer](#the-media-layer), including
+  what has and has not been tested, before choosing it.
 - **Each installs only on a camera whose vendor firmware matches the verified
   unit's.** Before it writes anything, the installer compares vendor files with
-  the verified unit's: v0.2.21 the whole application partition, and v0.2.39 the
+  the verified unit's: v0.2.21 the whole application partition, and v0.2.40 the
   twelve files it depends on. If they differ, it refuses and leaves the camera as
   it was. The media layer then asks more of your application partition: every
   file it keeps must be there, and the camera must have the CV2005 sensors.
@@ -38,7 +38,7 @@ As of 2026-11-07, two releases are on
 | Later updates and uninstall | Over Wi-Fi, from the web console's Firmware section | None |
 | Backup of the camera's flash | Over SSH, after the install ([step 7](#7-back-up-the-camera-over-ssh)) | None |
 | Chip-level backup or restore | With an SPI flash programmer and SOIC-8 clip, camera opened | Optional for the install. It is the only way to recover a camera that no longer boots |
-| Media layer (v0.2.39, not yet run from stock) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
+| Media layer (v0.2.40) | Over Wi-Fi and SSH. It rewrites the camera's application partition | None to install. A programmer and a backup are the only way back if power is lost while it writes |
 
 **You do not need a microSD card, a USB cable, a serial adapter or a flash
 programmer to install v0.2.21, and you do not need to open the camera.** The
@@ -310,7 +310,7 @@ With v0.2.21:
 The v0.2.21 documentation describes these features. Read it at the tag:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 and [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-The documents on `main` describe 0.2.39.
+The documents on `main` describe 0.2.40.
 
 ## Updating later
 
@@ -372,11 +372,12 @@ From 0.2.22, video, ONVIF and pan/tilt come from the open media daemon
 the default since 0.2.23, the vendor's program never starts. That is the
 setup the rest of this repository describes.
 
-**This whole chain has now run once, end to end, on a real camera.** A test
-camera was taken back to genuine stock, provisioned onto Wi-Fi without the vendor
-app, updated to the platform over the air, and then flashed with a media image
-built from its own partition. It served video over RTSP and survived a cold power
-cycle on the open stack. What that run checked, and what is still thin:
+**This whole chain has now run from stock to the open stack on a real camera,
+twice.** A test camera was taken back to genuine stock, provisioned onto Wi-Fi
+without the vendor app, updated to the platform over the air, and then flashed
+with a media image built from its own partition. It served video over RTSP and
+survived a cold power cycle on the open stack. What the first run checked, and
+what is still thin:
 
 | Step | Checked |
 |---|---|
@@ -390,7 +391,8 @@ cycle on the open stack. What that run checked, and what is still thin:
 | Survives reboot | After a full power cycle the camera came back on the open media image and served RTSP, with no rollback to stock |
 | Installing 0.2.39 from stock | Done through the same updater during this run |
 
-Two rough edges found during that run have since been fixed:
+Two rough edges found during that run were fixed in v0.2.40, and the whole
+chain was then run from stock a second time with that release:
 
 - An **open** (no-password) Wi-Fi network can now be committed through the
   platform (it joins with `key_mgmt NONE`); WPA2 networks work as before.
@@ -408,9 +410,9 @@ every partition first (the installer does this) and keep the camera on steady
 power for the few minutes it takes.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
-and OpenSSL, and the v0.2.39 files from the release page.
+and OpenSSL, and the v0.2.40 files from the release page.
 
-1. **Install the platform.** Follow steps 4 and 5 with the v0.2.39 source and
+1. **Install the platform.** Follow steps 4 and 5 with the v0.2.40 source and
    files, or from v0.2.21 update as in [Updating later](#updating-later). The
    camera now has no video until the last step. The web console stays at
    `http://CAMERA_IP/`.

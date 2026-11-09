@@ -98,7 +98,7 @@ class GuiLogic(unittest.TestCase):
             ssh_key="", ssh_pubkey="", provision_helper="", only=None,
             force=False, assume_yes=False, dry_run=True)
         real_status = self.gui.engine._platform_status
-        self.gui.engine._platform_status = lambda host: {"release_version": "0.2.39"}
+        self.gui.engine._platform_status = lambda host: {"release_version": "0.2.40"}
         self.addCleanup(setattr, self.gui.engine, "_platform_status", real_status)
         state = self.gui.engine.RunState.load(pathlib.Path(work) / "run-state.json")
         state.camera_ip = "203.0.113.1"
