@@ -9,7 +9,7 @@
 - **软件包回滚/卸载**：适用于仍能启动、且本地管理功能或 OEM 更新通道仍可正常工作的摄像机。
 - **外部 SPI 恢复**：适用于已无法启动或无法访问的摄像机。
 
-媒体层的 appfs 重新刷写还带来了第三条手动恢复途径，仅适用于一种情况：重刷流程让摄像机在已损坏的分区上继续保持运行。参见[appfs 重刷恢复](#appfs-reflash-recovery)。
+媒体层的 appfs 重新刷写还带来了第三条手动恢复途径，仅适用于一种情况：重刷流程让摄像机在已损坏的分区上继续保持运行。参见 [appfs 重刷恢复](#appfs-reflash-recovery)。
 
 仅保存在摄像机上的卸载包并不是一种独立的恢复手段。请将其另行保存在设备之外。对于无法启动或无法接受更新的摄像机，外部 SPI 还原仍然是最可靠的途径。
 
@@ -25,7 +25,7 @@
 - 该发布版本源代码的副本以及工具链元数据；
 - 经过脱敏处理的记录，描述最近一次成功启动的情况及当时的网络状态。
 
-切勿把一台摄像机的闪存转储作为另一台设备的恢复镜像分享出去。
+切勿把一台摄像机的闪存转储提供给另一台设备用作恢复镜像。
 
 <a id="booting-camera-rollback"></a>
 ## 可启动摄像机的回滚
@@ -52,14 +52,14 @@
 
 在空间不足的摄像机上，平台层更新会先删除闪存上唯一的运行时，然后才写入新的运行时。如果更新在这两步之间中断，摄像机仍可依靠 RAM 继续工作，但闪存上已经没有下次启动时可运行的内容：“系统”（System）部分会显示更新已中断，重启请求也会被拒绝，并返回 `no-runtime`。
 
-**暂时不要重启摄像机，也不要拔掉电源**。否则下次启动时将没有网络，您就只能按上文的步骤操作。通过 SSH 执行：
+**此时切勿重启摄像机，也切勿拔掉电源**。否则下次启动时将没有网络，您就只能按上文的步骤操作。通过 SSH 执行：
 
 ```sh
 cat /opt/custom/jooan-local/state/selection
 ls /opt/custom/jooan-local/slots/
 ```
 
-如果选择记录指明了某个槽位（`A - 0`），该槽位确实存在，并且 `df -k /opt` 显示至少有 51 KiB 可用空间，那么一切都没有丢失。如果启动时可用空间不足 50 KiB，厂商的 `startapp` 会清空 `/opt/etc` 和 `/opt/jooanipc-open`，后果比没有运行时更严重，因此请先腾出空间。可以删除的内容：`/opt/custom/jooan-local` 和 `/opt/jooanipc-open` 下任何名为 `*.new`、`*.next` 或 `*.previous` 的文件或目录，以及 `state/net-loss.log`。不能删除的内容：`config/`、`state/selection`、`controller.tar.gz`、`recovery/`、已选中的槽位，以及 `/opt/jooanipc-open` 中的 `camera.ini`、`deployment.env`、两个启动脚本和各个密钥。如果选择记录显示为 `- - 0`，请重新放回一个运行时。在此之前，请先停止仍在等待这台摄像机的任何安装程序：一旦发现摄像机重启，它就会继续执行。
+如果选择记录指明了某个槽位（`A - 0`），该槽位确实存在，并且 `df -k /opt` 显示至少有 51 KiB 可用空间，那么一切都没有丢失。如果启动时可用空间不足 50 KiB，厂商的 `startapp` 会清空 `/opt/etc` 和 `/opt/jooanipc-open`，后果比没有运行时更严重，因此请先腾出空间。可以删除的内容：`/opt/custom/jooan-local` 和 `/opt/jooanipc-open` 下任何名为 `*.new`、`*.next` 或 `*.previous` 的文件或目录，以及 `state/net-loss.log`。切勿删除的内容：`config/`、`state/selection`、`controller.tar.gz`、`recovery/`、已选中的槽位，以及 `/opt/jooanipc-open` 中的 `camera.ini`、`deployment.env`、两个启动脚本和各个密钥。如果选择记录显示为 `- - 0`，请重新放回一个运行时。在此之前，请先停止仍在等待这台摄像机的任何安装程序：一旦发现摄像机重启，它就会继续执行。
 
 1. 找到失败的那个软件包，它会一直保留在 RAM 中，直到重启为止：
    ```sh
@@ -67,7 +67,7 @@ ls /opt/custom/jooan-local/slots/
    mkdir /tmp/fw && mount -t squashfs -o ro,loop /run/jooan-local/firmware.<id>.sqfs /tmp/fw
    ```
    如果它已经不在了，发布版本的 `JOOAN_FW_PKG` 中也包含同样的两个文件。在电脑上执行 `dd if=JOOAN_FW_PKG bs=96 skip=1 of=p.sqfs && unsquashfs p.sqfs runtime.tar.gz runtime.md5`，然后在摄像机上执行 `mkdir -p /tmp/fw`，再用 `ssh admin@CAMERA 'cat > /tmp/fw/runtime.tar.gz' < squashfs-root/runtime.tar.gz` 这样的命令把这两个文件复制过去。
-2. 将其复制到一个槽位中，由校验和来决定结果。首先确认 `df -k /opt` 显示的可用空间不少于 `runtime.tar.gz` 的大小再加 60 KiB；否则请先腾出空间，原因见上文。
+2. 将其复制到一个槽位中，由校验和决定是否采用它。首先确认 `df -k /opt` 显示的可用空间不少于 `runtime.tar.gz` 的大小再加 60 KiB；否则请先腾出空间，原因见上文。
    ```sh
    cd /opt/custom/jooan-local/slots
    rm -rf A.new
@@ -84,7 +84,7 @@ ls /opt/custom/jooan-local/slots/
 <a id="a-media-change-that-stops-native-boot"></a>
 ## 导致原生启动失败的媒体层变更
 
-如果媒体守护进程在原生启动期间退出，它已启用的看门狗就会复位主板。如果某次启动记录下了这一故障，下一次启动就会锁存 `native-failed` 并改走交接（handoff）流程；如果某次启动只是因断电或卡死而被中途打断，则会先再获得两次重试机会。如果交接流程同样失败，就会锁存 `boot-trial`，并让受防护的 OEM 应用程序继续运行。由平台层主动请求的重启，不会让被它打断的那次启动被计为失败，但在这次重启之前已经记录的故障依然算数。
+如果媒体守护进程在原生启动期间退出，它已启用的看门狗就会复位主板。如果某次启动记录下了这一故障，下一次启动就会锁存 `native-failed` 并改走交接（handoff）流程；如果某次启动只是因断电或卡死而被中途打断，则会先再获得两次重试机会。如果交接流程同样失败，就会锁存 `boot-trial`，并让受防护的 OEM 应用程序继续运行。如果重启是由平台层主动请求的，被它打断的那次启动不会因此计入中断次数；但在这次重启之前已经记录的故障仍然有效。
 
 没有网关的原生启动会一直等待，既不复位，也不写入任何标记，前提是等待有望取得结果：存在已提交的网络、有运行时正在尝试加入该网络，并且这台摄像机此前曾有一次启动通过了合格认定。否则，它会如上所述在 300 秒后宣告失败。如果某个发布版本在启动后才失去网关，它仍会通过合格认定，除非这种情况连续出现在三次启动中。如果已提交的网络永久消失，而这台摄像机此前已通过合格认定，它就会一直等待下去：要访问它，请重新提供一个名称和密码都相同的网络。此时平台层和 SSH 仍会响应，但 HTTPS 界面不会。恢复方法：
 

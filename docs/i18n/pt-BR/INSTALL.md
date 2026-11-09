@@ -26,10 +26,11 @@ Até 2026-11-07, duas versões foram publicadas no
 - **Cada uma só é instalada em uma câmera cujo firmware do fabricante seja igual ao da
   unidade verificada.** Antes de gravar qualquer coisa, o instalador compara os arquivos
   do fabricante com os da unidade verificada: a v0.2.21, a partição de aplicação inteira;
-  a v0.2.39, os doze arquivos de que depende. Se divergirem, ele recusa a instalação e deixa a
-  câmera como estava. A camada de mídia exige ainda mais da sua partição de aplicação: cada
-  arquivo que ela mantém precisa estar lá, e a câmera precisa ter os sensores CV2005.
-  Ninguém sabe ainda se as câmeras vendidas hoje vêm com o mesmo firmware do fabricante.
+  a v0.2.39, os doze arquivos de que depende. Se divergirem, ele recusa a instalação e
+  deixa a câmera como estava. A camada de mídia exige ainda mais da sua partição de
+  aplicação: cada arquivo que ela mantém precisa estar lá, e a câmera precisa ter os
+  sensores CV2005. Ninguém sabe ainda se as câmeras vendidas hoje vêm com o mesmo
+  firmware do fabricante.
 - Nenhuma versão tem "suporte" ainda. Todas as versões até agora são
   pré-lançamentos de engenharia, testados em uma única câmera.
 
@@ -61,7 +62,8 @@ mantenedores, não um caminho de instalação (veja [A camada de mídia](#the-me
   tem como ver a placa de circuito, então abrir a câmera é a única verificação completa
   (o guia de Compatibilidade explica o que procurar).
 - **O aplicativo JOOAN para celular.** É por ele que o firmware do fabricante entra
-  no seu Wi-Fi. Este projeto não tem outro meio de colocar na rede uma câmera com firmware original.
+  no seu Wi-Fi. Este projeto não tem outro meio de colocar na rede uma câmera com
+  firmware original.
 - **Um roteador Wi-Fi** em que:
   - a câmera consiga entrar em uma rede WPA2. Não foi possível conectá-la a um ponto de
     acesso OpenWrt com rádio Qualcomm ath11k. Pontos de acesso baseados em Realtek
@@ -216,8 +218,8 @@ python3 tools/upload_ota.py --host CAMERA_IP --pkg ../release/JOOAN_FW_PKG
 A ferramenta verifica a assinatura do pacote, aciona o atualizador do fabricante na
 câmera (que baixa o pacote do servidor que você iniciou acima) e espera a câmera
 reiniciar com o novo firmware. O terminal do servidor exibe
-`[served] /fw/JOOAN_FW_PKG -> ... bytes` quando a câmera baixa o pacote. O processo leva de um
-a cinco minutos. Mantenha a câmera ligada.
+`[served] /fw/JOOAN_FW_PKG -> ... bytes` quando a câmera baixa o pacote. O processo
+leva de um a cinco minutos. Mantenha a câmera ligada.
 
 **Funcionou se** a última linha for:
 
@@ -266,9 +268,9 @@ A câmera tem sete partições, de `mtd0` a `mtd6`. Este comando as lista:
 ssh admin@CAMERA_IP cat /proc/mtd
 ```
 
-Em seguida, salve cada partição. Execute cada comando e digite a senha quando ela for solicitada.
-No Windows, use o Prompt de Comando, não o PowerShell. O `>` do Windows PowerShell
-corrompe arquivos binários.
+Em seguida, salve cada partição. Execute cada comando e digite a senha quando ela for
+solicitada. No Windows, use o Prompt de Comando, não o PowerShell. O `>` do Windows
+PowerShell corrompe arquivos binários.
 
 ```sh
 ssh admin@CAMERA_IP "cat /dev/mtdblock0" > camera-mtd0.bin
@@ -309,9 +311,9 @@ Com a v0.2.21:
   informe a nova em Network → Wi-Fi (Rede → Wi-Fi) no console web, prepare-a
   (Stage) e confirme-a (Commit staged) assim que a câmera tiver se reconectado. Uma
   mudança que nunca é confirmada é revertida.
-- **Relógio:** a câmera não tem relógio alimentado por bateria. Após uma queda de energia, clique em
-  "Sync time & zone to this device" (sincronizar hora e fuso com este dispositivo) em
-  System → Camera time (Sistema → Hora da câmera).
+- **Relógio:** a câmera não tem relógio alimentado por bateria. Após uma queda de
+  energia, clique em "Sync time & zone to this device" (sincronizar hora e fuso com
+  este dispositivo) em System → Camera time (Sistema → Hora da câmera).
 
 A documentação da v0.2.21 descreve esses recursos. Consulte-a na tag correspondente:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
@@ -353,9 +355,9 @@ confirmada nela, são apagadas. Os detalhes estão em
 então apague-os antes, por SSH: `rm -rf /opt/jooanipc-open`. A partição de aplicação
 também continua sendo a reduzida, sem as mensagens de voz do fabricante e os drivers
 de outros sensores. **Não tente regravá-la com a câmera em funcionamento:** o programa
-que roda a partir dessa partição morre quando ela é apagada e, se a câmera reiniciar antes
-do fim da gravação, só um gravador de flash poderá recuperá-la. Para restaurar a original, são necessários
-um gravador de flash e o `my-appfs.img` que você salvou.
+que roda a partir dessa partição morre quando ela é apagada e, se a câmera reiniciar
+antes do fim da gravação, só um gravador de flash poderá recuperá-la. Para restaurar a
+original, são necessários um gravador de flash e o `my-appfs.img` que você salvou.
 
 <a id="if-something-goes-wrong"></a>
 ## Se algo der errado
@@ -381,18 +383,19 @@ A partir da 0.2.22, vídeo, ONVIF e pan/tilt vêm do daemon de mídia aberto
 nativa, o padrão desde a 0.2.23, o programa do fabricante nunca é iniciado. Essa é a
 configuração que o restante deste repositório descreve.
 
-**Todo esse processo já foi executado uma vez, de ponta a ponta, em uma câmera real.** Uma câmera de
-teste foi restaurada ao firmware original genuíno, configurada no Wi-Fi sem o aplicativo do
-fabricante, atualizada para a plataforma via OTA e, por fim, teve gravada na flash uma imagem
-de mídia gerada a partir da sua própria partição. Ela transmitiu vídeo por RTSP e, após um
-desligamento completo da energia, voltou rodando a pilha aberta. O que o teste verificou, e onde a evidência ainda é escassa:
+**Todo esse processo já foi executado uma vez, de ponta a ponta, em uma câmera real.**
+Uma câmera de teste foi restaurada ao firmware original genuíno, configurada no Wi-Fi
+sem o aplicativo do fabricante, atualizada para a plataforma via OTA e, por fim, teve
+gravada na flash uma imagem de mídia gerada a partir da sua própria partição. Ela
+transmitiu vídeo por RTSP e, após um desligamento completo da energia, voltou rodando a
+pilha aberta. O que o teste verificou, e onde a evidência ainda é escassa:
 
 | Etapa | Verificado |
 |---|---|
 | Retorno ao firmware original | A câmera de teste foi regravada com a partição original (com o watchdog alimentado e reversão em RAM) e inicializou o firmware original genuíno, ainda sem provisionamento |
 | Provisionamento sem aplicativo | A partir de um PC próximo, um `GET /goform/setupWifiInfo` no SoftAP da câmera a colocou no Wi-Fi; a câmera informou sucesso e se conectou |
 | Instalação da plataforma via OTA | Com a nuvem redirecionada para um servidor local, a câmera baixou e aplicou o pacote assinado da plataforma e inicializou com ele |
-| A imagem | Gerada a partir da partição original real; os mesmos arquivos, byte a byte, de uma imagem de mídia comprovadamente funcional |
+| A imagem | Gerada a partir da partição original real; arquivos idênticos, byte a byte, aos de uma imagem de mídia comprovadamente funcional |
 | A configuração | O que o instalador grava passa na verificação do próprio daemon distribuído |
 | O instalador | Suas decisões, sua sequência e suas verificações prévias, tanto em um substituto simulado quanto na câmera real; ele recusou corretamente até que a plataforma e o Wi-Fi estivessem prontos |
 | O script de gravação, `first-appfs.sh` | Rodou de verdade: gravou a imagem de mídia, manteve a reversão em RAM, e o daemon aberto qualificou a inicialização nativa e manteve o controle do watchdog |
@@ -404,9 +407,10 @@ Dois problemas menores encontrados nesse teste já foram corrigidos:
 - Uma rede Wi-Fi **aberta** (sem senha) agora pode ser confirmada pela
   plataforma (a conexão usa `key_mgmt NONE`); redes WPA2 funcionam como antes.
 - Uma plataforma recém-instalada pode deixar o `/opt` de 384 KiB com espaço por pouco
-  insuficiente para a primeira instalação de mídia. O instalador agora libera automaticamente o
-  `/opt/conf/config.org` original, que pode ser regenerado, quando falta espaço e a cópia
-  original está disponível para restaurá-lo (a inicialização original o recria de `/mnt/mtd/etc`).
+  insuficiente para a primeira instalação de mídia. O instalador agora libera
+  automaticamente o `/opt/conf/config.org` original, que pode ser regenerado, quando
+  falta espaço e a cópia original está disponível para restaurá-lo (a inicialização
+  original o recria de `/mnt/mtd/etc`).
 
 Se a gravação falhar na verificação por releitura, o script restaura a partição a partir
 de uma cópia em RAM. **Se faltar energia durante a gravação, só um gravador de flash e um
