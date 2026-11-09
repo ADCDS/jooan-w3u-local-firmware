@@ -10,28 +10,29 @@ unter [Erstellen und Veröffentlichen](../../../docs/BUILDING.md).
 <a id="read-this-first"></a>
 ## Bitte zuerst lesen
 
-Stand 2026-11-07 stehen unter
+Stand 2026-11-09 stehen unter
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases)
-zwei Releases bereit:
+folgende Releases bereit:
 
-- **v0.2.21** (2026-10-16) ist das Release, durch das diese Anleitung führt,
-  und das letzte, das auf einer Kamera mit Werksfirmware installiert wurde. Es
-  wird über Wi-Fi installiert, ohne zusätzliche Hardware. Sie erhalten eine
-  lokale Webkonsole, SSH, RTSP-Video von beiden Objektiven sowie
-  Schwenken/Neigen und Presets per ONVIF für einen NVR wie Frigate, und die
-  Kamera kann die JOOAN-Cloud nicht mehr erreichen. Das Video stammt weiterhin
-  vom Kameraprogramm des Herstellers, das abgeschottet weiterläuft.
-- **v0.2.39** (2026-11-07) ergänzt den offenen Medien-Daemon in
-  [`media/`](../../../media/) und ist der Stand, den der Rest dieses
-  Repositorys beschreibt. **Bisher wurde noch keine Kamera mit dieser Anleitung
-  von der Werksfirmware auf v0.2.39 gebracht.** Bevor Sie sich dafür
-  entscheiden, lesen Sie den Abschnitt [Die Medienschicht](#the-media-layer),
-  einschließlich dessen, was getestet wurde und was nicht.
-- **Jedes der beiden Releases lässt sich nur auf einer Kamera installieren,
+- **v0.2.21** (2026-10-16) ist das Release, durch das die nummerierten Schritte
+  dieser Anleitung führen. Es wird über Wi-Fi installiert, ohne zusätzliche
+  Hardware. Sie erhalten eine lokale Webkonsole, SSH, RTSP-Video von beiden
+  Objektiven sowie Schwenken/Neigen und Presets per ONVIF für einen NVR wie
+  Frigate, und die Kamera kann die JOOAN-Cloud nicht mehr erreichen. Das Video
+  stammt weiterhin vom Kameraprogramm des Herstellers, das abgeschottet
+  weiterläuft.
+- **v0.2.40** (2026-11-09) ist das neueste Release. Es ergänzt den offenen
+  Medien-Daemon in [`media/`](../../../media/) und ist der Stand, den der Rest
+  dieses Repositorys beschreibt. Inzwischen wurde eine Kamera mit dieser
+  Anleitung von der Werksfirmware auf v0.2.40 samt der zugehörigen
+  Medienschicht gebracht, und zwar zweimal. Bevor Sie sich dafür entscheiden,
+  lesen Sie den Abschnitt [Die Medienschicht](#the-media-layer), einschließlich
+  dessen, was getestet wurde und was nicht.
+- **Jedes dieser Releases lässt sich nur auf einer Kamera installieren,
   deren Herstellerfirmware mit der des verifizierten Geräts übereinstimmt.**
   Bevor das Installationsprogramm irgendetwas schreibt, vergleicht es die
   Dateien des Herstellers mit denen des verifizierten Geräts: bei v0.2.21 die
-  gesamte Anwendungspartition, bei v0.2.39 die zwölf Dateien, von denen dieses
+  gesamte Anwendungspartition, bei v0.2.40 die zwölf Dateien, von denen dieses
   Release abhängt. Weichen sie ab, verweigert es die Installation und lässt die
   Kamera unverändert. Die Medienschicht stellt anschließend höhere Anforderungen
   an Ihre Anwendungspartition: Jede Datei, die sie beibehält, muss vorhanden
@@ -49,7 +50,7 @@ zwei Releases bereit:
 | Spätere Updates und Deinstallation | Über Wi-Fi, im Bereich „Firmware“ der Webkonsole | Keine |
 | Sicherung des Flash-Speichers der Kamera | Über SSH, nach der Installation ([Schritt 7](#7-back-up-the-camera-over-ssh)) | Keine |
 | Sicherung oder Wiederherstellung auf Chip-Ebene | Mit einem SPI-Flash-Programmiergerät und einer SOIC-8-Klemme, bei geöffneter Kamera | Für die Installation optional. Die einzige Möglichkeit, eine Kamera wiederherzustellen, die nicht mehr startet |
-| Medienschicht (v0.2.39, noch nicht ab Werksfirmware erprobt) | Über Wi-Fi und SSH. Dabei wird die Anwendungspartition der Kamera neu geschrieben | Für die Installation keine. Fällt während des Schreibens der Strom aus, ist die Kamera nur noch mit einem Programmiergerät und einer Sicherung zu retten |
+| Medienschicht (v0.2.40) | Über Wi-Fi und SSH. Dabei wird die Anwendungspartition der Kamera neu geschrieben | Für die Installation keine. Fällt während des Schreibens der Strom aus, ist die Kamera nur noch mit einem Programmiergerät und einer Sicherung zu retten |
 
 **Für die Installation von v0.2.21 benötigen Sie weder eine microSD-Karte noch
 ein USB-Kabel, einen seriellen Adapter oder ein Flash-Programmiergerät, und die
@@ -356,7 +357,7 @@ Diese Funktionen beschreibt die Dokumentation von v0.2.21. Lesen Sie sie in der
 Fassung dieses Tags:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 und [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Die Dokumente auf `main` beschreiben 0.2.39.
+Die Dokumente auf `main` beschreiben 0.2.40.
 
 <a id="updating-later"></a>
 ## Spätere Updates
@@ -433,13 +434,14 @@ nativen Start, seit 0.2.23 die Voreinstellung, wird das Programm des
 Herstellers gar nicht erst gestartet. Diesen Aufbau beschreibt der Rest dieses
 Repositorys.
 
-**Diese gesamte Kette ist jetzt einmal vollständig auf einer echten Kamera
-durchgelaufen.** Eine Testkamera wurde in den echten Werkszustand
-zurückversetzt, ohne Hersteller-App ins Wi-Fi-Netzwerk eingebunden, drahtlos
-(OTA) auf die Plattform aktualisiert und anschließend mit einem Medien-Image
-geflasht, das aus ihrer eigenen Partition erstellt wurde. Sie lieferte Video
-über RTSP und überstand mit dem offenen Software-Stack einen Kaltstart. Was
-dieser Durchlauf geprüft hat und was noch dünn abgesichert ist:
+**Diese gesamte Kette ist jetzt zweimal auf einer echten Kamera von der
+Werksfirmware bis zum offenen Software-Stack durchgelaufen.** Eine Testkamera
+wurde in den echten Werkszustand zurückversetzt, ohne Hersteller-App ins
+Wi-Fi-Netzwerk eingebunden, drahtlos (OTA) auf die Plattform aktualisiert und
+anschließend mit einem Medien-Image geflasht, das aus ihrer eigenen Partition
+erstellt wurde. Sie lieferte Video über RTSP und überstand mit dem offenen
+Software-Stack einen Kaltstart. Was der erste Durchlauf geprüft hat und was
+noch dünn abgesichert ist:
 
 | Schritt | Geprüft |
 |---|---|
@@ -453,8 +455,9 @@ dieser Durchlauf geprüft hat und was noch dünn abgesichert ist:
 | Übersteht einen Neustart | Nach vollständigem Aus- und Wiedereinschalten startete die Kamera wieder mit dem offenen Medien-Image und lieferte RTSP, ohne Rollback auf die Werksfirmware |
 | Installation von 0.2.39 ab Werksfirmware | In diesem Durchlauf über dieselbe Update-Funktion erfolgt |
 
-Zwei kleinere Mängel, die bei diesem Durchlauf auffielen, sind inzwischen
-behoben:
+Zwei kleinere Mängel, die bei diesem Durchlauf auffielen, wurden in v0.2.40
+behoben; anschließend lief die gesamte Kette mit diesem Release ein zweites Mal
+ab Werksfirmware durch:
 
 - Ein **offenes** Wi-Fi-Netzwerk (ohne Passwort) lässt sich jetzt über die
   Plattform übernehmen (der Beitritt erfolgt mit `key_mgmt NONE`);
@@ -471,18 +474,19 @@ Partition aus einer Kopie im RAM wieder her. **Fällt während des Schreibens de
 Strom aus, lässt sich die Kamera nur noch mit einem Flash-Programmiergerät und
 einer Sicherung dieser Partition retten** (siehe
 [Wiederherstellung](./RECOVERY.md#appfs-reflash-recovery)). Das Flashen ist
-inzwischen auf einer echten Kamera vollständig durchgelaufen, aber erst ein
-einziges Mal; erstellen Sie daher zuerst eine vollständige Sicherung aller
+inzwischen auf einer echten Kamera über die beiden Durchläufe hinweg mehrfach
+vollständig durchgelaufen, jedoch nur auf diesem einen Gerät; erstellen Sie
+daher zuerst eine vollständige Sicherung aller
 Partitionen (das Installationsprogramm erledigt das) und sorgen Sie dafür, dass
 die Kamera während der wenigen Minuten, die der Vorgang dauert, durchgehend
 stabil mit Strom versorgt wird.
 
 Sie benötigen einen Computer mit Linux oder WSL, auf dem `squashfs-tools`,
-Python 3, OpenSSH und OpenSSL installiert sind, sowie die Dateien von v0.2.39
+Python 3, OpenSSH und OpenSSL installiert sind, sowie die Dateien von v0.2.40
 von der Release-Seite.
 
 1. **Die Plattform installieren.** Führen Sie die Schritte 4 und 5 mit dem
-   Quellcode und den Dateien von v0.2.39 aus, oder aktualisieren Sie ausgehend
+   Quellcode und den Dateien von v0.2.40 aus, oder aktualisieren Sie ausgehend
    von v0.2.21 wie unter [Spätere Updates](#updating-later) beschrieben. Die
    Kamera hat nun bis zum letzten Schritt kein Video. Die Webkonsole bleibt
    unter `http://CAMERA_IP/` erreichbar.

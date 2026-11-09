@@ -405,9 +405,10 @@ If the flash fails its readback, the script restores the partition from a copy
 in RAM. **If power is lost while it writes, only a flash programmer and a backup
 of that partition can bring the camera back** (see
 [Recovery](RECOVERY.md#appfs-reflash-recovery)). The flash has now run to
-completion on a real camera, but it has run only once; take a full backup of
-every partition first (the installer does this) and keep the camera on steady
-power for the few minutes it takes.
+completion on a real camera a handful of times across the two round trips, but
+only on that one unit; take a full backup of every partition first (the
+installer does this) and keep the camera on steady power for the few minutes it
+takes.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
 and OpenSSL, and the v0.2.40 files from the release page.

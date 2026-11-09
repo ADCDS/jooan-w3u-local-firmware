@@ -10,27 +10,28 @@ plutôt [Compilation et publication](../../../docs/BUILDING.md).
 <a id="read-this-first"></a>
 ## À lire avant tout
 
-À la date du 2026-11-07, deux versions sont disponibles sur
+À la date du 2026-11-09, les versions suivantes sont disponibles sur
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases) :
 
-- **v0.2.21** (2026-10-16) est celle que suit ce guide, et la dernière version
-  à avoir été installée sur une caméra sous firmware d’origine. Elle s’installe
-  par Wi-Fi, sans matériel supplémentaire. Vous obtenez une console web locale,
-  SSH, la vidéo RTSP des deux objectifs ainsi que le pilotage
-  panoramique/inclinaison et les préréglages ONVIF pour un NVR tel que Frigate,
-  et la caméra ne peut plus joindre le cloud JOOAN. La vidéo provient toujours
-  du programme caméra du fabricant, qui continue de tourner en mode confiné.
-- **v0.2.39** (2026-11-07) ajoute le démon média ouvert de
-  [`media/`](../../../media/), et c’est elle que décrit le reste de ce dépôt.
-  **Aucune caméra n’a encore été amenée de son firmware d’origine à la v0.2.39
-  en suivant ces instructions.** Avant de la choisir, lisez
+- **v0.2.21** (2026-10-16) est celle que suivent les étapes numérotées de ce
+  guide. Elle s’installe par Wi-Fi, sans matériel supplémentaire. Vous obtenez
+  une console web locale, SSH, la vidéo RTSP des deux objectifs ainsi que le
+  pilotage panoramique/inclinaison et les préréglages ONVIF pour un NVR tel que
+  Frigate, et la caméra ne peut plus joindre le cloud JOOAN. La vidéo provient
+  toujours du programme caméra du fabricant, qui continue de tourner en mode
+  confiné.
+- **v0.2.40** (2026-11-09) est la dernière version en date. Elle ajoute le
+  démon média ouvert de [`media/`](../../../media/), et c’est elle que décrit
+  le reste de ce dépôt. Une caméra a désormais été amenée de son firmware
+  d’origine à la v0.2.40 et à sa couche média en suivant ces instructions, et
+  ce à deux reprises. Avant de la choisir, lisez
   [La couche média](#the-media-layer), y compris ce qui a été testé et ce qui
   ne l’a pas été.
 - **Chacune ne s’installe que sur une caméra dont le firmware du fabricant est
   identique à celui de l’appareil vérifié.** Avant d’écrire quoi que ce soit,
   l’installateur compare les fichiers du fabricant à ceux de l’appareil
   vérifié : toute la partition applicative pour la v0.2.21, et les douze
-  fichiers dont elle dépend pour la v0.2.39. S’ils diffèrent, il refuse de
+  fichiers dont elle dépend pour la v0.2.40. S’ils diffèrent, il refuse de
   poursuivre et laisse la caméra en l’état. La couche média exige ensuite
   davantage de votre partition applicative : chaque fichier qu’elle conserve
   doit y être présent, et la caméra doit être équipée des capteurs CV2005.
@@ -47,7 +48,7 @@ plutôt [Compilation et publication](../../../docs/BUILDING.md).
 | Mises à jour ultérieures et désinstallation | Par Wi-Fi, depuis la section Firmware de la console web | Aucun |
 | Sauvegarde de la mémoire flash de la caméra | Via SSH, après l’installation ([étape 7](#7-back-up-the-camera-over-ssh)) | Aucun |
 | Sauvegarde ou restauration au niveau de la puce | Avec un programmateur de flash SPI et une pince SOIC-8, caméra ouverte | Facultatif pour l’installation. C’est le seul moyen de récupérer une caméra qui ne démarre plus |
-| Couche média (v0.2.39, pas encore déroulée depuis le firmware d’origine) | Par Wi-Fi et SSH. Elle réécrit la partition applicative de la caméra | Aucun pour l’installation. En cas de coupure de courant pendant l’écriture, seuls un programmateur et une sauvegarde permettent de revenir en arrière |
+| Couche média (v0.2.40) | Par Wi-Fi et SSH. Elle réécrit la partition applicative de la caméra | Aucun pour l’installation. En cas de coupure de courant pendant l’écriture, seuls un programmateur et une sauvegarde permettent de revenir en arrière |
 
 **Pour installer la v0.2.21, vous n’avez besoin ni d’une carte microSD, ni d’un
 câble USB, ni d’un adaptateur série, ni d’un programmateur de flash, et vous
@@ -354,7 +355,7 @@ La documentation de la v0.2.21 décrit ces fonctionnalités. Consultez-la au
 niveau du tag de cette version :
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 et [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Les documents de la branche `main` décrivent la 0.2.39.
+Les documents de la branche `main` décrivent la 0.2.40.
 
 <a id="updating-later"></a>
 ## Mettre à jour par la suite
@@ -430,13 +431,14 @@ plus par le programme du fabricant. Lors d’un démarrage natif, le mode par
 défaut depuis la 0.2.23, le programme du fabricant ne se lance jamais. C’est
 cette configuration que décrit le reste de ce dépôt.
 
-**Toute cette chaîne a désormais été déroulée une fois, de bout en bout, sur
-une vraie caméra.** Une caméra de test a été ramenée à son firmware d’origine
-authentique, connectée au Wi-Fi sans l’application du fabricant, mise à jour
-sans fil vers la plateforme, puis flashée avec une image média construite à
-partir de sa propre partition. Elle a diffusé la vidéo en RTSP et a survécu à
-un redémarrage à froid sur la pile logicielle ouverte. Voici ce que ce parcours
-a vérifié, et ce qui reste encore peu étayé :
+**Toute cette chaîne, du firmware d’origine jusqu’à la pile logicielle ouverte,
+a désormais été déroulée sur une vraie caméra, et ce à deux reprises.** Une
+caméra de test a été ramenée à son firmware d’origine authentique, connectée au
+Wi-Fi sans l’application du fabricant, mise à jour sans fil vers la plateforme,
+puis flashée avec une image média construite à partir de sa propre partition.
+Elle a diffusé la vidéo en RTSP et a survécu à un redémarrage à froid sur la
+pile logicielle ouverte. Voici ce que le premier parcours a vérifié, et ce qui
+reste encore peu étayé :
 
 | Étape | Vérifié |
 |---|---|
@@ -450,7 +452,9 @@ a vérifié, et ce qui reste encore peu étayé :
 | Résiste au redémarrage | Après un cycle complet de coupure et de remise sous tension, la caméra est revenue sur l’image média ouverte et a diffusé en RTSP, sans retour arrière vers le firmware d’origine |
 | Installation de la 0.2.39 depuis le firmware d’origine | Réalisée avec le même outil de mise à jour au cours de ce parcours |
 
-Deux défauts mineurs relevés au cours de ce parcours ont depuis été corrigés :
+Deux défauts mineurs relevés au cours de ce parcours ont été corrigés dans la
+v0.2.40, et toute la chaîne a ensuite été déroulée une seconde fois depuis le
+firmware d’origine, avec cette version :
 
 - Un réseau Wi-Fi **ouvert** (sans mot de passe) peut désormais être validé
   via la plateforme (la connexion utilise `key_mgmt NONE`) ; les réseaux WPA2
@@ -468,17 +472,18 @@ partition à partir d’une copie en RAM. **Si l’alimentation est coupée pend
 l’écriture, seuls un programmateur de flash et une sauvegarde de cette
 partition permettent de récupérer la caméra** (voir
 [Récupération](./RECOVERY.md#appfs-reflash-recovery)). Le flashage a désormais
-été mené à son terme sur une vraie caméra, mais une seule fois : faites
+été mené à son terme sur une vraie caméra à plusieurs reprises au fil des deux
+parcours complets, mais sur ce seul appareil ; faites
 d’abord une sauvegarde complète de toutes les partitions (l’installateur s’en
 charge) et maintenez la caméra sur une alimentation stable pendant les quelques
 minutes que dure l’opération.
 
 Il vous faut un ordinateur sous Linux ou WSL, équipé de `squashfs-tools`,
-Python 3, OpenSSH et OpenSSL, ainsi que les fichiers de la v0.2.39 disponibles
+Python 3, OpenSSH et OpenSSL, ainsi que les fichiers de la v0.2.40 disponibles
 sur la page de la version.
 
 1. **Installez la plateforme.** Suivez les étapes 4 et 5 avec les sources et
-   les fichiers de la v0.2.39 ou, depuis la v0.2.21, effectuez la mise à jour
+   les fichiers de la v0.2.40 ou, depuis la v0.2.21, effectuez la mise à jour
    comme décrit dans [Mettre à jour par la suite](#updating-later). La caméra
    n’a alors plus de vidéo jusqu’à la dernière étape. La console web reste
    accessible à l’adresse `http://CAMERA_IP/`.

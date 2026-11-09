@@ -49,25 +49,30 @@ la frontière de confiance.
   sur cette caméra : installation et désinstallation signées, migration,
   Wi-Fi, heure réseau, SSH, routage, coupure de courant et récupération à froid
   ([critères de promotion sur matériel](../../../tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Publiée : v0.2.39** (2026-11-07) : le paquet de la plateforme et, pour la
-  première fois, les binaires et les scripts de la couche média. Chaque
+- **Dernière version : v0.2.40** (2026-11-09) : le paquet de la plateforme
+  ainsi que les binaires et les scripts de la couche média. Chaque
   propriétaire construit toujours lui-même l’image destinée à sa caméra à
   partir de la partition applicative de cette même caméra, car celle-ci
   contient des fichiers du fabricant : aucune image n’est donc publiée.
-- **La chaîne complète a désormais été déroulée une fois, de bout en bout, sur une vraie caméra.**
+  Cette version remplace la v0.2.39 et intègre deux correctifs de défauts
+  relevés sur le matériel : un réseau Wi-Fi ouvert (sans mot de passe) peut
+  désormais être validé via la plateforme, et une plateforme fraîchement
+  installée libère juste assez de place dans `/opt` pour la première
+  installation de la couche média.
+- **La chaîne complète a désormais été déroulée sur une vraie caméra, du firmware d’origine jusqu’à la pile logicielle ouverte.**
   Une caméra de test a été ramenée à son firmware d’origine, connectée au
   Wi-Fi sans l’application du fabricant, mise à jour sans fil (OTA) vers la
   plateforme, puis flashée avec une image média construite à partir de sa
-  propre partition ; elle a diffusé la vidéo en RTSP et a survécu à un
-  redémarrage à froid sur la pile logicielle ouverte (voir
+  propre partition ; elle a diffusé la vidéo en RTSP et a fonctionné avec un
+  NVR local. Elle a depuis été réinstallée une seconde fois avec cette version,
+  en repartant du firmware d’origine (voir
   [le rapport d’aller-retour sur matériel](../../../docs/reports/hardware-roundtrip-20261108.md) et
-  [La couche média](./INSTALL.md#the-media-layer)). Ce parcours n’a été réalisé
-  qu’une seule fois : considérez-le donc comme une préversion, effectuez la
-  sauvegarde complète prévue par l’installateur et gardez la caméra sous
-  tension pendant le flashage.
-- **v0.2.21** (2026-10-16, plateforme seule) reste publiée. C’est la dernière
-  version installée sur une caméra sous firmware d’origine. Avec elle, la vidéo
+  [La couche média](./INSTALL.md#the-media-layer)). Il s’agit toujours d’une
+  préversion : effectuez la sauvegarde complète prévue par l’installateur et
+  gardez la caméra sous tension pendant le flashage.
+- **v0.2.21** (2026-10-16, plateforme seule) reste publiée. Avec elle, la vidéo
   provient toujours du programme du fabricant, exécuté en mode confiné.
+  Préférez la v0.2.40.
 
 ## Périmètre matériel exact
 
@@ -91,7 +96,7 @@ du produit ni la forme du boîtier ne prouvent la compatibilité. Lisez
 
 ## Ce qui fonctionne et ce qui ne fonctionne pas
 
-Avec la version 0.2.39 et sa couche média :
+Avec la version 0.2.40 et sa couche média :
 
 - **Fonctionne :** RTSP pour les deux objectifs
   (1920×1080 et 1024×576 à 15 images/s, H.264) ; pilotage

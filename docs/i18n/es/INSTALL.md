@@ -10,24 +10,24 @@ generan sus propias versiones encontrarán lo que necesitan en
 <a id="read-this-first"></a>
 ## Lee esto primero
 
-A fecha de 2026-11-07, hay dos versiones publicadas en
+A fecha de 2026-11-09, estas son las versiones publicadas en
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases):
 
-- **v0.2.21** (2026-10-16) es la que sigue esta guía paso a paso, y la última
-  versión que se ha instalado en una cámara de fábrica. Se instala por Wi-Fi, sin
-  hardware adicional. Obtienes una consola web local, SSH, vídeo RTSP de las dos
-  lentes y, para un NVR como Frigate, pan/tilt y presets ONVIF; además, la cámara
-  deja de poder comunicarse con la nube de JOOAN. El vídeo sigue procediendo del
-  programa de cámara del fabricante, que continúa ejecutándose confinado.
-- **v0.2.39** (2026-11-07) añade el daemon de medios abierto de
-  [`media/`](../../../media/), y es la que describe el resto de este repositorio.
-  **Todavía no se ha llevado ninguna cámara del estado de fábrica a v0.2.39
-  siguiendo estas instrucciones.** Antes de elegirla, consulta
+- **v0.2.21** (2026-10-16) es la que siguen los pasos numerados de esta guía. Se
+  instala por Wi-Fi, sin hardware adicional. Obtienes una consola web local, SSH,
+  vídeo RTSP de las dos lentes y, para un NVR como Frigate, pan/tilt y presets
+  ONVIF; además, la cámara deja de poder comunicarse con la nube de JOOAN. El vídeo
+  sigue procediendo del programa de cámara del fabricante, que continúa
+  ejecutándose confinado.
+- **v0.2.40** (2026-11-09) es la última versión. Añade el daemon de medios abierto
+  de [`media/`](../../../media/), y es la que describe el resto de este repositorio.
+  Ya se ha llevado dos veces una cámara del estado de fábrica a v0.2.40 y a su capa
+  de medios siguiendo estas instrucciones. Antes de elegirla, consulta
   [La capa de medios](#the-media-layer), incluido lo que se ha probado y lo que no.
 - **Cada una solo se instala en una cámara cuyo firmware del fabricante coincida
   con el de la unidad verificada.** Antes de escribir nada, el instalador compara
   los archivos del fabricante con los de la unidad verificada: en v0.2.21, toda la
-  partición de aplicaciones; en v0.2.39, los doce archivos de los que depende. Si
+  partición de aplicaciones; en v0.2.40, los doce archivos de los que depende. Si
   difieren, se niega a continuar y deja la cámara tal como estaba. Además, la capa
   de medios exige más a tu partición de aplicaciones: deben estar presentes todos
   los archivos que conserva, y la cámara debe tener los sensores CV2005. Aún no se
@@ -43,7 +43,7 @@ A fecha de 2026-11-07, hay dos versiones publicadas en
 | Actualizaciones posteriores y desinstalación | Por Wi-Fi, desde la sección Firmware de la consola web | Ninguno |
 | Copia de seguridad de la flash de la cámara | Por SSH, después de la instalación ([paso 7](#7-back-up-the-camera-over-ssh)) | Ninguno |
 | Copia de seguridad o restauración a nivel de chip | Con un programador de flash SPI y una pinza SOIC-8, con la cámara abierta | Opcional para la instalación. Es la única forma de recuperar una cámara que ya no arranca |
-| Capa de medios (v0.2.39, aún no ejecutada desde el estado de fábrica) | Por Wi-Fi y SSH. Reescribe la partición de aplicaciones de la cámara | Ninguno para instalarla. Si se corta la corriente mientras escribe, un programador y una copia de seguridad son la única forma de recuperar la cámara |
+| Capa de medios (v0.2.40) | Por Wi-Fi y SSH. Reescribe la partición de aplicaciones de la cámara | Ninguno para instalarla. Si se corta la corriente mientras escribe, un programador y una copia de seguridad son la única forma de recuperar la cámara |
 
 **Para instalar v0.2.21 no necesitas tarjeta microSD, cable USB, adaptador serie
 ni programador de flash, y tampoco hace falta abrir la cámara.** Estas
@@ -330,7 +330,7 @@ La documentación de v0.2.21 describe estas funciones. Léela en la etiqueta de 
 versión:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 y [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Los documentos de `main` describen la 0.2.39.
+Los documentos de `main` describen la 0.2.40.
 
 <a id="updating-later"></a>
 ## Actualizar más adelante
@@ -399,12 +399,13 @@ fabricante. En un arranque nativo, el predeterminado desde la 0.2.23, el program
 del fabricante nunca llega a iniciarse. Esa es la configuración que describe el
 resto de este repositorio.
 
-**Toda esta cadena ya se ha ejecutado una vez, de principio a fin, en una cámara
-real.** Una cámara de pruebas se devolvió a su firmware de fábrica original, se
-conectó a la Wi-Fi sin la app del fabricante, se actualizó a la plataforma de forma
-inalámbrica (OTA) y, después, se le grabó una imagen de medios generada a partir de
-su propia partición. Sirvió vídeo por RTSP y superó un reinicio en frío con la pila
-de software abierta. Qué comprobó esa ejecución y qué sigue estando poco probado:
+**Toda esta cadena ya se ha ejecutado dos veces en una cámara real, desde el
+firmware de fábrica hasta la pila de software abierta.** Una cámara de pruebas se
+devolvió a su firmware de fábrica original, se conectó a la Wi-Fi sin la app del
+fabricante, se actualizó a la plataforma de forma inalámbrica (OTA) y, después, se
+le grabó una imagen de medios generada a partir de su propia partición. Sirvió vídeo
+por RTSP y superó un reinicio en frío con la pila de software abierta. Qué comprobó
+la primera ejecución y qué sigue estando poco probado:
 
 | Paso | Qué se comprobó |
 |---|---|
@@ -418,7 +419,9 @@ de software abierta. Qué comprobó esa ejecución y qué sigue estando poco pro
 | Supera el reinicio | Tras un ciclo completo de apagado y encendido, la cámara volvió con la imagen de medios abierta y sirvió RTSP, sin revertir al firmware de fábrica |
 | Instalación de la 0.2.39 desde el firmware de fábrica | Hecha con el mismo actualizador durante esta ejecución |
 
-Desde entonces se han corregido dos problemas menores detectados en esa ejecución:
+Dos problemas menores detectados en esa ejecución se corrigieron en v0.2.40, y
+después se ejecutó toda la cadena por segunda vez desde el firmware de fábrica, ya
+con esa versión:
 
 - Ahora se puede confirmar a través de la plataforma una red Wi-Fi **abierta** (sin
   contraseña), a la que se une con `key_mgmt NONE`; las redes WPA2 funcionan como
@@ -434,15 +437,16 @@ partición a partir de una copia en RAM. **Si se corta la corriente mientras
 escribe, solo un programador de flash y una copia de seguridad de esa partición
 pueden recuperar la cámara** (consulta
 [Recuperación](./RECOVERY.md#appfs-reflash-recovery)). La grabación ya se ha
-completado en una cámara real, pero solo una vez; haz antes una copia de seguridad
+completado en una cámara real varias veces a lo largo de los dos recorridos
+completos, pero solo en esa única unidad; haz antes una copia de seguridad
 completa de todas las particiones (el instalador la hace) y mantén la cámara con una
 alimentación estable durante los pocos minutos que tarda.
 
 Necesitas un ordenador con Linux o WSL, con `squashfs-tools`, Python 3, OpenSSH y
-OpenSSL, y los archivos de v0.2.39 de la página de la versión.
+OpenSSL, y los archivos de v0.2.40 de la página de la versión.
 
 1. **Instala la plataforma.** Sigue los pasos 4 y 5 con el código fuente y los
-   archivos de v0.2.39 o, desde v0.2.21, actualiza como se explica en
+   archivos de v0.2.40 o, desde v0.2.21, actualiza como se explica en
    [Actualizar más adelante](#updating-later). A partir de ahora, la cámara no tiene
    vídeo hasta el último paso. La consola web sigue en `http://CAMERA_IP/`.
 2. **Haz una copia de seguridad de la cámara** ([paso 7](#7-back-up-the-camera-over-ssh)).

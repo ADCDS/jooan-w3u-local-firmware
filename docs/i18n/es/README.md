@@ -44,22 +44,27 @@ confianza.
   esa cámara las comprobaciones de instalación y desinstalación firmadas, migración, Wi-Fi,
   hora de red, SSH, enrutamiento, corte de corriente y recuperación en frío
   ([criterios de promoción en hardware](../../../tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Publicada: v0.2.39** (2026-11-07): el paquete de la plataforma y, por primera
-  vez, los binarios y scripts de la capa de medios. Cada propietario sigue generando la
-  imagen de su cámara a partir de la partición de aplicaciones de esa misma cámara, porque
-  contiene archivos del fabricante; por eso no se publica ninguna imagen.
-- **La cadena completa ya se ha ejecutado una vez, de principio a fin, en una cámara real.**
-  Una cámara de pruebas se devolvió al firmware de fábrica, se conectó a la Wi-Fi sin la app
-  del fabricante, se actualizó a la plataforma de forma inalámbrica (OTA) y se le grabó una imagen de medios
-  generada a partir de su propia partición; sirvió vídeo por RTSP y superó un reinicio en frío
-  con la pila de software abierta (consulta
+- **Última versión: v0.2.40** (2026-11-09): el paquete de la plataforma y los binarios y
+  scripts de la capa de medios. Cada propietario sigue generando la imagen de su cámara a
+  partir de la partición de aplicaciones de esa misma cámara, porque contiene archivos del
+  fabricante; por eso no se publica ninguna imagen. Sustituye a v0.2.39 e incorpora dos
+  correcciones de problemas detectados en el hardware: ahora se puede confirmar una red
+  Wi-Fi abierta (sin contraseña) a través de la plataforma, y una plataforma recién
+  instalada libera en `/opt` justo el espacio necesario para la primera instalación de
+  medios.
+- **La cadena completa ya se ha ejecutado en una cámara real, desde el firmware de fábrica
+  hasta la pila de software abierta.** Una cámara de pruebas se devolvió al firmware de
+  fábrica, se conectó a la Wi-Fi sin la app del fabricante, se actualizó a la plataforma de
+  forma inalámbrica (OTA), se le grabó una imagen de medios generada a partir de su propia
+  partición, sirvió vídeo por RTSP y funcionó con un NVR local; desde entonces se ha
+  reinstalado una segunda vez partiendo del firmware de fábrica, ya con esta versión (consulta
   [el informe de la prueba de ida y vuelta](../../../docs/reports/hardware-roundtrip-20261108.md) y
-  [La capa de medios](./INSTALL.md#the-media-layer)). Solo se ha ejecutado una vez, así
-  que tómalo como una versión preliminar: guarda la copia de seguridad completa que hace el
-  instalador y mantén la cámara alimentada mientras se graba la memoria flash.
-- **v0.2.21** (2026-10-16, solo plataforma) sigue publicada. Es la última versión
-  instalada en una cámara de fábrica. Con ella, el vídeo sigue procediendo del programa
-  del fabricante, que se ejecuta confinado.
+  [La capa de medios](./INSTALL.md#the-media-layer)). Sigue siendo una versión preliminar:
+  guarda la copia de seguridad completa que hace el instalador y mantén la cámara alimentada
+  mientras se graba la memoria flash.
+- **v0.2.21** (2026-10-16, solo plataforma) sigue publicada. Con ella, el vídeo sigue
+  procediendo del programa del fabricante, que se ejecuta confinado. Es preferible usar
+  v0.2.40.
 
 ## Alcance exacto del hardware
 
@@ -82,7 +87,7 @@ nada.
 
 ## Qué funciona y qué no
 
-Con la 0.2.39 y su capa de medios:
+Con la 0.2.40 y su capa de medios:
 
 - **Funciona:** RTSP para las dos lentes (1920×1080 y 1024×576 a 15 fps, H.264);
   pan/tilt ONVIF y 16 presets con nombre para Frigate; calibración del pan/tilt (homing) en

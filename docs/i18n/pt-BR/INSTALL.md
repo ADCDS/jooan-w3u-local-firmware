@@ -9,24 +9,23 @@ próprias versões devem consultar [Compilação e publicação](../../../docs/B
 <a id="read-this-first"></a>
 ## Leia isto primeiro
 
-Até 2026-11-07, duas versões foram publicadas no
+Até 2026-11-09, estas versões foram publicadas no
 [GitHub Releases](https://github.com/ADCDS/jooan-w3u-local-firmware/releases):
 
-- **v0.2.21** (2026-10-16) é a versão descrita passo a passo neste guia e a última
-  já instalada em uma câmera com firmware original. Ela é instalada por Wi-Fi, sem
-  hardware adicional. Você passa a ter um console web local, SSH, vídeo RTSP das duas
-  lentes, além de pan/tilt e presets via ONVIF para um NVR como o Frigate, e a
-  câmera deixa de ter acesso à nuvem da JOOAN. O vídeo ainda vem do programa de
-  câmera do fabricante, que continua rodando sob confinamento.
-- **v0.2.39** (2026-11-07) acrescenta o daemon de mídia aberto em
-  [`media/`](../../../media/) e é o que o restante deste repositório descreve.
-  **Nenhuma câmera passou ainda do firmware original para a v0.2.39 seguindo
-  estas instruções.** Leia [A camada de mídia](#the-media-layer), inclusive o
+- **v0.2.21** (2026-10-16) é a versão que os passos numerados deste guia descrevem.
+  Ela é instalada por Wi-Fi, sem hardware adicional. Você passa a ter um console web
+  local, SSH, vídeo RTSP das duas lentes, além de pan/tilt e presets via ONVIF para um
+  NVR como o Frigate, e a câmera deixa de ter acesso à nuvem da JOOAN. O vídeo ainda
+  vem do programa de câmera do fabricante, que continua rodando sob confinamento.
+- **v0.2.40** (2026-11-09) é a versão mais recente. Ela acrescenta o daemon de mídia
+  aberto em [`media/`](../../../media/) e é o que o restante deste repositório descreve.
+  Uma câmera já passou duas vezes do firmware original para a v0.2.40 e sua camada de
+  mídia seguindo estas instruções. Leia [A camada de mídia](#the-media-layer), inclusive o
   que foi e o que não foi testado, antes de escolhê-la.
 - **Cada uma só é instalada em uma câmera cujo firmware do fabricante seja igual ao da
   unidade verificada.** Antes de gravar qualquer coisa, o instalador compara os arquivos
   do fabricante com os da unidade verificada: a v0.2.21, a partição de aplicação inteira;
-  a v0.2.39, os doze arquivos de que depende. Se divergirem, ele recusa a instalação e
+  a v0.2.40, os doze arquivos de que depende. Se divergirem, ele recusa a instalação e
   deixa a câmera como estava. A camada de mídia exige ainda mais da sua partição de
   aplicação: cada arquivo que ela mantém precisa estar lá, e a câmera precisa ter os
   sensores CV2005. Ninguém sabe ainda se as câmeras vendidas hoje vêm com o mesmo
@@ -42,7 +41,7 @@ Até 2026-11-07, duas versões foram publicadas no
 | Atualizações posteriores e desinstalação | Por Wi-Fi, pela seção Firmware do console web | Nenhum |
 | Backup da flash da câmera | Por SSH, após a instalação ([passo 7](#7-back-up-the-camera-over-ssh)) | Nenhum |
 | Backup ou restauração no nível do chip | Com um gravador de flash SPI e uma garra SOIC-8, com a câmera aberta | Opcional para a instalação. É a única forma de recuperar uma câmera que não inicializa mais |
-| Camada de mídia (v0.2.39, ainda não executada a partir do firmware original) | Por Wi-Fi e SSH. Ela regrava a partição de aplicação da câmera | Nenhum para instalar. Se faltar energia durante a gravação, a única forma de recuperar a câmera é com um gravador de flash e um backup |
+| Camada de mídia (v0.2.40) | Por Wi-Fi e SSH. Ela regrava a partição de aplicação da câmera | Nenhum para instalar. Se faltar energia durante a gravação, a única forma de recuperar a câmera é com um gravador de flash e um backup |
 
 **Para instalar a v0.2.21, você não precisa de cartão microSD, cabo USB, adaptador
 serial nem gravador de flash, e também não precisa abrir a câmera.** O cabo
@@ -318,7 +317,7 @@ Com a v0.2.21:
 A documentação da v0.2.21 descreve esses recursos. Consulte-a na tag correspondente:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 e [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Os documentos no `main` descrevem a 0.2.39.
+Os documentos no `main` descrevem a 0.2.40.
 
 <a id="updating-later"></a>
 ## Atualizações posteriores
@@ -383,12 +382,13 @@ A partir da 0.2.22, vídeo, ONVIF e pan/tilt vêm do daemon de mídia aberto
 nativa, o padrão desde a 0.2.23, o programa do fabricante nunca é iniciado. Essa é a
 configuração que o restante deste repositório descreve.
 
-**Todo esse processo já foi executado uma vez, de ponta a ponta, em uma câmera real.**
+**Todo esse processo, do firmware original à pilha aberta, já foi executado duas vezes
+em uma câmera real.**
 Uma câmera de teste foi restaurada ao firmware original genuíno, configurada no Wi-Fi
 sem o aplicativo do fabricante, atualizada para a plataforma via OTA e, por fim, teve
 gravada na flash uma imagem de mídia gerada a partir da sua própria partição. Ela
 transmitiu vídeo por RTSP e, após um desligamento completo da energia, voltou rodando a
-pilha aberta. O que o teste verificou, e onde a evidência ainda é escassa:
+pilha aberta. O que o primeiro teste verificou, e onde a evidência ainda é escassa:
 
 | Etapa | Verificado |
 |---|---|
@@ -402,7 +402,8 @@ pilha aberta. O que o teste verificou, e onde a evidência ainda é escassa:
 | Sobrevive à reinicialização | Após desligar e religar a energia por completo, a câmera voltou com a imagem de mídia aberta e transmitiu RTSP, sem reverter para o firmware original |
 | Instalação da 0.2.39 a partir do firmware original | Feita pelo mesmo atualizador durante esse teste |
 
-Dois problemas menores encontrados nesse teste já foram corrigidos:
+Dois problemas menores encontrados nesse teste foram corrigidos na v0.2.40, e depois todo
+o processo foi executado uma segunda vez a partir do firmware original, com essa versão:
 
 - Uma rede Wi-Fi **aberta** (sem senha) agora pode ser confirmada pela
   plataforma (a conexão usa `key_mgmt NONE`); redes WPA2 funcionam como antes.
@@ -416,15 +417,16 @@ Se a gravação falhar na verificação por releitura, o script restaura a parti
 de uma cópia em RAM. **Se faltar energia durante a gravação, só um gravador de flash e um
 backup dessa partição podem trazer a câmera de volta** (veja
 [Recuperação](./RECOVERY.md#appfs-reflash-recovery)). A gravação já foi concluída em
-uma câmera real, mas só uma vez; antes, faça um backup completo de todas as partições
+uma câmera real algumas vezes ao longo dos dois ciclos completos, mas só nessa única
+unidade; antes, faça um backup completo de todas as partições
 (o instalador faz isso) e mantenha a câmera com alimentação estável durante os poucos
 minutos que o processo leva.
 
 Você precisa de um computador com Linux ou WSL, com `squashfs-tools`, Python 3, OpenSSH
-e OpenSSL, e dos arquivos da v0.2.39 da página da versão.
+e OpenSSL, e dos arquivos da v0.2.40 da página da versão.
 
 1. **Instale a plataforma.** Siga os passos 4 e 5 com o código-fonte e os arquivos da
-   v0.2.39 ou, a partir da v0.2.21, atualize como em [Atualizações posteriores](#updating-later).
+   v0.2.40 ou, a partir da v0.2.21, atualize como em [Atualizações posteriores](#updating-later).
    A partir daqui, a câmera fica sem vídeo até o último passo. O console web continua em
    `http://CAMERA_IP/`.
 2. **Faça backup da câmera** ([passo 7](#7-back-up-the-camera-over-ssh)).
