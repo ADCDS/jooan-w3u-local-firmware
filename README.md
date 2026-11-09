@@ -1,6 +1,16 @@
 # JOOAN W3-U local firmware
 
 <p align="center">
+  <sub><b>English</b> ·
+  <a href="docs/i18n/pt-BR/README.md">Português do Brasil</a> ·
+  <a href="docs/i18n/zh-CN/README.md">简体中文</a> ·
+  <a href="docs/i18n/ru/README.md">Русский</a> ·
+  <a href="docs/i18n/de/README.md">Deutsch</a> ·
+  <a href="docs/i18n/es/README.md">Español</a> ·
+  <a href="docs/i18n/fr/README.md">Français</a></sub>
+</p>
+
+<p align="center">
   <img src="docs/images/w3u-camera.jpg" width="320"
        alt="The JOOAN W3-U camera held in a hand: two lenses stacked in one white pan/tilt housing, two Wi-Fi antennas, and an Ethernet pigtail">
   <br>
@@ -191,6 +201,9 @@ so it stays private.
   [hardware integration](media/docs/hardware.md).
 - [Test plan](tests/TEST_PLAN.md), [Third-party components](docs/THIRD_PARTY.md),
   [Security policy](SECURITY.md).
+- [Translations](docs/i18n/): README, Installation and Recovery in Português do
+  Brasil, 简体中文, Русский, Deutsch, Español and Français. English is
+  authoritative.
 
 ## License
 
