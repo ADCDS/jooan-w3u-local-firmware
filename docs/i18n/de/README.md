@@ -48,15 +48,15 @@ Vertrauensgrenze.
   und Deinstallation, Migration, Wi-Fi, Netzwerkzeit, SSH, Routing, Stromausfall
   und Wiederherstellung nach einem Kaltstart bestanden sind
   ([Hardware-Freigabekriterien](../../../tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Neuestes Release: v0.2.40** (2026-11-09): das Plattformpaket sowie die
-  Binärdateien und Skripte der Medienschicht. Das Image für die Kamera
-  erstellt weiterhin jeder Besitzer selbst aus der App-Partition genau dieser
-  Kamera, da die Partition Dateien des Herstellers enthält; deshalb wird kein
-  Image veröffentlicht. Dieses Release ersetzt v0.2.39 und enthält zwei
-  Korrekturen für Mängel, die auf der Hardware aufgefallen sind: Ein offenes
-  Wi-Fi-Netzwerk (ohne Passwort) lässt sich jetzt über die Plattform übernehmen,
-  und eine frisch installierte Plattform gibt in `/opt` gerade genug Platz für
-  die erste Medieninstallation frei.
+- **Neuestes Release: v0.2.41** (2026-11-26): das Plattformpaket sowie die
+  gegenüber v0.2.40 unveränderten Binärdateien und Skripte der Medienschicht.
+  Das Image für die Kamera erstellt weiterhin jeder Besitzer selbst aus der
+  App-Partition genau dieser Kamera, da die Partition Dateien des Herstellers
+  enthält; deshalb wird kein Image veröffentlicht. Dieses Release ersetzt
+  v0.2.40: Die Plattform liest nicht mehr die Befehlszeilen anderer Prozesse,
+  was es einem einzigen im Kernel hängenden Task erlaubt hatte, den Supervisor
+  und jeden Neustart eine Woche lang zu blockieren (siehe
+  [Ein Neustart, der nicht stattfindet](../../../docs/RECOVERY.md#a-restart-that-does-not-happen)).
 - **Die gesamte Kette ist jetzt auf einer echten Kamera von der Werksfirmware
   bis zum offenen Software-Stack durchgelaufen.** Eine Testkamera wurde auf die
   Werksfirmware zurückgesetzt, ohne Hersteller-App ins Wi-Fi-Netzwerk
@@ -72,7 +72,7 @@ Vertrauensgrenze.
   nicht vom Strom trennen.
 - **v0.2.21** (2026-10-16, nur Plattform) bleibt veröffentlicht. Damit stammt
   das Video weiterhin vom Programm des Herstellers, das abgeschottet läuft.
-  Vorzuziehen ist v0.2.40.
+  Vorzuziehen ist v0.2.41.
 
 ## Exakte Zielhardware
 
@@ -96,7 +96,7 @@ unbedingt [Kompatibilität](../../../docs/COMPATIBILITY.md) lesen.
 
 ## Was funktioniert und was nicht
 
-Mit 0.2.40 und der zugehörigen Medienschicht:
+Mit 0.2.41 und der zugehörigen Medienschicht:
 
 - **Funktioniert:** RTSP für beide Objektive (1920×1080 und 1024×576 bei 15 fps,
   H.264); Schwenken/Neigen per ONVIF und 16 benannte Presets für Frigate;

@@ -20,9 +20,11 @@ plutôt [Compilation et publication](../../../docs/BUILDING.md).
   Frigate, et la caméra ne peut plus joindre le cloud JOOAN. La vidéo provient
   toujours du programme caméra du fabricant, qui continue de tourner en mode
   confiné.
-- **v0.2.40** (2026-11-09) est la dernière version en date. Elle ajoute le
-  démon média ouvert de [`media/`](../../../media/), et c’est elle que décrit
-  le reste de ce dépôt. Une caméra a désormais été amenée de son firmware
+- **v0.2.41** (2026-11-26) est la dernière version en date, et c’est elle que
+  décrit le reste de ce dépôt. Elle ne modifie que la plateforme (voir
+  [Un redémarrage qui n’a pas lieu](../../../docs/RECOVERY.md#a-restart-that-does-not-happen)) ;
+  sa couche média est celle de la v0.2.40, qui a ajouté le démon média ouvert
+  de [`media/`](../../../media/). Une caméra a désormais été amenée de son firmware
   d’origine à la v0.2.40 et à sa couche média en suivant ces instructions, et
   ce à deux reprises. Avant de la choisir, lisez
   [La couche média](#the-media-layer), y compris ce qui a été testé et ce qui
@@ -31,12 +33,12 @@ plutôt [Compilation et publication](../../../docs/BUILDING.md).
   identique à celui de l’appareil vérifié.** Avant d’écrire quoi que ce soit,
   l’installateur compare les fichiers du fabricant à ceux de l’appareil
   vérifié : toute la partition applicative pour la v0.2.21, et les douze
-  fichiers dont elle dépend pour la v0.2.40. S’ils diffèrent, il refuse de
-  poursuivre et laisse la caméra en l’état. La couche média exige ensuite
-  davantage de votre partition applicative : chaque fichier qu’elle conserve
-  doit y être présent, et la caméra doit être équipée des capteurs CV2005.
-  Personne ne sait encore si les caméras vendues aujourd’hui sont livrées avec
-  le même firmware du fabricant.
+  fichiers dont elles dépendent pour la v0.2.40 et les versions suivantes.
+  S’ils diffèrent, il refuse de poursuivre et laisse la caméra en l’état. La
+  couche média exige ensuite davantage de votre partition applicative : chaque
+  fichier qu’elle conserve doit y être présent, et la caméra doit être équipée
+  des capteurs CV2005. Personne ne sait encore si les caméras vendues
+  aujourd’hui sont livrées avec le même firmware du fabricant.
 - Aucune version n’est encore « prise en charge ». Toutes les versions publiées
   jusqu’ici sont des préversions techniques, testées sur une seule caméra.
 
@@ -354,7 +356,7 @@ La documentation de la v0.2.21 décrit ces fonctionnalités. Consultez-la au
 niveau du tag de cette version :
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 et [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Les documents de la branche `main` décrivent la 0.2.40.
+Les documents de la branche `main` décrivent la 0.2.41.
 
 <a id="updating-later"></a>
 ## Mettre à jour par la suite
@@ -478,11 +480,11 @@ charge) et maintenez la caméra sur une alimentation stable pendant les quelques
 minutes que dure l’opération.
 
 Il vous faut un ordinateur sous Linux ou WSL, équipé de `squashfs-tools`,
-Python 3, OpenSSH et OpenSSL, ainsi que les fichiers de la v0.2.40 disponibles
+Python 3, OpenSSH et OpenSSL, ainsi que les fichiers de la v0.2.41 disponibles
 sur la page de la version.
 
 1. **Installez la plateforme.** Suivez les étapes 4 et 5 avec les sources et
-   les fichiers de la v0.2.40 ou, depuis la v0.2.21, effectuez la mise à jour
+   les fichiers de la v0.2.41 ou, depuis la v0.2.21, effectuez la mise à jour
    comme décrit dans [Mettre à jour par la suite](#updating-later). La caméra
    n’a alors plus de vidéo jusqu’à la dernière étape. La console web reste
    accessible à l’adresse `http://CAMERA_IP/`.

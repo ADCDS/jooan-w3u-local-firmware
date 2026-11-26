@@ -21,9 +21,11 @@ folgende Releases bereit:
   Frigate, und die Kamera kann die JOOAN-Cloud nicht mehr erreichen. Das Video
   stammt weiterhin vom Kameraprogramm des Herstellers, das abgeschottet
   weiterläuft.
-- **v0.2.40** (2026-11-09) ist das neueste Release. Es ergänzt den offenen
-  Medien-Daemon in [`media/`](../../../media/) und ist der Stand, den der Rest
-  dieses Repositorys beschreibt. Inzwischen wurde eine Kamera mit dieser
+- **v0.2.41** (2026-11-26) ist das neueste Release und der Stand, den der Rest
+  dieses Repositorys beschreibt. Es ändert nur die Plattform (siehe
+  [Ein Neustart, der nicht stattfindet](../../../docs/RECOVERY.md#a-restart-that-does-not-happen));
+  seine Medienschicht ist die von v0.2.40, das den offenen Medien-Daemon in
+  [`media/`](../../../media/) ergänzt hat. Inzwischen wurde eine Kamera mit dieser
   Anleitung von der Werksfirmware auf v0.2.40 samt der zugehörigen
   Medienschicht gebracht, und zwar zweimal. Bevor Sie sich dafür entscheiden,
   lesen Sie den Abschnitt [Die Medienschicht](#the-media-layer), einschließlich
@@ -32,13 +34,13 @@ folgende Releases bereit:
   deren Herstellerfirmware mit der des verifizierten Geräts übereinstimmt.**
   Bevor das Installationsprogramm irgendetwas schreibt, vergleicht es die
   Dateien des Herstellers mit denen des verifizierten Geräts: bei v0.2.21 die
-  gesamte Anwendungspartition, bei v0.2.40 die zwölf Dateien, von denen dieses
-  Release abhängt. Weichen sie ab, verweigert es die Installation und lässt die
-  Kamera unverändert. Die Medienschicht stellt anschließend höhere Anforderungen
-  an Ihre Anwendungspartition: Jede Datei, die sie beibehält, muss vorhanden
-  sein, und die Kamera muss mit den Sensoren vom Typ CV2005 ausgestattet sein.
-  Noch weiß niemand, ob heute verkaufte Kameras mit derselben
-  Herstellerfirmware ausgeliefert werden.
+  gesamte Anwendungspartition, bei v0.2.40 und späteren Releases die zwölf
+  Dateien, von denen das jeweilige Release abhängt. Weichen sie ab, verweigert
+  es die Installation und lässt die Kamera unverändert. Die Medienschicht stellt
+  anschließend höhere Anforderungen an Ihre Anwendungspartition: Jede Datei, die
+  sie beibehält, muss vorhanden sein, und die Kamera muss mit den Sensoren vom
+  Typ CV2005 ausgestattet sein. Noch weiß niemand, ob heute verkaufte Kameras
+  mit derselben Herstellerfirmware ausgeliefert werden.
 - Noch gilt kein Release als „unterstützt“. Jedes bisherige Release ist eine
   technische Vorabversion, die an einer einzigen Kamera getestet wurde.
 
@@ -356,7 +358,7 @@ Diese Funktionen beschreibt die Dokumentation von v0.2.21. Lesen Sie sie in der
 Fassung dieses Tags:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 und [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Die Dokumente auf `main` beschreiben 0.2.40.
+Die Dokumente auf `main` beschreiben 0.2.41.
 
 <a id="updating-later"></a>
 ## Spätere Updates
@@ -481,11 +483,11 @@ die Kamera während der wenigen Minuten, die der Vorgang dauert, durchgehend
 stabil mit Strom versorgt wird.
 
 Sie benötigen einen Computer mit Linux oder WSL, auf dem `squashfs-tools`,
-Python 3, OpenSSH und OpenSSL installiert sind, sowie die Dateien von v0.2.40
+Python 3, OpenSSH und OpenSSL installiert sind, sowie die Dateien von v0.2.41
 von der Release-Seite.
 
 1. **Die Plattform installieren.** Führen Sie die Schritte 4 und 5 mit dem
-   Quellcode und den Dateien von v0.2.40 aus, oder aktualisieren Sie ausgehend
+   Quellcode und den Dateien von v0.2.41 aus, oder aktualisieren Sie ausgehend
    von v0.2.21 wie unter [Spätere Updates](#updating-later) beschrieben. Die
    Kamera hat nun bis zum letzten Schritt kein Video. Die Webkonsole bleibt
    unter `http://CAMERA_IP/` erreichbar.

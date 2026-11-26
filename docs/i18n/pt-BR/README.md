@@ -44,14 +44,14 @@ a fronteira de confiança.
   de instalação e desinstalação assinadas, migração, Wi-Fi, hora de rede, SSH,
   roteamento, queda de energia e recuperação a frio forem aprovadas nessa câmera
   ([critérios de promoção em hardware](../../../tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Mais recente: v0.2.40** (2026-11-09): o pacote da plataforma e
-  os binários e scripts da camada de mídia. Cada proprietário ainda gera a imagem
-  para a câmera a partir da partição de aplicação dessa mesma câmera, porque ela
-  contém arquivos do fabricante; por isso, nenhuma imagem é publicada. Esta versão
-  substitui a v0.2.39 e incorpora duas correções de problemas encontrados no hardware:
-  uma rede Wi-Fi aberta (sem senha) agora pode ser confirmada pela plataforma, e uma
-  plataforma recém-instalada libera apenas o espaço necessário em `/opt` para a primeira
-  instalação de mídia.
+- **Mais recente: v0.2.41** (2026-11-26): o pacote da plataforma e os binários e
+  scripts da camada de mídia, estes sem alterações desde a v0.2.40. Cada proprietário
+  ainda gera a imagem para a câmera a partir da partição de aplicação dessa mesma câmera,
+  porque ela contém arquivos do fabricante; por isso, nenhuma imagem é publicada. Esta
+  versão substitui a v0.2.40: a plataforma não lê mais a linha de comando de outros
+  processos, o que permitiu que uma única tarefa travada no kernel paralisasse o
+  supervisor e todas as reinicializações durante uma semana (veja
+  [Uma reinicialização que não acontece](../../../docs/RECOVERY.md#a-restart-that-does-not-happen)).
 - **Todo o processo, do firmware original à pilha aberta, já foi executado em uma câmera real.**
   Uma câmera de teste foi restaurada ao firmware original, configurada no Wi-Fi sem o
   aplicativo do fabricante, atualizada para a plataforma via OTA e teve gravada na flash
@@ -62,7 +62,7 @@ a fronteira de confiança.
   [A camada de mídia](./INSTALL.md#the-media-layer)). Ainda é um pré-lançamento: faça o
   backup completo que o instalador gera e mantenha a câmera ligada durante a gravação.
 - **v0.2.21** (2026-10-16, apenas a plataforma) continua publicada. Com ela, o vídeo
-  ainda vem do programa do fabricante, executado sob confinamento. Prefira a v0.2.40.
+  ainda vem do programa do fabricante, executado sob confinamento. Prefira a v0.2.41.
 
 ## Escopo exato de hardware
 
@@ -85,7 +85,7 @@ antes de instalar qualquer coisa.
 
 ## O que funciona e o que não funciona
 
-Com a versão 0.2.40 e sua camada de mídia:
+Com a versão 0.2.41 e sua camada de mídia:
 
 - **Funciona:** RTSP para as duas lentes (1920×1080 e 1024×576 a 15 fps, H.264); pan/tilt
   ONVIF e 16 presets com nome para o Frigate; retorno à posição inicial a cada inicialização;

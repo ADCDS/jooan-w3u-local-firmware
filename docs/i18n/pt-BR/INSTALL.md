@@ -17,18 +17,21 @@ Até 2026-11-09, estas versões foram publicadas no
   local, SSH, vídeo RTSP das duas lentes, além de pan/tilt e presets via ONVIF para um
   NVR como o Frigate, e a câmera deixa de ter acesso à nuvem da JOOAN. O vídeo ainda
   vem do programa de câmera do fabricante, que continua rodando sob confinamento.
-- **v0.2.40** (2026-11-09) é a versão mais recente. Ela acrescenta o daemon de mídia
-  aberto em [`media/`](../../../media/) e é o que o restante deste repositório descreve.
+- **v0.2.41** (2026-11-26) é a versão mais recente, e é o que o restante deste repositório
+  descreve. Ela altera apenas a plataforma (veja
+  [Uma reinicialização que não acontece](../../../docs/RECOVERY.md#a-restart-that-does-not-happen));
+  sua camada de mídia é a da v0.2.40, que acrescentou o daemon de mídia aberto em
+  [`media/`](../../../media/).
   Uma câmera já passou duas vezes do firmware original para a v0.2.40 e sua camada de
   mídia seguindo estas instruções. Leia [A camada de mídia](#the-media-layer), inclusive o
   que foi e o que não foi testado, antes de escolhê-la.
 - **Cada uma só é instalada em uma câmera cujo firmware do fabricante seja igual ao da
   unidade verificada.** Antes de gravar qualquer coisa, o instalador compara os arquivos
   do fabricante com os da unidade verificada: a v0.2.21, a partição de aplicação inteira;
-  a v0.2.40, os doze arquivos de que depende. Se divergirem, ele recusa a instalação e
-  deixa a câmera como estava. A camada de mídia exige ainda mais da sua partição de
-  aplicação: cada arquivo que ela mantém precisa estar lá, e a câmera precisa ter os
-  sensores CV2005. Ninguém sabe ainda se as câmeras vendidas hoje vêm com o mesmo
+  a v0.2.40 e as posteriores, os doze arquivos de que dependem. Se divergirem, ele recusa
+  a instalação e deixa a câmera como estava. A camada de mídia exige ainda mais da sua
+  partição de aplicação: cada arquivo que ela mantém precisa estar lá, e a câmera precisa
+  ter os sensores CV2005. Ninguém sabe ainda se as câmeras vendidas hoje vêm com o mesmo
   firmware do fabricante.
 - Nenhuma versão tem "suporte" ainda. Todas as versões até agora são
   pré-lançamentos de engenharia, testados em uma única câmera.
@@ -316,7 +319,7 @@ Com a v0.2.21:
 A documentação da v0.2.21 descreve esses recursos. Consulte-a na tag correspondente:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 e [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Os documentos no `main` descrevem a 0.2.40.
+Os documentos no `main` descrevem a 0.2.41.
 
 <a id="updating-later"></a>
 ## Atualizações posteriores
@@ -422,10 +425,10 @@ unidade; antes, faça um backup completo de todas as partições
 minutos que o processo leva.
 
 Você precisa de um computador com Linux ou WSL, com `squashfs-tools`, Python 3, OpenSSH
-e OpenSSL, e dos arquivos da v0.2.40 da página da versão.
+e OpenSSL, e dos arquivos da v0.2.41 da página da versão.
 
 1. **Instale a plataforma.** Siga os passos 4 e 5 com o código-fonte e os arquivos da
-   v0.2.40 ou, a partir da v0.2.21, atualize como em [Atualizações posteriores](#updating-later).
+   v0.2.41 ou, a partir da v0.2.21, atualize como em [Atualizações posteriores](#updating-later).
    A partir daqui, a câmera fica sem vídeo até o último passo. O console web continua em
    `http://CAMERA_IP/`.
 2. **Faça backup da câmera** ([passo 7](#7-back-up-the-camera-over-ssh)).

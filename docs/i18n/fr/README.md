@@ -49,16 +49,15 @@ la frontière de confiance.
   sur cette caméra : installation et désinstallation signées, migration,
   Wi-Fi, heure réseau, SSH, routage, coupure de courant et récupération à froid
   ([critères de promotion sur matériel](../../../tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Dernière version : v0.2.40** (2026-11-09) : le paquet de la plateforme
-  ainsi que les binaires et les scripts de la couche média. Chaque
-  propriétaire construit toujours lui-même l’image destinée à sa caméra à
-  partir de la partition applicative de cette même caméra, car celle-ci
+- **Dernière version : v0.2.41** (2026-11-26) : le paquet de la plateforme
+  ainsi que les binaires et les scripts de la couche média, inchangés depuis la
+  v0.2.40. Chaque propriétaire construit toujours lui-même l’image destinée à sa
+  caméra à partir de la partition applicative de cette même caméra, car celle-ci
   contient des fichiers du fabricant : aucune image n’est donc publiée.
-  Cette version remplace la v0.2.39 et intègre deux correctifs de défauts
-  relevés sur le matériel : un réseau Wi-Fi ouvert (sans mot de passe) peut
-  désormais être validé via la plateforme, et une plateforme fraîchement
-  installée libère juste assez de place dans `/opt` pour la première
-  installation de la couche média.
+  Cette version remplace la v0.2.40 : la plateforme ne lit plus la ligne de
+  commande des autres processus, ce qui a permis à une seule tâche bloquée dans
+  le noyau de paralyser le superviseur et tout redémarrage pendant une semaine
+  (voir [Un redémarrage qui n’a pas lieu](../../../docs/RECOVERY.md#a-restart-that-does-not-happen)).
 - **La chaîne complète a désormais été déroulée sur une vraie caméra, du firmware d’origine jusqu’à la pile logicielle ouverte.**
   Une caméra de test a été ramenée à son firmware d’origine, connectée au
   Wi-Fi sans l’application du fabricant, mise à jour sans fil (OTA) vers la
@@ -72,7 +71,7 @@ la frontière de confiance.
   gardez la caméra sous tension pendant le flashage.
 - **v0.2.21** (2026-10-16, plateforme seule) reste publiée. Avec elle, la vidéo
   provient toujours du programme du fabricant, exécuté en mode confiné.
-  Préférez la v0.2.40.
+  Préférez la v0.2.41.
 
 ## Périmètre matériel exact
 
@@ -96,7 +95,7 @@ du produit ni la forme du boîtier ne prouvent la compatibilité. Lisez
 
 ## Ce qui fonctionne et ce qui ne fonctionne pas
 
-Avec la version 0.2.40 et sa couche média :
+Avec la version 0.2.41 et sa couche média :
 
 - **Fonctionne :** RTSP pour les deux objectifs
   (1920×1080 et 1024×576 à 15 images/s, H.264) ; pilotage

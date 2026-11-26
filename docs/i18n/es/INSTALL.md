@@ -19,19 +19,23 @@ A fecha de 2026-11-09, estas son las versiones publicadas en
   ONVIF; además, la cámara deja de poder comunicarse con la nube de JOOAN. El vídeo
   sigue procediendo del programa de cámara del fabricante, que continúa
   ejecutándose confinado.
-- **v0.2.40** (2026-11-09) es la última versión. Añade el daemon de medios abierto
-  de [`media/`](../../../media/), y es la que describe el resto de este repositorio.
+- **v0.2.41** (2026-11-26) es la última versión, y es la que describe el resto de este
+  repositorio. Solo cambia la plataforma (consulta
+  [Un reinicio que no se produce](../../../docs/RECOVERY.md#a-restart-that-does-not-happen));
+  su capa de medios es la de v0.2.40, que añadió el daemon de medios abierto de
+  [`media/`](../../../media/).
   Ya se ha llevado dos veces una cámara del estado de fábrica a v0.2.40 y a su capa
   de medios siguiendo estas instrucciones. Antes de elegirla, consulta
   [La capa de medios](#the-media-layer), incluido lo que se ha probado y lo que no.
 - **Cada una solo se instala en una cámara cuyo firmware del fabricante coincida
   con el de la unidad verificada.** Antes de escribir nada, el instalador compara
   los archivos del fabricante con los de la unidad verificada: en v0.2.21, toda la
-  partición de aplicaciones; en v0.2.40, los doce archivos de los que depende. Si
-  difieren, se niega a continuar y deja la cámara tal como estaba. Además, la capa
-  de medios exige más a tu partición de aplicaciones: deben estar presentes todos
-  los archivos que conserva, y la cámara debe tener los sensores CV2005. Aún no se
-  sabe si las cámaras que se venden hoy traen el mismo firmware del fabricante.
+  partición de aplicaciones; en v0.2.40 y posteriores, los doce archivos de los que
+  dependen. Si difieren, se niega a continuar y deja la cámara tal como estaba.
+  Además, la capa de medios exige más a tu partición de aplicaciones: deben estar
+  presentes todos los archivos que conserva, y la cámara debe tener los sensores
+  CV2005. Aún no se sabe si las cámaras que se venden hoy traen el mismo firmware
+  del fabricante.
 - Ninguna versión tiene «soporte» todavía. Todas las publicadas hasta ahora son
   versiones preliminares de ingeniería, probadas en una sola cámara.
 
@@ -329,7 +333,7 @@ La documentación de v0.2.21 describe estas funciones. Léela en la etiqueta de 
 versión:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 y [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-Los documentos de `main` describen la 0.2.40.
+Los documentos de `main` describen la 0.2.41.
 
 <a id="updating-later"></a>
 ## Actualizar más adelante
@@ -442,10 +446,10 @@ completa de todas las particiones (el instalador la hace) y mantén la cámara c
 alimentación estable durante los pocos minutos que tarda.
 
 Necesitas un ordenador con Linux o WSL, con `squashfs-tools`, Python 3, OpenSSH y
-OpenSSL, y los archivos de v0.2.40 de la página de la versión.
+OpenSSL, y los archivos de v0.2.41 de la página de la versión.
 
 1. **Instala la plataforma.** Sigue los pasos 4 y 5 con el código fuente y los
-   archivos de v0.2.40 o, desde v0.2.21, actualiza como se explica en
+   archivos de v0.2.41 o, desde v0.2.21, actualiza como se explica en
    [Actualizar más adelante](#updating-later). A partir de ahora, la cámara no tiene
    vídeo hasta el último paso. La consola web sigue en `http://CAMERA_IP/`.
 2. **Haz una copia de seguridad de la cámara** ([paso 7](#7-back-up-the-camera-over-ssh)).
