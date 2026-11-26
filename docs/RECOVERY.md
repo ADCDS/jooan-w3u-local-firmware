@@ -255,6 +255,36 @@ Programmer-specific commands are intentionally not universalized here: clip
 wiring, controller voltage, and flash support differ. Follow the programmer and
 flash-vendor documentation. Never use 5 V on a 3.3 V SPI NOR.
 
+## A restart that does not happen
+
+The admin page's restart, the schedule, the network watchdog and `jl_reboot_asked` signal init
+directly (PID 1, `linuxrc`). If the boot has not ended 60 s later, they reboot without init
+(`reboot -f`). Up to 0.2.40 they ran BusyBox's plain `reboot`, which first reads every process's
+`/proc/<pid>/cmdline`. One task stuck in the kernel (state `D`) blocks that read for good, and the
+reboot with it. It blocks `ps`, `killall` and `pidof` the same way. On 2026-11-26 camera1 had such a
+task: `ssh-start.sh`, stuck since 2026-11-19, which until then also held the supervisor.
+
+To check, read the states from `/proc/*/stat`. That read does not block; `ps` does:
+
+```sh
+for s in /proc/[0-9]*/stat; do read -r l < "$s" || continue; set -- $l; [ "$3" = D ] && echo "$1 $2"; done
+```
+
+A stuck reader keeps its file open, so `ls -l /proc/<pid>/fd` on a stuck `ps` names the cmdline it
+waits on.
+
+To restart anyway, without `ps` or `reboot`:
+
+1. Run `jl_reboot_asked` (from `common.sh`). Even when its reboot hangs, it has already saved the
+   clock and written `reboot-requested`.
+2. Run `sync`.
+3. Run `kill -KILL "$(cat /tmp/jooanipc-open.pid)"`. The media daemon's armed watchdog resets the
+   board within 180 s, and the marker makes the next boot count the reset as asked for.
+
+On 2026-11-26 the boot after such a reset was reset once more, about 120 s in, for an unknown reason.
+The boot after it qualified. Do not load the camera until `/tmp/jipc-native.log` says
+`native boot qualified`.
+
 ## After recovery
 
 Assume any credential or private key present during a security failure may be

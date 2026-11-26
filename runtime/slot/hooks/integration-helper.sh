@@ -195,7 +195,14 @@ reboot_asked() {
     boot_now=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || boot_now=
     [ ! -d "$media_root" ] || printf '%s\n' "$boot_now" 2>/dev/null > "$media_root/reboot-requested" || :
     sync
-    reboot
+    # Not plain reboot, which first reads every process's cmdline to find init and waits for
+    # good behind a task stuck in the kernel: signal BusyBox init (PID 1, linuxrc) as reboot
+    # would, and reboot without init if its shutdown has not ended this boot in 60 s.
+    if [ "$(cat "${JL_PROC:-/proc}/1/comm" 2>/dev/null)" = linuxrc ]; then
+        (trap '' HUP TERM; sleep 60; sync; reboot -f) </dev/null >/dev/null 2>&1 &
+        kill -TERM 1 && return 0
+    fi
+    reboot # target-applets: allow reboot (not the camera's init)
 }
 # Refuse a restart while anything must not be interrupted: maintenance (an
 # update or a media install holds the state lock, and a platform update does not

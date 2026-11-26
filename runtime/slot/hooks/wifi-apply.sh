@@ -39,7 +39,12 @@ if [ -n "$address$prefix$gateway" ]; then
 fi
 
 apply_address() {
-    killall udhcpc 2>/dev/null || :
+    # By /proc/<pid>/comm: killall reads every cmdline, and waits for good behind a task
+    # stuck in the kernel (the controller's jl_kill_named says more).
+    for dir in "${JL_PROC:-/proc}"/[0-9]*; do
+        IFS= read -r comm 2>/dev/null < "$dir/comm" || continue
+        [ "$comm" != udhcpc ] || kill -TERM "${dir##*/}" 2>/dev/null || :
+    done
     if [ -n "$address" ]; then
         ifconfig wlan0 "$address" netmask "$netmask" up
         # As after DHCP: the supervisor records this gateway and removes the route.

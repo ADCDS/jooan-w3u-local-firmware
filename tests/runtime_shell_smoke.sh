@@ -214,6 +214,47 @@ JL_T=1800; jl_net_watchdog; [ ! -f "$JL_STATE/netdog-reboots" ]
 unset -f jl_uptime arping dmesg reboot sync jl_record_crash
 rm -f "$fixture/arp-ok" "$JL_RUN/default-gateway"
 
+# Nothing may read another process's /proc/<pid>/cmdline: on the camera that read waits
+# for good behind one task stuck in the kernel (2026-11-19, ssh-start.sh). A FIFO stands in
+# for such a cmdline, since reading it blocks, beside a real process to stop by name.
+JL_PROC=$fixture/proc
+sleep 300 & jl_t_victim=$!
+mkdir -p "$JL_PROC/$jl_t_victim" "$JL_PROC/1"
+printf 'udhcpc\n' > "$JL_PROC/$jl_t_victim/comm"
+mkfifo "$JL_PROC/$jl_t_victim/cmdline"
+printf '%s (udhcpc) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 4242 1000 77\n' "$jl_t_victim" \
+    > "$JL_PROC/$jl_t_victim/stat"
+printf 'systemd\n' > "$JL_PROC/1/comm"
+printf '1 (a (b) c) S 0 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 1000 5\n' > "$JL_PROC/1/stat"
+jl_list_tasks > "$fixture/tasks"
+grep -qx "$jl_t_victim S 1 77 udhcpc" "$fixture/tasks"
+grep -qx '1 S 0 5 a (b) c' "$fixture/tasks"
+jl_task_running "$jl_t_victim" && jl_task_running "$jl_t_victim" 4242
+! jl_task_running "$jl_t_victim" 4243
+[ "$(jl_task_start "$jl_t_victim")" = 4242 ]
+! jl_task_running '' && ! jl_task_running 99999999
+sed 's/ S 1 / Z 1 /' "$JL_PROC/$jl_t_victim/stat" > "$fixture/zombie-stat"
+cp "$fixture/zombie-stat" "$JL_PROC/$jl_t_victim/stat"
+! jl_task_running "$jl_t_victim"
+jl_kill_named telnetd udhcpc goahead
+jl_t_rc=0; wait "$jl_t_victim" 2>/dev/null || jl_t_rc=$?
+[ "$jl_t_rc" = 143 ]                          # stopped with SIGTERM, by its comm alone
+# The camera's init (BusyBox, PID 1 named linuxrc) gets SIGTERM, which is reboot to it,
+# with reboot -f in reserve; on any other init, plain reboot as before.
+JL_REBOOT_LOG=$fixture/reboot-log; : > "$JL_REBOOT_LOG"
+kill() { printf 'kill %s\n' "$*" >> "$JL_REBOOT_LOG"; }
+reboot() { printf 'reboot %s\n' "$*" >> "$JL_REBOOT_LOG"; }
+sleep() { :; }
+sync() { :; }
+jl_reboot; wait
+[ "$(cat "$JL_REBOOT_LOG")" = 'reboot ' ]
+printf 'linuxrc\n' > "$JL_PROC/1/comm"; : > "$JL_REBOOT_LOG"
+jl_reboot; wait
+grep -qx 'kill -TERM 1' "$JL_REBOOT_LOG" && grep -qx 'reboot -f' "$JL_REBOOT_LOG"
+! grep -qx 'reboot ' "$JL_REBOOT_LOG"
+unset -f kill reboot sleep sync
+unset JL_PROC
+
 # Promotion/rollback cleanup is idempotent and retains exactly the selected slot.
 mkdir -p "$JL_ROOT/slots/A" "$JL_ROOT/slots/B"
 printf stable > "$JL_ROOT/slots/A/runtime.tar.gz"

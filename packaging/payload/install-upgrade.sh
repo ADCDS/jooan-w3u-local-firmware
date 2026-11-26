@@ -609,7 +609,12 @@ rm -f "$root/state/release-sequence.pending"
 sync
 [ "${JOOAN_FAIL_AFTER_STATE:-}" != release-sequence-published ] ||
     die 'injected failure after sequence publication'
-killall telnetd 2>/dev/null || :
+# By /proc/<pid>/comm: killall reads every cmdline, and waits for good behind a task
+# stuck in the kernel (the controller's jl_kill_named says more).
+for dir in "${JOOAN_PROC:-/proc}"/[0-9]*; do
+    IFS= read -r comm 2>/dev/null < "$dir/comm" || continue
+    case " telnetd " in *" $comm "*) kill -TERM "${dir##*/}" 2>/dev/null || : ;; esac
+done
 sync
 echo 'jooan-local signed install complete; rebooting through carrier'
 exit 0

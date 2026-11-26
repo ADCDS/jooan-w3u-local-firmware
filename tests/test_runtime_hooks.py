@@ -310,6 +310,8 @@ class RuntimeHookTests(unittest.TestCase):
             "WPA_COUNTER": str(root / "wpa.counter"),
             "WPA_PINGS": str(root / "wpa.pings"),
             "UDHCPC_LOG": str(root / "udhcpc.log"),
+            # wifi-apply.sh stops udhcpc by /proc/<pid>/comm: never scan the host's processes.
+            "JL_PROC": str(root / "no-proc"),
         }
         return environment, log
 

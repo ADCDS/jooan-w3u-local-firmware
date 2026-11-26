@@ -12,7 +12,12 @@ chmod 700 "$JL_RUN"
 "$JL_SLOT_DIR/hooks/entropy-ready.sh" || exit 1
 
 # The independent boot watcher also suppresses later OEM absolute-path starts.
-killall goahead 2>/dev/null || :
+# By /proc/<pid>/comm: killall reads every cmdline, and waits for good behind a task
+# stuck in the kernel (the controller's jl_kill_named says more).
+for jl_dir in "${JL_PROC:-/proc}"/[0-9]*; do
+    IFS= read -r jl_comm 2>/dev/null < "$jl_dir/comm" || continue
+    [ "$jl_comm" != goahead ] || kill -TERM "${jl_dir##*/}" 2>/dev/null || :
+done
 
 # The committed Wi-Fi network is deliberately NOT applied here. OEM boot only
 # starts wpa_supplicant about a minute after this runs, so the hook could

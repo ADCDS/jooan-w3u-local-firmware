@@ -353,23 +353,45 @@ sed -n 's/.*"'"$key"'":"\([^"]*\)".*/1 x \1/p' "$5"
         for tool in ("ifconfig", "route", "killall", "udhcpc", "arping", "wpa_cli", "reboot"):
             self.assertEqual(shutil.which(tool, path=path), str(self.bin / tool), "not faked: refusing to run")
         return self.env | {"PATH": path, "JOOAN_PATH": path, "NET_LOG": str(log), "FAKE_ARPING": "",
-                           "JOAN_JSON_TOOL": str(base / "json_tool")}
+                           "JOAN_JSON_TOOL": str(base / "json_tool"),
+                           "JL_PROC": str(base / "no-proc")}  # processes are found in /proc: never the host's
 
     def test_static_address_hook(self) -> None:
         env, base = self.address_fakes(), Path(self.temporary.name)
         hook = REPOSITORY / "runtime/slot/hooks/wifi-apply.sh"
         log = Path(env["NET_LOG"])
+        stopped = []
         def run(fields: str):
-            log.write_text("")
-            (base / "c.json").write_text('{"ssid":"Home","password":"secret-pass"' + fields + "}\n")
-            result = subprocess.run([str(hook), str(base / "c.json")], env=env | {"JOAN_WIFI_KEEP_LINK": "1"},
-                                    text=True, capture_output=True)
+            # The running DHCP client is found by /proc/<pid>/comm alone: a stand-in /proc
+            # names a real child "udhcpc" and gives it a FIFO for a cmdline, which blocks any
+            # reader, as a task stuck in the kernel does on the camera.
+            proc = base / "proc"
+            shutil.rmtree(proc, ignore_errors=True)
+            victim = subprocess.Popen(["sleep", "60"])
+            try:
+                (proc / str(victim.pid)).mkdir(parents=True)
+                (proc / str(victim.pid) / "comm").write_text("udhcpc\n")
+                os.mkfifo(proc / str(victim.pid) / "cmdline")
+                log.write_text("")
+                (base / "c.json").write_text('{"ssid":"Home","password":"secret-pass"' + fields + "}\n")
+                result = subprocess.run([str(hook), str(base / "c.json")],
+                                        env=env | {"JOAN_WIFI_KEEP_LINK": "1", "JL_PROC": str(proc)},
+                                        text=True, capture_output=True, timeout=30)
+                try:
+                    stopped.append(victim.wait(timeout=5) == -15)
+                except subprocess.TimeoutExpired:
+                    stopped.append(False)
+            finally:
+                victim.kill()
+                victim.wait()
+                shutil.rmtree(proc, ignore_errors=True)
             return result, log.read_text()
         result, seen = run(',"address":"192.168.20.50","prefix":"24","gateway":"192.168.20.1"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ifconfig wlan0 192.168.20.50 netmask 255.255.255.0 up", seen)
         self.assertIn("route add default gw 192.168.20.1 dev wlan0", seen)
-        self.assertIn("killall udhcpc", seen)
+        self.assertEqual(stopped[-1], True, "the DHCP client was not stopped by SIGTERM")
+        self.assertNotIn("killall", seen)
         self.assertNotIn("udhcpc -a", seen)
         result, seen = run(',"address":"10.1.2.3","prefix":"20","gateway":"10.1.0.1"')
         self.assertIn("netmask 255.255.240.0", seen, result.stderr)

@@ -57,7 +57,17 @@ if mkdir "$JL_SPEAKER_RUN/speaker-hook.lock" 2>/dev/null; then
     ) </dev/null >/tmp/jooan-speaker-mute.log 2>&1 &
 fi
 
-killall telnetd goahead 2>/dev/null || :
+# By comm, not killall, whose cmdline reads can block for good (see jl_kill_named).
+jl_rc_kill_named() {
+    for jl_rc_d in /proc/[0-9]*; do
+        IFS= read -r jl_rc_c 2>/dev/null < "$jl_rc_d/comm" || continue
+        for jl_rc_n in "$@"; do
+            [ "$jl_rc_c" != "$jl_rc_n" ] || kill -TERM "${jl_rc_d##*/}" 2>/dev/null || :
+        done
+    done
+    return 0
+}
+jl_rc_kill_named telnetd goahead
 jooanipc() { return 127; }
 jl_load_controller() {
     JL_ROOT=/opt/custom/jooan-local
@@ -116,7 +126,7 @@ else
     # Even an invalid controller must not revive unauthenticated OEM management.
     (
         while :; do
-            killall telnetd goahead 2>/dev/null || :
+            jl_rc_kill_named telnetd goahead
             sleep 1
         done
     ) </dev/null >/dev/null 2>&1 &

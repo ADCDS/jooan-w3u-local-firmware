@@ -40,7 +40,12 @@ for record in "$run/dropbear.pid:dropbear" "$run/supervisor.pid:sh"; do
     [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$expected" ] || continue
     kill -TERM "$pid" 2>/dev/null || :
 done
-killall joan-daemon audio-router dropbear telnetd 2>/dev/null || :
+# By /proc/<pid>/comm: killall reads every cmdline, and waits for good behind a task
+# stuck in the kernel (the controller's jl_kill_named says more).
+for dir in "${JOOAN_PROC:-/proc}"/[0-9]*; do
+    IFS= read -r comm 2>/dev/null < "$dir/comm" || continue
+    case " joan-daemon audio-router dropbear telnetd " in *" $comm "*) kill -TERM "${dir##*/}" 2>/dev/null || : ;; esac
+done
 
 if [ -f "$hook" ] && grep -q '/opt/custom/jooan-local' "$hook"; then
     rm -f "$hook"

@@ -30,6 +30,58 @@ jl_lock() {
 }
 jl_unlock() { rm -rf "$JL_RUN/state.lock" 2>/dev/null || :; }
 
+# Never read another process's /proc/<pid>/cmdline. BusyBox killall, ps and plain
+# reboot do, for every process, and that read waits for good behind one task stuck in
+# the kernel: on a camera in service a hung ssh-start.sh (2026-11-19) left this supervisor,
+# the local network policy and the next reboot waiting on it for a week. /proc/<pid>/comm
+# and /proc/<pid>/stat need nothing such a task holds. JL_PROC is for tests.
+jl_kill_named() {
+    for jl_kn_dir in "${JL_PROC:-/proc}"/[0-9]*; do
+        IFS= read -r jl_kn_comm 2>/dev/null < "$jl_kn_dir/comm" || continue
+        for jl_kn_name in "$@"; do
+            [ "$jl_kn_comm" != "$jl_kn_name" ] || kill -TERM "${jl_kn_dir##*/}" 2>/dev/null || :
+        done
+    done
+    return 0
+}
+# Start time of a task (stat field 22), to tell it from a later task given the same PID.
+jl_task_start() {
+    IFS= read -r jl_ts_line 2>/dev/null < "${JL_PROC:-/proc}/$1/stat" || return 1
+    # shellcheck disable=SC2086 # split the fields after the name on purpose
+    set -- ${jl_ts_line##*) }
+    printf '%s\n' "${20:-}"
+}
+# A task that has not ended: PID and, if given, start time. A zombie has ended.
+jl_task_running() {
+    case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+    IFS= read -r jl_tr_line 2>/dev/null < "${JL_PROC:-/proc}/$1/stat" || return 1
+    # shellcheck disable=SC2086 # split the fields after the name on purpose
+    set -- "$1" "${2:-}" ${jl_tr_line##*) }
+    [ "$3" != Z ] && { [ -z "$2" ] || [ "$2" = "${22:-}" ]; }
+}
+# What ps would show, from /proc/<pid>/stat alone: pid, state, parent, resident pages, name.
+jl_list_tasks() {
+    for jl_lt_stat in "${JL_PROC:-/proc}"/[0-9]*/stat; do
+        IFS= read -r jl_lt_line 2>/dev/null < "$jl_lt_stat" || continue
+        jl_lt_name=${jl_lt_line#*(}; jl_lt_name=${jl_lt_name%)*}
+        # shellcheck disable=SC2086 # split the fields after the name on purpose
+        set -- ${jl_lt_line##*) }
+        printf '%s %s %s %s %s\n' "${jl_lt_line%% *}" "$1" "$2" "${22:-?}" "$jl_lt_name"
+    done
+}
+# Plain reboot looks init up by name first, through every cmdline. Signal init the way
+# reboot then would (SIGTERM is reboot to BusyBox init, PID 1 named linuxrc here). If
+# init's shutdown has not ended this boot in 60 s, reboot without it. Elsewhere, such as
+# a test host, keep plain reboot.
+jl_reboot() {
+    sync
+    if [ "$(cat "${JL_PROC:-/proc}/1/comm" 2>/dev/null)" = linuxrc ]; then
+        (trap '' HUP TERM; sleep 60; sync; reboot -f) </dev/null >/dev/null 2>&1 &
+        kill -TERM 1 && return 0
+    fi
+    reboot # target-applets: allow reboot (not the camera's init)
+}
+
 # The board has no RTC, so every boot starts near 2021 until a client sets the
 # clock -- which misdates SD recordings and the burned-in OSD. Persist a coarse
 # last-known-good time and restore it at boot. The clock is only ever moved
@@ -314,7 +366,7 @@ jl_local_network_policy() {
 }
 
 jl_enforce_local_policy() {
-    killall telnetd goahead 2>/dev/null || :
+    jl_kill_named telnetd goahead
     jl_local_network_policy
 }
 
@@ -508,7 +560,7 @@ jl_record_crash() {
     jl_crash_dir=/mnt/sd_card/jooan-local
     mkdir -p "$jl_crash_dir" || return 0
     [ "$(ls "$jl_crash_dir" | wc -l)" -lt 30 ] || return 0
-    { date; cat /proc/meminfo /proc/net/sockstat; ps; dmesg; } \
+    { date; cat /proc/meminfo /proc/net/sockstat; jl_list_tasks; dmesg; } \
         > "$jl_crash_dir/${1:-runtime}-$(date +%s).log" 2>&1
 }
 
@@ -576,8 +628,7 @@ jl_reboot_asked() {
     jl_ra_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || jl_ra_boot=
     # printf, not ":": a failed redirection on a special builtin would end the shell before the reboot.
     [ ! -d "$jl_ra_media" ] || printf '%s\n' "$jl_ra_boot" 2>/dev/null > "$jl_ra_media/reboot-requested" || :
-    sync
-    reboot
+    jl_reboot
 }
 
 # The SKW6316's own firmware can crash: the driver logs an assert ending in

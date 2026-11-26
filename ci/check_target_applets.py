@@ -31,6 +31,22 @@ MISSING = {
     "uniq": "sort -u, or awk '!seen[$0]++'",
 }
 
+# Applets the target has, which read every process's /proc/<pid>/cmdline. That read
+# waits for good behind one task stuck in the kernel, and the caller with it: on a
+# camera in service a hung ssh-start.sh (2026-11-19) held the supervisor, the network
+# policy loop and the next reboot for a week. Plain reboot (no -f) looks init up by
+# name through the same read. A line may opt out with "target-applets: allow <applet>"
+# in a comment, saying why.
+BLOCKING = {
+    "killall": "jl_kill_named, or a loop over /proc/[0-9]*/comm",
+    "ps": "jl_list_tasks (reads /proc/<pid>/stat only)",
+    "pgrep": "a loop over /proc/[0-9]*/comm",
+    "pkill": "a loop over /proc/[0-9]*/comm",
+}
+PLAIN_REBOOT = re.compile(
+    r"(?:^|[|;&(){}`]|\$\(|\|\||&&)\s*(?:\S*/)?(?:busybox\s+)?reboot(?![^\n;&|]*\s-[a-z]*f)(?=\s|$|;)"
+)
+
 # GNU flags the target's applets do not implement.
 MISSING_FLAGS = [
     (re.compile(r"\bfind\b[^\n|;&]*\s-type\b"), "find has no -type on this BusyBox"),
@@ -44,6 +60,8 @@ COMMAND_POSITION = r"(?:^|[|;&(){}`]|\$\(|\|\||&&)\s*"
 # Directories whose shell actually runs on the camera. media/scripts/ holds
 # the media daemon's boot, handoff and appfs-upgrade scripts.
 SHIPPED = ("runtime/", "packaging/payload/", "media/scripts/")
+# Shipped shell without a .sh name.
+SHIPPED_EXTRA = ("runtime/boot/local.rc",)
 
 
 def shipped_scripts(root: Path):
@@ -51,7 +69,9 @@ def shipped_scripts(root: Path):
         ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "*.sh"],
         capture_output=True, text=True, check=True,
     ).stdout.split()
-    return [p for p in listed if p.startswith(SHIPPED)]
+    return [p for p in listed if p.startswith(SHIPPED)] + [
+        p for p in SHIPPED_EXTRA if (root / p).is_file()
+    ]
 
 
 def strip_comment(line: str) -> str:
@@ -79,6 +99,10 @@ def main() -> int:
         applet: re.compile(COMMAND_POSITION + re.escape(applet) + r"(?=\s|$)")
         for applet in MISSING
     }
+    blocking = {
+        applet: re.compile(COMMAND_POSITION + re.escape(applet) + r"(?=[\s;|&)}]|$)")
+        for applet in BLOCKING
+    }
     findings, checked = [], 0
 
     for relative in shipped_scripts(root):
@@ -90,6 +114,11 @@ def main() -> int:
             for applet, pattern in patterns.items():
                 if pattern.search(line):
                     findings.append(f"{relative}:{number}: {applet} -- use {MISSING[applet]}")
+            for applet, pattern in blocking.items():
+                if pattern.search(line) and f"target-applets: allow {applet}" not in raw:
+                    findings.append(f"{relative}:{number}: {applet} reads every cmdline -- use {BLOCKING[applet]}")
+            if PLAIN_REBOOT.search(line) and "target-applets: allow reboot" not in raw:
+                findings.append(f"{relative}:{number}: plain reboot reads every cmdline -- use jl_reboot, or reboot -f after sync")
             for pattern, reason in MISSING_FLAGS:
                 if pattern.search(line):
                     findings.append(f"{relative}:{number}: {reason}")

@@ -95,7 +95,7 @@ case "$jl_action" in
         mv -f "$JL_ACTIVATE.new" "$JL_ACTIVATE" || exit 1
         sync
         jl_check_current_storage || exit 1
-        killall telnetd goahead 2>/dev/null || :
+        jl_kill_named telnetd goahead
         jl_unlock
         trap - EXIT
         jl_log 'compressed-controller boot hook activated; inherited hooks remain disabled'

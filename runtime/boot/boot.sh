@@ -130,6 +130,8 @@ fi
 # This supervisor never invokes a saved OEM/user hook or revives telnet.
 jl_time_ticks=0
 jl_respawn_hold=0
+jl_ssh_pid=
+jl_ssh_start=
 while :; do
     # The OOM killer now takes the runtime rather than jooanipc (local.rc), so
     # bring it back; jooanipc reconnects to the MQTT bridge within ~20s. Never
@@ -145,8 +147,13 @@ while :; do
     if [ -x "$JL_CONTROL/admin/wifi-transaction.sh" ]; then
         "$JL_CONTROL/admin/wifi-transaction.sh" tick || :
     fi
-    if [ -x "$JL_CONTROL/admin/ssh-start.sh" ]; then
-        "$JL_CONTROL/admin/ssh-start.sh" "$jl_running" || :
+    # In the background, and the next only once the last has ended: a start that hangs in
+    # the kernel (one did, unkillable, on 2026-11-19) must not stop this loop with it.
+    if [ -x "$JL_CONTROL/admin/ssh-start.sh" ] && ! jl_task_running "$jl_ssh_pid" "$jl_ssh_start"; then
+        [ -z "$jl_ssh_pid" ] || wait "$jl_ssh_pid" 2>/dev/null || :
+        "$JL_CONTROL/admin/ssh-start.sh" "$jl_running" </dev/null &
+        jl_ssh_pid=$!
+        jl_ssh_start=$(jl_task_start "$jl_ssh_pid") || jl_ssh_start=
     fi
     if [ "$jl_running" != - ]; then
         jl_ensure_wifi "$jl_running" || :

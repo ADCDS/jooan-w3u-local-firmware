@@ -312,6 +312,7 @@ class SignedReleaseTests(unittest.TestCase):
                 "JL_CONTROL": str(control),
                 "JL_SLOT_DIR": str(slot),
                 "JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin:/sbin:/usr/sbin",
+                "JL_PROC": str(run / "no-proc"),  # not the host's init: plain (fake) reboot
                 "FAKE_MOUNT_SOURCE": str(fixture),
                 "FAKE_MOUNT_LOG": str(log),
             }
@@ -746,6 +747,8 @@ class HostBuilderTests(unittest.TestCase):
                 "JOOAN_DEVICE_MODEL_PATH": str(model),
                 "JOOAN_COMPAT_ROOT": str(compatible),
                 "JOOAN_PATH": f"{fake_bin}:/bin:/usr/bin:/sbin:/usr/sbin",
+                # The payloads stop processes by /proc/<pid>/comm: never the host's.
+                "JOOAN_PROC": str(run / "no-proc"),
                 "FAKE_FREE_KB": "124",
                 "FAKE_DROPBEAR_KB": "59",
             }
