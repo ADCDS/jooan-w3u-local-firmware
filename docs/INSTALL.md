@@ -15,15 +15,18 @@ As of 2026-11-09, these releases are on
   such as Frigate, and the camera can no longer reach the JOOAN cloud. The video
   still comes from the vendor's camera program, which keeps running under
   confinement.
-- **v0.2.40** (2026-11-09) is the latest release. It adds the open media daemon
-  in [`media/`](../media/), and is what the rest of this repository describes.
+- **v0.2.41** (2026-11-26) is the latest release, and is what the rest of this
+  repository describes. It changes only the platform (see
+  [A restart that does not happen](RECOVERY.md#a-restart-that-does-not-happen));
+  its media layer is that of v0.2.40, which added the open media daemon in
+  [`media/`](../media/).
   A camera has now been taken from stock to v0.2.40 and its media layer with
   these instructions, twice. See [The media layer](#the-media-layer), including
   what has and has not been tested, before choosing it.
 - **Each installs only on a camera whose vendor firmware matches the verified
   unit's.** Before it writes anything, the installer compares vendor files with
-  the verified unit's: v0.2.21 the whole application partition, and v0.2.40 the
-  twelve files it depends on. If they differ, it refuses and leaves the camera as
+  the verified unit's: v0.2.21 the whole application partition, and v0.2.40 and
+  later the twelve files it depends on. If they differ, it refuses and leaves the camera as
   it was. The media layer then asks more of your application partition: every
   file it keeps must be there, and the camera must have the CV2005 sensors.
   Nobody knows yet whether cameras sold today ship the same vendor firmware.
@@ -309,7 +312,7 @@ With v0.2.21:
 The v0.2.21 documentation describes these features. Read it at the tag:
 [README](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/README.md)
 and [API](https://github.com/ADCDS/jooan-w3u-local-firmware/blob/v0.2.21/docs/API.md).
-The documents on `main` describe 0.2.40.
+The documents on `main` describe 0.2.41.
 
 ## Updating later
 
@@ -410,9 +413,9 @@ installer does this) and keep the camera on steady power for the few minutes it
 takes.
 
 You need a computer with Linux or WSL, with `squashfs-tools`, Python 3, OpenSSH
-and OpenSSL, and the v0.2.40 files from the release page.
+and OpenSSL, and the v0.2.41 files from the release page.
 
-1. **Install the platform.** Follow steps 4 and 5 with the v0.2.40 source and
+1. **Install the platform.** Follow steps 4 and 5 with the v0.2.41 source and
    files, or from v0.2.21 update as in [Updating later](#updating-later). The
    camera now has no video until the last step. The web console stays at
    `http://CAMERA_IP/`.

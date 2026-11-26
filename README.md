@@ -52,12 +52,13 @@ boundary.
   install and uninstall, migration, Wi-Fi, network time, SSH, routing,
   power-loss and cold-recovery checks pass on that camera
   ([hardware promotion gates](tests/TEST_PLAN.md#hardware-promotion-gates)).
-- **Latest: v0.2.40** (2026-11-09): the platform package and the media layer's
-  binaries and scripts. Each owner still builds the image for the camera from
-  that camera's own app partition, because it holds vendor files, so no image
-  is published. It replaces v0.2.39 and folds in two fixes found on hardware:
-  an open (no-password) Wi-Fi network now commits through the platform, and a
-  fresh platform frees just enough `/opt` for the first media install.
+- **Latest: v0.2.41** (2026-11-26): the platform package, and the media
+  layer's binaries and scripts unchanged from v0.2.40. Each owner still builds
+  the image for the camera from that camera's own app partition, because it
+  holds vendor files, so no image is published. It replaces v0.2.40: the
+  platform no longer reads other processes' command lines, which let one task
+  stuck in the kernel stop the supervisor and every restart for a week (see
+  [A restart that does not happen](docs/RECOVERY.md#a-restart-that-does-not-happen)).
 - **The whole chain has now run from stock to the open stack on a real camera.**
   A test camera was taken back to stock, provisioned onto Wi-Fi with no vendor
   app, updated to the platform over the air, flashed with a media image built
@@ -68,7 +69,7 @@ boundary.
   take the full backup the installer makes and keep the camera powered during
   the flash.
 - **v0.2.21** (2026-10-16, platform only) stays published. With it, video still
-  comes from the vendor's program, running confined. Prefer v0.2.40.
+  comes from the vendor's program, running confined. Prefer v0.2.41.
 
 ## Exact hardware scope
 
@@ -91,7 +92,7 @@ anything.
 
 ## What works and what doesn't
 
-With 0.2.40 and its media layer:
+With 0.2.41 and its media layer:
 
 - **Works:** RTSP for both lenses (1920×1080 and 1024×576 at 15 fps, H.264);
   ONVIF pan/tilt and 16 named presets for Frigate; homing on every boot; flip,
