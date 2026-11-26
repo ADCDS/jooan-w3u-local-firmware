@@ -8,6 +8,7 @@ the cross-thread confirmation, and that the engine runs to completion when drive
 with the GUI's argument object -- is testable headless. If Tkinter is missing,
 the whole module is skipped.
 """
+import os
 import glob
 import importlib.util
 import pathlib
@@ -92,8 +93,11 @@ class GuiLogic(unittest.TestCase):
         rep = self.gui.GuiReporter(q, C())
         work = tempfile.mkdtemp(prefix="gui-test-")
         self.addCleanup(lambda: __import__("shutil").rmtree(work, ignore_errors=True))
+        pkg = os.path.join(work, "JOOAN_FW_PKG")  # stand-in: dist/ exists only after a release build
+        with open(pkg, "wb") as stand_in:
+            stand_in.write(b"stand-in")
         args = types.SimpleNamespace(
-            camera="203.0.113.1", work=work, platform_pkg="dist/JOOAN_FW_PKG",
+            camera="203.0.113.1", work=work, platform_pkg=pkg,
             media_release=rel, camera_password="admin", stream_password="",
             ssh_key="", ssh_pubkey="", provision_helper="", only=None,
             force=False, assume_yes=False, dry_run=True)

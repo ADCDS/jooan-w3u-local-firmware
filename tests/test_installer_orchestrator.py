@@ -64,13 +64,19 @@ class OrchestratorTests(unittest.TestCase):
         (self.release / "bin").mkdir(parents=True)
         for name in ("jooanipc-open", "libatomic.so.1", "libimp.so"):
             (self.release / "bin" / name).write_text("x")
+        # A stand-in package: the platform step only checks that the file exists before
+        # it finds the (stubbed) platform already up. dist/ exists only after a release
+        # build, so pointing at it failed these tests in CI and in any fresh checkout.
+        self.pkg = pathlib.Path(self.tmp.name) / "JOOAN_FW_PKG"
+        self.pkg.write_bytes(b"stand-in")
         # Avoid any real network: stub platform status to "already up".
         self._real_status = inst._platform_status
         inst._platform_status = lambda host: {"release_version": "0.2.41"}
         self.addCleanup(setattr, inst, "_platform_status", self._real_status)
 
     def _ctx(self, **over):
-        args = make_args(self.work, media_release=str(self.release), **over)
+        args = make_args(self.work, **({"media_release": str(self.release),
+                                        "platform_pkg": str(self.pkg)} | over))
         state = inst.RunState.load(self.work / "run-state.json")
         if args.camera:
             state.camera_ip = args.camera
