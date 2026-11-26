@@ -67,9 +67,8 @@ terreno de los mantenedores, no una vía de instalación (consulta
   fabricante se conecta a tu Wi-Fi. Este proyecto no tiene otra manera de conectar
   a la red una cámara de fábrica.
 - **Un router Wi-Fi** en el que:
-  - la cámara pueda unirse a una red WPA2. La cámara no pudo unirse a un punto de
-    acceso OpenWrt con radio Qualcomm ath11k. Los puntos de acceso basados en
-    Realtek funcionaron (consulta [Compatibilidad](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability));
+  - la cámara pueda unirse a una red WPA2. No se conoce ningún punto de acceso
+    incompatible (consulta [Compatibilidad](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability));
   - puedas bloquear el acceso a Internet de un solo dispositivo. En los routers
     aparece como control parental, control de acceso o regla de firewall;
   - tu PC esté en la misma red que la cámara.

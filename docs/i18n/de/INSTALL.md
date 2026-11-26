@@ -77,9 +77,8 @@ ist jedoch Sache der Maintainer und kein Installationsweg (siehe
   Herstellerfirmware in Ihr Wi-Fi-Netzwerk. Dieses Projekt bietet keinen
   anderen Weg, eine Kamera mit Werksfirmware ins Netzwerk zu bringen.
 - **Ein Wi-Fi-Router**, bei dem:
-  - die Kamera einem WPA2-Netzwerk beitreten kann. Einem Access Point mit
-    OpenWrt und einem Funkchip vom Typ Qualcomm ath11k konnte sie nicht
-    beitreten; Access Points auf Realtek-Basis funktionierten (siehe
+  - die Kamera einem WPA2-Netzwerk beitreten kann. Es ist kein inkompatibler
+    Access Point bekannt (siehe
     [Kompatibilität](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability));
   - Sie den Internetzugang eines einzelnen Geräts sperren können. Je nach
     Router heißt das Kindersicherung, Zugriffskontrolle oder Firewall-Regel;

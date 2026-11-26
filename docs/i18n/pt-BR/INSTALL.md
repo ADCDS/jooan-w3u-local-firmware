@@ -64,9 +64,8 @@ mantenedores, não um caminho de instalação (veja [A camada de mídia](#the-me
   no seu Wi-Fi. Este projeto não tem outro meio de colocar na rede uma câmera com
   firmware original.
 - **Um roteador Wi-Fi** em que:
-  - a câmera consiga entrar em uma rede WPA2. Não foi possível conectá-la a um ponto de
-    acesso OpenWrt com rádio Qualcomm ath11k. Pontos de acesso baseados em Realtek
-    funcionaram (veja [Compatibilidade](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability));
+  - a câmera consiga entrar em uma rede WPA2. Não se conhece nenhum ponto de acesso
+    incompatível (veja [Compatibilidade](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability));
   - seja possível bloquear o acesso de um único dispositivo à Internet. Os roteadores
     chamam isso de controle parental, controle de acesso ou regra de firewall;
   - o seu PC esteja na mesma rede que a câmera.

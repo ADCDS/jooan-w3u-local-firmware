@@ -74,9 +74,8 @@ mais cela relève des mainteneurs et ne constitue pas une méthode d’installat
   fabricant rejoint votre réseau Wi-Fi. Ce projet n’a aucun autre moyen de
   mettre sur le réseau une caméra sous firmware d’origine.
 - **Un routeur Wi-Fi** sur lequel :
-  - la caméra peut rejoindre un réseau WPA2. Elle n’a pas pu se connecter à un
-    point d’accès OpenWrt équipé d’une radio Qualcomm ath11k, alors que des
-    points d’accès à base de Realtek ont fonctionné (voir
+  - la caméra peut rejoindre un réseau WPA2. Aucun point d’accès incompatible
+    n’est connu (voir
     [Compatibilité](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability)) ;
   - vous pouvez bloquer l’accès à Internet d’un seul appareil. Selon le
     routeur, cette fonction s’appelle contrôle parental, contrôle d’accès ou

@@ -33,7 +33,7 @@
 - **摄像机**：必须是标签或厂商 App 中显示型号为 `JA-A12` 的 JOOAN W3-U。其他以“W3-U”名义销售的摄像机采用的是不同的芯片：请阅读[兼容性](../../../docs/COMPATIBILITY.md)。安装程序会检查型号和厂商文件，并拒绝不符合的摄像机。但它无法看到电路板，因此拆开摄像机是唯一完整的检查方法（“兼容性”一文说明了需要查看哪些内容）。
 - **JOOAN 手机 App**：厂商固件要借助该 App 才能接入您的 Wi-Fi。本项目没有其他办法让原厂摄像机联网。
 - **一台 Wi-Fi 路由器**，需满足以下条件：
-  - 摄像机能够加入其 WPA2 网络。曾有一台采用 Qualcomm ath11k 无线芯片的 OpenWrt 接入点无法加入，而基于 Realtek 的接入点可以正常使用（参见[兼容性](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability)）；
+  - 摄像机能够加入其 WPA2 网络。目前尚无已知不兼容的接入点（参见[兼容性](../../../docs/COMPATIBILITY.md#wi-fi-access-point-interoperability)）；
   - 您能够禁止单台设备访问互联网。路由器通常将这项功能称为家长控制、访问控制或防火墙规则；
   - 您的电脑与摄像机处于同一网络。
 - **一台电脑**，运行 Windows 10 或更高版本、macOS 或 Linux，并具备：

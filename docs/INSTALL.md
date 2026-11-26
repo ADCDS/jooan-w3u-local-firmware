@@ -60,9 +60,8 @@ installation route (see [The media layer](#the-media-layer)).
 - **The JOOAN phone app.** The app is how the vendor firmware gets onto your
   Wi-Fi. This project has no other way to put a stock camera on the network.
 - **A Wi-Fi router** where:
-  - the camera can join a WPA2 network. One OpenWrt access point with a
-    Qualcomm ath11k radio could not be joined. Realtek-based access points
-    worked (see [Compatibility](COMPATIBILITY.md#wi-fi-access-point-interoperability));
+  - the camera can join a WPA2 network. No access point is known to be
+    incompatible (see [Compatibility](COMPATIBILITY.md#wi-fi-access-point-interoperability));
   - you can block one device's Internet access. Routers call this parental
     controls, access control or a firewall rule;
   - your PC is on the same network as the camera.
